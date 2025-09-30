@@ -1,0 +1,21 @@
+# ninja log v6
+26	109	7809044146631745	CMakeFiles/pbf_cuda.dir/engine/sim/kernel_fallback.cpp.obj	d899a4673092dbc8
+110	171	7809044147472282	pbf_cuda.lib	39e2b8b6f9a040e9
+249	562	7809044148858380	pbf_app.exe	c3b9cc3fcb60d60d
+35	854	7809048111251045	CMakeFiles/pbf_app.dir/app_main.cpp.obj	ad0d38bc6546d700
+44	859	7809048111336044	CMakeFiles/pbf_app.dir/engine/gfx/renderer.cpp.obj	4a4e8e78c6cb84b8
+40	626	7809048111296170	CMakeFiles/pbf_app.dir/engine/gfx/d3d12_device.cpp.obj	e5183af4c70bb833
+21	128	7809048729936511	build.ninja	99662a89fa477d1f
+37	270	7809048730588610	CMakeFiles/pbf_core.dir/engine/core/config.cpp.obj	9dce25c2e22e8afe
+271	313	7809048732921185	pbf_core.lib	5f12ea58a460c216
+313	504	7809048733347142	pbf_app.exe	cbbb03f69464cf40
+34	852	7809051951624929	CMakeFiles/pbf_app.dir/app_main.cpp.obj	ad0d38bc6546d700
+43	859	7809051951704954	CMakeFiles/pbf_app.dir/engine/gfx/renderer.cpp.obj	4a4e8e78c6cb84b8
+32	628	7809052607392158	CMakeFiles/pbf_app.dir/engine/gfx/d3d12_device.cpp.obj	e5183af4c70bb833
+629	877	7809052613365675	pbf_app.exe	cbbb03f69464cf40
+39	620	7809055266067283	CMakeFiles/pbf_app.dir/engine/gfx/d3d12_device.cpp.obj	e5183af4c70bb833
+34	847	7809055266024850	CMakeFiles/pbf_app.dir/app_main.cpp.obj	ad0d38bc6546d700
+43	854	7809055266106288	CMakeFiles/pbf_app.dir/engine/gfx/renderer.cpp.obj	4a4e8e78c6cb84b8
+855	1039	7809055274222104	pbf_app.exe	cbbb03f69464cf40
+17	854	7809058906671477	CMakeFiles/pbf_app.dir/engine/gfx/renderer.cpp.obj	4a4e8e78c6cb84b8
+854	1074	7809058915043943	pbf_app.exe	cbbb03f69464cf40
