@@ -1,31 +1,35 @@
 #include "simulator.h"
 #include <cstdio>
-#include <vector>     // 新增: std::vector
-#include <cmath>      // 新增: ceilf
-#include <cstdint>    // 可选: 定宽整数（头文件已包含，此处冗余但安全）
+#include <vector>
+#include <cmath>
+#include <cstdint>
+#include <cstddef>
+#include <cuda_runtime.h>
+
+using std::size_t;
+using std::uint32_t;
+
+// —— 内核包装的全局声明（与 .cu 文件保持一致的 extern "C" + 全局命名空间） ——
+extern "C" void LaunchIntegratePred(float4* pos, const float4* vel, float4* pos_pred, float3 gravity, float dt, uint32_t N, cudaStream_t s);
+extern "C" void LaunchHashKeys(uint32_t* keys, uint32_t* indices, const float4* pos, sim::GridBounds grid, uint32_t N, cudaStream_t s);
+extern "C" void LaunchCellRanges(uint32_t* cellStart, uint32_t* cellEnd, const uint32_t* keysSorted, uint32_t N, uint32_t numCells, cudaStream_t s);
+extern "C" void LaunchLambda(float* lambda, const float4* pos_pred, const uint32_t* indicesSorted, const uint32_t* cellStart, const uint32_t* cellEnd, sim::GridBounds grid, sim::KernelCoeffs kc, float restDensity, int maxNeighbors, uint32_t N, cudaStream_t s);
+extern "C" void LaunchDeltaApply(float4* pos_pred, float4* delta, const float* lambda, const uint32_t* indicesSorted, const uint32_t* cellStart, const uint32_t* cellEnd, sim::GridBounds grid, sim::KernelCoeffs kc, int maxNeighbors, uint32_t N, cudaStream_t s);
+extern "C" void LaunchVelocity(float4* vel, const float4* pos, const float4* pos_pred, float inv_dt, uint32_t N, cudaStream_t s);
+extern "C" void LaunchBoundary(float4* pos_pred, float4* vel, sim::GridBounds grid, uint32_t N, cudaStream_t s);
+
+// —— CUB radix sort（与 sort_pairs.cu 完全一致的 C 接口） ——
+extern "C" void LaunchSortPairsQuery(size_t* tempBytes,
+                                     const uint32_t* d_keys_in, uint32_t* d_keys_out,
+                                     const uint32_t* d_vals_in, uint32_t* d_vals_out,
+                                     uint32_t N, cudaStream_t s);
+extern "C" void LaunchSortPairs(void* d_temp_storage, size_t tempBytes,
+                                uint32_t* d_keys_in, uint32_t* d_keys_out,
+                                uint32_t* d_vals_in, uint32_t* d_vals_out,
+                                uint32_t N, cudaStream_t s);
 
 namespace sim {
 
-    // ————— 内核声明（见 kernels/*.cu） —————
-    void LaunchIntegratePred(float4* pos, const float4* vel, float4* pos_pred, float3 gravity, float dt, std::uint32_t N, cudaStream_t s);
-    void LaunchHashKeys(std::uint32_t* keys, std::uint32_t* indices, const float4* pos, GridBounds grid, std::uint32_t N, cudaStream_t s);
-    void LaunchCellRanges(std::uint32_t* cellStart, std::uint32_t* cellEnd, const std::uint32_t* keysSorted, std::uint32_t N, std::uint32_t numCells, cudaStream_t s);
-    void LaunchLambda(float* lambda, const float4* pos_pred, const std::uint32_t* indicesSorted, const std::uint32_t* cellStart, const std::uint32_t* cellEnd, GridBounds grid, KernelCoeffs kc, float restDensity, int maxNeighbors, std::uint32_t N, cudaStream_t s);
-    void LaunchDeltaApply(float4* pos_pred, float4* delta, const float* lambda, const std::uint32_t* indicesSorted, const std::uint32_t* cellStart, const std::uint32_t* cellEnd, GridBounds grid, KernelCoeffs kc, int maxNeighbors, std::uint32_t N, cudaStream_t s);
-    void LaunchVelocity(float4* vel, const float4* pos, const float4* pos_pred, float inv_dt, std::uint32_t N, cudaStream_t s);
-    void LaunchBoundary(float4* pos_pred, float4* vel, GridBounds grid, std::uint32_t N, cudaStream_t s);
-
-    // ————— CUB radix sort 封装（在 .cu 中实现，由 nvcc 编译） —————
-    extern "C" void LaunchSortPairsQuery(std::size_t* tempBytes,
-                                         const std::uint32_t* d_keys_in, std::uint32_t* d_keys_out,
-                                         const std::uint32_t* d_vals_in, std::uint32_t* d_vals_out,
-                                         std::uint32_t N, cudaStream_t s);
-    extern "C" void LaunchSortPairs(void* d_temp_storage, std::size_t tempBytes,
-                                    std::uint32_t* d_keys_in, std::uint32_t* d_keys_out,
-                                    std::uint32_t* d_vals_in, std::uint32_t* d_vals_out,
-                                    std::uint32_t N, cudaStream_t s);
-
-    // ————— Simulator 实现 —————
     bool Simulator::initialize(const SimParams& p) {
         m_params = p;
         CUDA_CHECK(cudaStreamCreateWithFlags(&m_stream, cudaStreamNonBlocking));
@@ -34,13 +38,11 @@ namespace sim {
 
         m_bufs.allocate(p.numParticles);
 
-        // grid 尺寸与 cell 数
         if (!buildGrid(p)) return false;
 
-        // indices 初始化 [0..N)
-        std::vector<std::uint32_t> h_idx(p.numParticles);
-        for (std::uint32_t i = 0; i < p.numParticles; ++i) h_idx[i] = i;
-        CUDA_CHECK(cudaMemcpy(m_bufs.d_indices, h_idx.data(), sizeof(std::uint32_t) * p.numParticles, cudaMemcpyHostToDevice));
+        std::vector<uint32_t> h_idx(p.numParticles);
+        for (uint32_t i = 0; i < p.numParticles; ++i) h_idx[i] = i;
+        CUDA_CHECK(cudaMemcpy(m_bufs.d_indices, h_idx.data(), sizeof(uint32_t) * p.numParticles, cudaMemcpyHostToDevice));
 
         m_graphDirty = true;
         return true;
@@ -48,10 +50,10 @@ namespace sim {
 
     void Simulator::shutdown() {
         if (m_graphExec) { cudaGraphExecDestroy(m_graphExec); m_graphExec = nullptr; }
-        if (m_graph) { cudaGraphDestroy(m_graph); m_graph = nullptr; }
-        if (m_evStart) cudaEventDestroy(m_evStart);
-        if (m_evEnd)   cudaEventDestroy(m_evEnd);
-        if (m_stream)  cudaStreamDestroy(m_stream);
+        if (m_graph)     { cudaGraphDestroy(m_graph); m_graph = nullptr; }
+        if (m_evStart)   { cudaEventDestroy(m_evStart); m_evStart = nullptr; }
+        if (m_evEnd)     { cudaEventDestroy(m_evEnd);   m_evEnd = nullptr; }
+        if (m_stream)    { cudaStreamDestroy(m_stream); m_stream = nullptr; }
     }
 
     bool Simulator::buildGrid(const SimParams& p) {
@@ -59,7 +61,7 @@ namespace sim {
         dim.x = int(ceilf((p.grid.maxs.x - p.grid.mins.x) / p.grid.cellSize));
         dim.y = int(ceilf((p.grid.maxs.y - p.grid.mins.y) / p.grid.cellSize));
         dim.z = int(ceilf((p.grid.maxs.z - p.grid.mins.z) / p.grid.cellSize));
-        m_numCells = std::uint32_t(dim.x) * std::uint32_t(dim.y) * std::uint32_t(dim.z);
+        m_numCells = uint32_t(dim.x) * uint32_t(dim.y) * uint32_t(dim.z);
         if (m_numCells == 0) return false;
         m_bufs.allocGridRanges(m_numCells);
         return true;
@@ -73,7 +75,7 @@ namespace sim {
     bool Simulator::captureGraphIfNeeded(const SimParams& p) {
         if (!m_graphDirty) return true;
         if (m_graphExec) { cudaGraphExecDestroy(m_graphExec); m_graphExec = nullptr; }
-        if (m_graph) { cudaGraphDestroy(m_graph); m_graph = nullptr; }
+        if (m_graph)     { cudaGraphDestroy(m_graph); m_graph = nullptr; }
 
         CUDA_CHECK(cudaStreamBeginCapture(m_stream, cudaStreamCaptureModeGlobal));
 
@@ -108,46 +110,45 @@ namespace sim {
         return true;
     }
 
-    // ————— 阶段封装 —————
+    // —— 阶段封装 ——
     void Simulator::kIntegratePred(cudaStream_t s, const SimParams& p) {
-        LaunchIntegratePred(m_bufs.d_pos, m_bufs.d_vel, m_bufs.d_pos_pred, p.gravity, p.dt, p.numParticles, s);
+        ::LaunchIntegratePred(m_bufs.d_pos, m_bufs.d_vel, m_bufs.d_pos_pred, p.gravity, p.dt, p.numParticles, s);
     }
 
     void Simulator::kHashKeys(cudaStream_t s, const SimParams& p) {
-        LaunchHashKeys(m_bufs.d_cellKeys, m_bufs.d_indices, m_bufs.d_pos_pred, p.grid, p.numParticles, s);
+        ::LaunchHashKeys(m_bufs.d_cellKeys, m_bufs.d_indices, m_bufs.d_pos_pred, p.grid, p.numParticles, s);
     }
 
     void Simulator::kSort(cudaStream_t s, const SimParams& p) {
-        // 使用 CUB radix sort（由 .cu 封装）
-        std::size_t tempBytes = 0;
-        LaunchSortPairsQuery(&tempBytes,
-            m_bufs.d_cellKeys, m_bufs.d_cellKeys,       // keys in/out（就地）
-            m_bufs.d_indices, m_bufs.d_indices_sorted,  // vals in/out
+        size_t tempBytes = 0;
+        ::LaunchSortPairsQuery(&tempBytes,
+            m_bufs.d_cellKeys, m_bufs.d_cellKeys,
+            m_bufs.d_indices,  m_bufs.d_indices_sorted,
             p.numParticles, s);
 
         ensureSortTemp(tempBytes);
 
-        LaunchSortPairs(m_bufs.d_sortTemp, tempBytes,
+        ::LaunchSortPairs(m_bufs.d_sortTemp, tempBytes,
             m_bufs.d_cellKeys, m_bufs.d_cellKeys,
-            m_bufs.d_indices, m_bufs.d_indices_sorted,
+            m_bufs.d_indices,  m_bufs.d_indices_sorted,
             p.numParticles, s);
     }
 
     void Simulator::kCellRanges(cudaStream_t s, const SimParams& p) {
-        LaunchCellRanges(m_bufs.d_cellStart, m_bufs.d_cellEnd, m_bufs.d_cellKeys, p.numParticles, m_numCells, s);
+        ::LaunchCellRanges(m_bufs.d_cellStart, m_bufs.d_cellEnd, m_bufs.d_cellKeys, p.numParticles, m_numCells, s);
     }
 
     void Simulator::kSolveIter(cudaStream_t s, const SimParams& p) {
-        LaunchLambda(m_bufs.d_lambda, m_bufs.d_pos_pred, m_bufs.d_indices_sorted,
+        ::LaunchLambda(m_bufs.d_lambda, m_bufs.d_pos_pred, m_bufs.d_indices_sorted,
             m_bufs.d_cellStart, m_bufs.d_cellEnd, p.grid, p.kernel, p.restDensity, p.maxNeighbors, p.numParticles, s);
 
-        LaunchDeltaApply(m_bufs.d_pos_pred, m_bufs.d_delta, m_bufs.d_lambda, m_bufs.d_indices_sorted,
+        ::LaunchDeltaApply(m_bufs.d_pos_pred, m_bufs.d_delta, m_bufs.d_lambda, m_bufs.d_indices_sorted,
             m_bufs.d_cellStart, m_bufs.d_cellEnd, p.grid, p.kernel, p.maxNeighbors, p.numParticles, s);
     }
 
     void Simulator::kVelocityAndPost(cudaStream_t s, const SimParams& p) {
-        LaunchBoundary(m_bufs.d_pos_pred, m_bufs.d_vel, p.grid, p.numParticles, s);
-        LaunchVelocity(m_bufs.d_vel, m_bufs.d_pos, m_bufs.d_pos_pred, 1.0f / p.dt, p.numParticles, s);
+        ::LaunchBoundary(m_bufs.d_pos_pred, m_bufs.d_vel, p.grid, p.numParticles, s);
+        ::LaunchVelocity(m_bufs.d_vel, m_bufs.d_pos, m_bufs.d_pos_pred, 1.0f / p.dt, p.numParticles, s);
         CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_pos, m_bufs.d_pos_pred, sizeof(float4) * p.numParticles, cudaMemcpyDeviceToDevice, s));
     }
 

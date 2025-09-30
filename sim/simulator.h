@@ -1,6 +1,7 @@
 #pragma once
 #include <cuda_runtime.h>
-#include <cstdint>             // 新增: 定宽整数
+#include <cstdint>
+#include <cstddef>              // 新增: std::size_t
 #include "parameters.h"
 #include "device_buffers.cuh"
 
@@ -22,7 +23,7 @@ namespace sim {
         bool captureGraphIfNeeded(const SimParams& p);
         bool ensureSortTemp(std::size_t bytes);
 
-        // 阶段函数（可能被 Graph capture）
+        // 阶段函数
         void kIntegratePred(cudaStream_t s, const SimParams& p);
         void kHashKeys(cudaStream_t s, const SimParams& p);
         void kSort(cudaStream_t s, const SimParams& p);
@@ -33,7 +34,7 @@ namespace sim {
     private:
         SimParams m_params{};
         DeviceBuffers m_bufs{};
-        std::uint32_t m_numCells = 0;   // 改为 std::uint32_t
+        std::uint32_t m_numCells = 0;
 
         cudaStream_t m_stream = nullptr;
         cudaEvent_t  m_evStart = nullptr, m_evEnd = nullptr;
