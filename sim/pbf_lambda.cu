@@ -33,7 +33,7 @@ namespace {
         int3 ci = make_int3(floorf(rel.x), floorf(rel.y), floorf(rel.z));
 
         float density = 0.f;
-        float3 gradCi = make_float3(0.f, 0.f, 0.f);
+        float3 gradSum = make_float3(0.f, 0.f, 0.f);
         float sumGrad2 = 0.f;
 
         // 27-neighborhood
@@ -51,23 +51,31 @@ namespace {
                 uint32_t j = indicesSorted[k];
                 if (j == i) continue;
                 float3 pj = to_float3(pos_pred[j]);
-                float3 rij = pi - pj;
+                float3 rij = make_float3(pi.x - pj.x, pi.y - pj.y, pi.z - pj.z);
                 float r2 = rij.x * rij.x + rij.y * rij.y + rij.z * rij.z;
                 if (r2 > kc.h2) continue;
-                float r = sqrtf(r2);
 
-                // poly6 density kernel: (h-r)^6
-                float t = kc.h - r;
-                float w = kc.poly6 * t * t * t * (t * t * t);
+                // poly6 density kernel: (h^2 - r^2)^3
+                float hr2 = kc.h2 - r2;
+                float w = kc.poly6 * hr2 * hr2 * hr2;
                 density += w;
 
-                // spiky grad
-                float g = (r > 1e-6f) ? (kc.spiky * t * t / r) : 0.f;
-                float3 grad = make_float3(g * rij.x, g * rij.y, g * rij.z);
-                gradCi += grad;
+                // spiky gradient: -45/(pi*h^6) * (h - r)^2 / r * (rij)
+                float r = sqrtf(r2);
+                float t = kc.h - r;
+                // 预计算 -45/(pi*h^6) = -3 * kc.spiky （若 kc.spiky=15/(pi*h^6)）
+                // 为避免依赖 kc.spiky 的取值，这里直接使用常数表达式：
+                const float inv_h6 = 1.0f / (kc.h2 * kc.h2 * kc.h2);
+                const float coeff = (r > 1e-6f) ? (-45.0f * inv_h6 * (t * t) / r) : 0.0f;
+                float3 grad = make_float3(coeff * rij.x, coeff * rij.y, coeff * rij.z);
+
+                gradSum.x += grad.x; gradSum.y += grad.y; gradSum.z += grad.z;
                 sumGrad2 += grad.x * grad.x + grad.y * grad.y + grad.z * grad.z;
             }
         }
+
+        // 自项：|sum_j grad C_i|^2
+        sumGrad2 += (gradSum.x * gradSum.x + gradSum.y * gradSum.y + gradSum.z * gradSum.z);
 
         float C = density / restDensity - 1.f;
         float denom = sumGrad2 + 1e-6f;

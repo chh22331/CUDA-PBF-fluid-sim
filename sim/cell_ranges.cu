@@ -1,26 +1,29 @@
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
-#include <limits>
 #include <stdint.h>
 
-// 输入：按 key 排序后的 keysSorted（此处直接用 d_cellKeys 排序后数组）
-// 输出：每 cell 的起止索引 [start,end)；未出现的 cell 设为 start=end
 namespace {
-    __global__ void KInit(uint32_t* start, uint32_t* end, uint32_t numCells) {
-        uint32_t i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= numCells) return;
-        start[i] = 0xFFFFFFFFu; end[i] = 0u;
-    }
-    __global__ void KMark(const uint32_t* keysSorted, uint32_t N, uint32_t* start, uint32_t* end) {
-        uint32_t i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= N) return;
+    __global__ void KBuildRanges(const uint32_t* keysSorted, uint32_t N, uint32_t* start, uint32_t* end, uint32_t numCells) {
+        uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+        if (i == 0) {
+            for (uint32_t c = 0; c < numCells; ++c) { start[c] = 0xFFFFFFFFu; end[c] = 0u; }
+        }
+        __syncthreads();
+
+        if (i >= N) return;
         uint32_t k = keysSorted[i];
-        atomicMin(&start[k], i);
-        atomicMax(&end[k], i + 1);
+        uint32_t kPrev = (i > 0) ? keysSorted[i - 1] : 0xFFFFFFFFu;
+        if (i == 0 || k != kPrev) start[k] = i;
+        if (i == N - 1) end[k] = N;
+        else {
+            uint32_t kNext = keysSorted[i + 1];
+            if (k != kNext) end[k] = i + 1;
+        }
     }
 }
 
 extern "C" void LaunchCellRanges(uint32_t* cellStart, uint32_t* cellEnd, const uint32_t* keysSorted, uint32_t N, uint32_t numCells, cudaStream_t s) {
     const int BS = 256;
-    dim3 b(BS), g0((numCells + BS - 1) / BS), g1((N + BS - 1) / BS);
-    KInit << <g0, b, 0, s >> > (cellStart, cellEnd, numCells);
-    KMark << <g1, b, 0, s >> > (keysSorted, N, cellStart, cellEnd);
+    dim3 b(BS), g((N + BS - 1) / BS);
+    KBuildRanges<<<g, b, 0, s>>>(keysSorted, N, cellStart, cellEnd, numCells);
 }

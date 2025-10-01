@@ -35,4 +35,22 @@ namespace sim {
         GridBounds  grid;
     };
 
+    inline KernelCoeffs MakeKernelCoeffs(float h) {
+        const float pi = 3.14159265358979323846f;
+        KernelCoeffs kc{};
+        kc.h = h;
+        kc.inv_h = 1.0f / h;
+        kc.h2 = h * h;
+
+        // 避免 std::pow，使用乘法展开
+        const float h3 = h * kc.h2;     // h^3
+        const float h6 = h3 * h3;       // h^6
+        const float h9 = h6 * h3;       // h^9
+
+        kc.poly6 = 315.0f / (64.0f * pi * h9);
+        kc.spiky = 15.0f  / (pi * h6);
+        kc.visc  = 15.0f  / (2.0f * pi * h3);
+        return kc;
+    }
+
 } // namespace sim

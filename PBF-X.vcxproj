@@ -95,7 +95,7 @@
     <ClCompile Include="engine\core\config.cpp" />
     <ClCompile Include="engine\gfx\d3d12_device.cpp" />
     <ClCompile Include="engine\gfx\renderer.cpp" />
-    <ClCompile Include="engine\sim\kernel_fallback.cpp" />
+    <ClCompile Include="sim\kernel_fallback.cpp" />
     <ClCompile Include="sim\simulator.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -106,9 +106,9 @@
     <ClInclude Include="engine\gfx\d3d12_device.h" />
     <ClInclude Include="engine\gfx\renderer.h" />
     <ClInclude Include="engine\interop\cuda_d3d12_interop.h" />
-    <ClInclude Include="engine\sim\simulator.h" />
     <ClInclude Include="sim\cuda_vec_math.cuh" />
     <ClInclude Include="sim\device_buffers.cuh" />
+    <ClInclude Include="sim\parameters.h" />
     <ClInclude Include="sim\simulator.h" />
   </ItemGroup>
   <ItemGroup>
