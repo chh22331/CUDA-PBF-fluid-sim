@@ -81,18 +81,26 @@
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <CudaCompile Include="cuda sim\pbf_delta_apply.cu" />
+    <CudaCompile Include="cuda sim\xsph.cu" />
     <CudaCompile Include="kernel.cu" />
     <CudaCompile Include="sim\boundary.cu" />
     <CudaCompile Include="sim\cell_ranges.cu" />
+    <CudaCompile Include="sim\eimtter.cu" />
+    <CudaCompile Include="sim\emit_params.cu" />
     <CudaCompile Include="sim\hash_keys.cu" />
     <CudaCompile Include="sim\integrate.cu" />
     <CudaCompile Include="sim\pbf_delta_apply.cu" />
     <CudaCompile Include="sim\pbf_lambda.cu" />
     <CudaCompile Include="sim\sort_pairs.cu" />
+    <CudaCompile Include="sim\stats.cu" />
+    <CudaCompile Include="sim\stats_bruteforce.cu" />
+    <CudaCompile Include="sim\xsph.cu" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="app_main.cpp" />
     <ClCompile Include="engine\core\config.cpp" />
+    <ClCompile Include="engine\core\console.cpp" />
     <ClCompile Include="engine\gfx\d3d12_device.cpp" />
     <ClCompile Include="engine\gfx\renderer.cpp" />
     <ClCompile Include="sim\kernel_fallback.cpp" />
@@ -100,16 +108,20 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="engine\core\config.h" />
+    <ClInclude Include="engine\core\console.h" />
     <ClInclude Include="engine\core\frame_graph.h" />
     <ClInclude Include="engine\core\memory_pool.h" />
     <ClInclude Include="engine\core\profiler.h" />
     <ClInclude Include="engine\gfx\d3d12_device.h" />
     <ClInclude Include="engine\gfx\renderer.h" />
     <ClInclude Include="engine\interop\cuda_d3d12_interop.h" />
+    <ClInclude Include="sim\cuda_grid_utils.cuh" />
     <ClInclude Include="sim\cuda_vec_math.cuh" />
     <ClInclude Include="sim\device_buffers.cuh" />
+    <ClInclude Include="sim\emit_params.h" />
     <ClInclude Include="sim\parameters.h" />
     <ClInclude Include="sim\simulator.h" />
+    <ClInclude Include="sim\stats.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="CMakeLists.txt" />

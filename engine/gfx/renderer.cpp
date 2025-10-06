@@ -1,7 +1,11 @@
 #include "renderer.h"
+#include "../../sim/cuda_vec_math.cuh"
 #include <chrono>
 #include <d3dcompiler.h>
 #include <cstring>
+#include <cmath>
+#include <string>
+#include <vector>
 
 #pragma comment(lib, "d3dcompiler.lib")
 
@@ -9,20 +13,142 @@ namespace gfx {
 
     namespace {
 
-        // Root signature: b0 as root constants, table0: SRV t0 (ParticlePos)
+        struct Mat4 { float m[16]; };
+
+        static Mat4 mul(const Mat4& a, const Mat4& b) {
+            Mat4 r{};
+            for (int c = 0; c < 4; ++c) {
+                for (int r0 = 0; r0 < 4; ++r0) {
+                    r.m[c * 4 + r0] =
+                        a.m[0 * 4 + r0] * b.m[c * 4 + 0] +
+                        a.m[1 * 4 + r0] * b.m[c * 4 + 1] +
+                        a.m[2 * 4 + r0] * b.m[c * 4 + 2] +
+                        a.m[3 * 4 + r0] * b.m[c * 4 + 3];
+                }
+            }
+            return r;
+        }
+
+        static Mat4 lookAtRH(float3 eye, float3 at, float3 up) {
+            float3 z = make_float3(eye.x - at.x, eye.y - at.y, eye.z - at.z);
+            float lenz = sqrtf(z.x * z.x + z.y * z.y + z.z * z.z);
+            z.x /= lenz; z.y /= lenz; z.z /= lenz;
+            float3 x = make_float3(up.y * z.z - up.z * z.y,
+                up.z * z.x - up.x * z.z,
+                up.x * z.y - up.y * z.x);
+            float lenx = sqrtf(x.x * x.x + x.y * x.y + x.z * x.z);
+            x.x /= lenx; x.y /= lenx; x.z /= lenx;
+            float3 y = make_float3(z.y * x.z - z.z * x.y,
+                z.z * x.x - z.x * x.z,
+                z.x * x.y - z.y * x.x);
+            Mat4 m{};
+            m.m[0] = x.x; m.m[4] = x.y; m.m[8] = x.z;  m.m[12] = -(x.x * eye.x + x.y * eye.y + x.z * eye.z);
+            m.m[1] = y.x; m.m[5] = y.y; m.m[9] = y.z;  m.m[13] = -(y.x * eye.x + y.y * eye.y + y.z * eye.z);
+            m.m[2] = z.x; m.m[6] = z.y; m.m[10] = z.z;  m.m[14] = -(z.x * eye.x + z.y * eye.y + z.z * eye.z);
+            m.m[3] = 0.f; m.m[7] = 0.f; m.m[11] = 0.f;  m.m[15] = 1.f;
+            return m;
+        }
+
+        static Mat4 perspectiveFovRH_ZO(float fovy, float aspect, float zn, float zf) {
+            float f = 1.0f / tanf(fovy * 0.5f);
+            Mat4 m{};
+            m.m[0] = f / aspect;
+            m.m[5] = f;
+            m.m[10] = zf / (zn - zf);
+            m.m[14] = (zf * zn) / (zn - zf);
+            m.m[11] = -1.0f;
+            return m;
+        }
+
+        static float Deg2Rad(float deg) { return deg * 3.14159265358979323846f / 180.0f; }
+
+        // 路径工具
+        static std::wstring GetExeDirW() {
+            wchar_t path[MAX_PATH] = {};
+            DWORD n = GetModuleFileNameW(nullptr, path, MAX_PATH);
+            std::wstring exe(path, n ? n : 0);
+            size_t slash = exe.find_last_of(L"\\/");
+            if (slash == std::wstring::npos) return L".";
+            return exe.substr(0, slash);
+        }
+
+        static std::wstring GetCwdW() {
+            DWORD n = GetCurrentDirectoryW(0, nullptr);
+            std::wstring out(n, L'\0');
+            if (n > 0) {
+                GetCurrentDirectoryW(n, out.data());
+                if (!out.empty() && out.back() == L'\0') out.pop_back();
+            }
+            return out;
+        }
+
+        static bool FileExistsW(const std::wstring& p) {
+            DWORD a = GetFileAttributesW(p.c_str());
+            return (a != INVALID_FILE_ATTRIBUTES) && !(a & FILE_ATTRIBUTE_DIRECTORY);
+        }
+
+        static void ToBackslashes(std::wstring& s) { for (auto& ch : s) if (ch == L'/') ch = L'\\'; }
+
+        // 在常见位置搜索着色器文件，返回第一个存在的绝对路径
+        static std::wstring ResolveShaderPath(const wchar_t* relative) {
+            std::wstring rel = relative ? std::wstring(relative) : std::wstring();
+            ToBackslashes(rel);
+
+            // 已绝对路径
+            if (!rel.empty() && (rel[0] == L'\\' || (rel.size() > 1 && rel[1] == L':'))) {
+                return rel;
+            }
+
+            // 候选根目录
+            std::vector<std::wstring> bases;
+            const std::wstring exeDir = GetExeDirW();
+            bases.push_back(exeDir);                           // x64\Release\
+                        bases.push_back(exeDir + L"\\..\\..");            // 项目根（从 x64\Release\ 回到 repo 根）
+            bases.push_back(GetCwdW());                       // 进程工作目录
+
+#ifdef __FILEW__
+            // 以当前源文件目录为根（engine\gfx\），便于开发期运行
+            std::wstring src = std::wstring(L"") + __FILEW__;
+            ToBackslashes(src);
+            size_t pos = src.find_last_of(L"\\/");
+            if (pos != std::wstring::npos) {
+                std::wstring srcDir = src.substr(0, pos);     // ...\engine\gfx
+                bases.push_back(srcDir);                      // 引导到源目录
+                bases.push_back(srcDir + L"\\..\\..");        // 源根（repo 根）
+            }
+#endif
+
+            // 常见的 repo 相对路径：engine\gfx\d3d12_shaders\*.hlsl
+            std::vector<std::wstring> tried;
+            for (const auto& b : bases) {
+                std::wstring p1 = b + L"\\" + rel;                           tried.push_back(p1);
+                std::wstring p2 = b + L"\\engine\\gfx\\d3d12_shaders\\points.hlsl"; tried.push_back(p2);
+                if (FileExistsW(p1)) return p1;
+                if (FileExistsW(p2)) return p2;
+            }
+
+            // 失败时把尝试过的路径打到调试输出，便于定位
+            OutputDebugStringA("[HLSL] ResolveShaderPath failed, tried:\n");
+            for (auto& t : tried) {
+                OutputDebugStringW((t + L"\n").c_str());
+            }
+            // 返回一个最可能的路径（exeDir + rel），让后续编译报错也能显示绝对路径
+            return exeDir + L"\\" + rel;
+        }
+
         static Microsoft::WRL::ComPtr<ID3D12RootSignature> CreateRootSignatureGfx(ID3D12Device* dev) {
             using Microsoft::WRL::ComPtr;
 
             D3D12_DESCRIPTOR_RANGE1 ranges[1] = {};
             ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-            ranges[0].NumDescriptors = 1; // ParticlePos SRV
-            ranges[0].BaseShaderRegister = 0; // t0
+            ranges[0].NumDescriptors = 1;
+            ranges[0].BaseShaderRegister = 0;
             ranges[0].RegisterSpace = 0;
             ranges[0].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
             ranges[0].OffsetInDescriptorsFromTableStart = 0;
 
             D3D12_ROOT_PARAMETER1 params[2] = {};
-            params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; // PerFrameCB
+            params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
             params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
             params[0].Constants.ShaderRegister = 0; // b0
             params[0].Constants.RegisterSpace = 0;
@@ -46,7 +172,7 @@ namespace gfx {
                 if (err) OutputDebugStringA((char*)err->GetBufferPointer());
                 return nullptr;
             }
-            ComPtr<ID3D12RootSignature> rs;
+            Microsoft::WRL::ComPtr<ID3D12RootSignature> rs;
             if (FAILED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&rs)))) {
                 return nullptr;
             }
@@ -85,13 +211,33 @@ namespace gfx {
             return r;
         }
 
+        // 编译前先 ResolveShaderPath
+        static Microsoft::WRL::ComPtr<ID3DBlob> Compile(const wchar_t* relativePath, const char* entry, const char* target) {
+            UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
+#if defined(_DEBUG)
+            flags |= D3DCOMPILE_DEBUG;
+#endif
+            std::wstring full = ResolveShaderPath(relativePath);
+            Microsoft::WRL::ComPtr<ID3DBlob> cs, err;
+            HRESULT hr = D3DCompileFromFile(full.c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry, target, flags, 0, &cs, &err);
+            if (FAILED(hr)) {
+                if (err) OutputDebugStringA((char*)err->GetBufferPointer());
+                std::wstring msg = L"[HLSL] Compile failed: " + full + L"\n";
+                OutputDebugStringW(msg.c_str());
+                return nullptr;
+            }
+            std::wstring ok = L"[HLSL] Compile ok: " + full + L"\n";
+            OutputDebugStringW(ok.c_str());
+            return cs;
+        }
+
     } // namespace
 
     bool RendererD3D12::Initialize(HWND hwnd, const RenderInitParams& p) {
-        DeviceInitParams dp; dp.width = p.width; dp.height = p.height; dp.bufferCount = 3;
+        DeviceInitParams dp; dp.width = p.width; dp.height = p.height; dp.bufferCount = 3; dp.vsync = p.vsync;
         if (!m_device.initialize(hwnd, dp)) return false;
-        // Create SRV heap for interop SRVs
         m_device.createSrvHeap(256, true);
+        std::memcpy(m_clearColor, m_visual.clearColor, sizeof(m_clearColor));
         BuildFrameGraph();
         return true;
     }
@@ -101,30 +247,48 @@ namespace gfx {
         m_device.shutdown();
     }
 
-    static Microsoft::WRL::ComPtr<ID3DBlob> Compile(const wchar_t* path, const char* entry, const char* target) {
-        UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
-#if defined(_DEBUG)
-        flags |= D3DCOMPILE_DEBUG;
-#endif
-        Microsoft::WRL::ComPtr<ID3DBlob> cs, err;
-        if (FAILED(D3DCompileFromFile(path, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry, target, flags, 0, &cs, &err))) {
-            if (err) OutputDebugStringA((char*)err->GetBufferPointer());
-            return nullptr;
+    bool RendererD3D12::CreateSharedParticleBuffer(uint32_t numElements, uint32_t strideBytes, HANDLE& outSharedHandle) {
+        outSharedHandle = nullptr;
+
+        const UINT64 sizeBytes = UINT64(numElements) * UINT64(strideBytes);
+
+        D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC rd{}; rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; rd.Alignment = 0;
+        rd.Width = sizeBytes; rd.Height = 1; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
+        rd.Format = DXGI_FORMAT_UNKNOWN; rd.SampleDesc = { 1, 0 }; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        rd.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+        Microsoft::WRL::ComPtr<ID3D12Resource> res;
+        if (FAILED(m_device.device()->CreateCommittedResource(
+            &hp, D3D12_HEAP_FLAG_SHARED, &rd,
+            D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&res)))) {
+            return false;
         }
-        return cs;
+
+        int srvIndex = m_device.createBufferSRV(res.Get(), numElements, strideBytes);
+        if (srvIndex < 0) return false;
+
+        HANDLE handle = nullptr;
+        if (FAILED(m_device.device()->CreateSharedHandle(res.Get(), nullptr, GENERIC_ALL, nullptr, &handle))) {
+            return false;
+        }
+
+        m_sharedParticleBuffer = res;
+        m_particleSrvIndex = srvIndex;
+        m_particleCount = numElements;
+        outSharedHandle = handle;
+        return true;
     }
 
     void RendererD3D12::BuildFrameGraph() {
         m_fg = core::FrameGraph{};
 
-        // Root signature for points
         auto rsGfx = CreateRootSignatureGfx(m_device.device());
 
-        // Compile points shaders
-        auto vs = Compile(L"engine/gfx/d3d12_shaders/points.hlsl", "VSMain", "vs_5_1");
-        auto ps = Compile(L"engine/gfx/d3d12_shaders/points.hlsl", "PSMain", "ps_5_1");
+        // 关键：传入仓库内的相对路径，由 Compile 自行解析到绝对路径
+        auto vs = Compile(L"engine\\gfx\\d3d12_shaders\\points.hlsl", "VSMain", "vs_5_1");
+        auto ps = Compile(L"engine\\gfx\\d3d12_shaders\\points.hlsl", "PSMain", "ps_5_1");
 
-        // PSO for points (render directly to backbuffer)
         Microsoft::WRL::ComPtr<ID3D12PipelineState> psoPoints;
         if (rsGfx && vs && ps) {
             DXGI_FORMAT rtFmt = m_device.currentBackbuffer()->GetDesc().Format;
@@ -144,25 +308,27 @@ namespace gfx {
             pso.SampleDesc.Count = 1;
             if (FAILED(m_device.device()->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&psoPoints)))) {
                 psoPoints.Reset();
+                OutputDebugStringA("[PSO] CreateGraphicsPipelineState failed for points pipeline.\n");
             }
         }
+        else {
+            OutputDebugStringA("[PSO] Points shaders or root signature missing, points pass will be skipped.\n");
+        }
 
-        // Clear pass (backbuffer)
         core::PassDesc clear{}; clear.name = "clear";
         clear.execute = [this]() {
             m_device.beginFrame();
+            std::memcpy(m_clearColor, m_visual.clearColor, sizeof(m_clearColor));
             m_device.clearCurrentRTV(m_clearColor);
             m_device.writeTimestamp();
             };
         m_fg.addPass(clear);
 
-        // Points pass
         if (rsGfx && psoPoints) {
             core::PassDesc points{}; points.name = "points";
             points.execute = [this, rsGfx, psoPoints]() {
                 auto* cl = m_device.cmdList();
 
-                // Set RTV to current backbuffer (already in RT state by clear)
                 auto rtvHandle = m_device.currentRTV();
                 cl->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
 
@@ -177,13 +343,30 @@ namespace gfx {
                 cl->SetPipelineState(psoPoints.Get());
                 cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-                // Per-frame constants
+                if (m_sharedParticleBuffer) {
+                    D3D12_RESOURCE_BARRIER b{};
+                    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                    b.Transition.pResource = m_sharedParticleBuffer.Get();
+                    b.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
+                    b.Transition.StateAfter = D3D12_RESOURCE_STATE_GENERIC_READ;
+                    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+                    cl->ResourceBarrier(1, &b);
+                }
+
                 PerFrameCB cb{};
-                for (int i = 0; i < 16; ++i) cb.viewProj[i] = (i % 5) == 0 ? 1.0f : 0.0f; // TODO: set real ViewProj
+                float3 eye = m_camera.eye;
+                float3 at = m_camera.at;
+                float3 up = m_camera.up;
+                Mat4 V = lookAtRH(eye, at, up);
+                float aspect = (m_device.height() > 0) ? (float)m_device.width() / (float)m_device.height() : 1.0f;
+                Mat4 P = perspectiveFovRH_ZO(Deg2Rad(m_camera.fovYDeg), aspect, m_camera.nearZ, m_camera.farZ);
+                Mat4 VP = mul(P, V);
+
+                std::memcpy(cb.viewProj, VP.m, sizeof(cb.viewProj));
                 cb.screenSize[0] = (float)m_device.width();
                 cb.screenSize[1] = (float)m_device.height();
-                cb.particleRadiusPx = 3.0f; // TODO: parameterize via config
-                cb.thicknessScale = 1.0f;
+                cb.particleRadiusPx = m_visual.particleRadiusPx;
+                cb.thicknessScale = m_visual.thicknessScale;
                 cl->SetGraphicsRoot32BitConstants(0, sizeof(PerFrameCB) / 4, &cb, 0);
 
                 if (m_particleSrvIndex >= 0 && m_particleCount > 0) {
@@ -192,12 +375,22 @@ namespace gfx {
                     UINT instanceCount = m_particleCount;
                     cl->DrawInstanced(6, instanceCount, 0, 0);
                 }
+
+                if (m_sharedParticleBuffer) {
+                    D3D12_RESOURCE_BARRIER b{};
+                    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                    b.Transition.pResource = m_sharedParticleBuffer.Get();
+                    b.Transition.StateBefore = D3D12_RESOURCE_STATE_GENERIC_READ;
+                    b.Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
+                    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+                    cl->ResourceBarrier(1, &b);
+                }
+
                 m_device.writeTimestamp();
                 };
             m_fg.addPass(points);
         }
 
-        // Present
         core::PassDesc present{}; present.name = "present";
         present.execute = [this]() { m_device.present(); };
         m_fg.addPass(present);

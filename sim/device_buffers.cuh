@@ -8,6 +8,54 @@
   fprintf(stderr,"CUDA error %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(e)); abort(); } } while(0)
 #endif
 
+struct DeviceBuffers {
+    // 主状态
+    float4* d_pos = nullptr;
+    float4* d_pos_pred = nullptr;
+    float4* d_vel = nullptr;
+
+    // 邻域/排序
+    uint32_t* d_indices = nullptr;
+    uint32_t* d_indices_sorted = nullptr;
+    uint32_t* d_cellKeys = nullptr;
+    uint32_t* d_cellKeys_sorted = nullptr;
+    uint32_t* d_cellStart = nullptr;
+    uint32_t* d_cellEnd = nullptr;
+
+    // PBF
+    float* d_lambda = nullptr;
+    float4* d_delta = nullptr;
+
+    // sort 临时缓存
+    void* d_sortTemp = nullptr;
+    size_t sortTempBytes = 0;
+
+    uint32_t capacity = 0;
+    uint32_t numCellsCapacity = 0;
+
+    // 外部绑定标志：d_pos_pred 来源于外部共享资源时，禁止在 free/resize 时 cudaFree
+    bool posPredExternal = false;
+
+    void allocate(uint32_t N);
+    void allocGridRanges(uint32_t numCells);
+    void resizeGridRanges(uint32_t numCells);
+    void ensureSortTemp(size_t bytes);
+    void freeAll();
+
+    // 绑定/解绑外部 d_pos_pred 指针（绑定时释放原自有内存以避免泄漏）
+    void bindExternalPosPred(float4* ptr) {
+        if (d_pos_pred && !posPredExternal) {
+            cudaFree(d_pos_pred);
+        }
+        d_pos_pred = ptr;
+        posPredExternal = true;
+    }
+    void detachExternalPosPred() {
+        d_pos_pred = nullptr;
+        posPredExternal = false;
+    }
+};
+
 namespace sim {
 
     struct DeviceBuffers {
@@ -31,25 +79,42 @@ namespace sim {
 
         uint32_t capacity = 0;
 
+        // 外部绑定标志：若为 true，release/allocate 不应释放/重分配 d_pos_pred
+        bool posPredExternal = false;
+
         void allocate(uint32_t cap) {
             if (cap == capacity) return;
+
+            // 释放除 d_pos_pred（当为外部绑定时保留）之外的所有资源
             release();
+
             capacity = cap;
             CUDA_CHECK(cudaMalloc((void**)&d_pos, sizeof(float4) * capacity));
             CUDA_CHECK(cudaMalloc((void**)&d_vel, sizeof(float4) * capacity));
-            CUDA_CHECK(cudaMalloc((void**)&d_pos_pred, sizeof(float4) * capacity));
+
+            if (!posPredExternal) {
+                CUDA_CHECK(cudaMalloc((void**)&d_pos_pred, sizeof(float4) * capacity));
+            }
             CUDA_CHECK(cudaMalloc((void**)&d_lambda, sizeof(float) * capacity));
             CUDA_CHECK(cudaMalloc((void**)&d_delta, sizeof(float4) * capacity));
             CUDA_CHECK(cudaMalloc((void**)&d_cellKeys, sizeof(uint32_t) * capacity));
             CUDA_CHECK(cudaMalloc((void**)&d_cellKeys_sorted, sizeof(uint32_t) * capacity));
             CUDA_CHECK(cudaMalloc((void**)&d_indices, sizeof(uint32_t) * capacity));
             CUDA_CHECK(cudaMalloc((void**)&d_indices_sorted, sizeof(uint32_t) * capacity));
-            // grid 尺寸根据参数设置，由外部创建 cellStart/End
+            // grid 尺寸根据参数设置，由外部创建/重配 cellStart/End
         }
 
         void allocGridRanges(uint32_t numCells) {
             CUDA_CHECK(cudaMalloc((void**)&d_cellStart, sizeof(uint32_t) * numCells));
             CUDA_CHECK(cudaMalloc((void**)&d_cellEnd, sizeof(uint32_t) * numCells));
+        }
+
+        // 运行时重配 cellStart/End（当 numCells 变化时调用）
+        void resizeGridRanges(uint32_t numCells) {
+            if (d_cellStart) CUDA_CHECK(cudaFree(d_cellStart));
+            if (d_cellEnd)   CUDA_CHECK(cudaFree(d_cellEnd));
+            d_cellStart = d_cellEnd = nullptr;
+            allocGridRanges(numCells);
         }
 
         void ensureSortTemp(size_t bytes) {
@@ -60,17 +125,39 @@ namespace sim {
             sortTempBytes = bytes;
         }
 
+        // 仅在非外部绑定时释放 d_pos_pred；其他资源总是释放
         void release() {
             auto fre = [](void* p) { if (p) CUDA_CHECK(cudaFree(p)); };
-            fre(d_pos); fre(d_vel); fre(d_pos_pred); fre(d_lambda); fre(d_delta);
-            fre(d_cellKeys); fre(d_cellKeys_sorted);
-            fre(d_indices); fre(d_indices_sorted);
-            fre(d_cellStart); fre(d_cellEnd); fre(d_sortTemp);
-            d_pos = d_vel = d_pos_pred = nullptr; d_lambda = nullptr; d_delta = nullptr;
-            d_cellKeys = d_cellKeys_sorted = nullptr;
-            d_indices = d_indices_sorted = nullptr;
-            d_cellStart = d_cellEnd = nullptr; d_sortTemp = nullptr; sortTempBytes = 0;
+            fre(d_pos); d_pos = nullptr;
+            if (!posPredExternal) { fre(d_pos_pred); d_pos_pred = nullptr; }
+            fre(d_vel); d_vel = nullptr;
+
+            fre(d_lambda); d_lambda = nullptr;
+            fre(d_delta);  d_delta = nullptr;
+
+            fre(d_cellKeys); d_cellKeys = nullptr;
+            fre(d_cellKeys_sorted); d_cellKeys_sorted = nullptr;
+            fre(d_indices); d_indices = nullptr;
+            fre(d_indices_sorted); d_indices_sorted = nullptr;
+            fre(d_cellStart); d_cellStart = nullptr;
+            fre(d_cellEnd);   d_cellEnd = nullptr;
+
+            fre(d_sortTemp); d_sortTemp = nullptr; sortTempBytes = 0;
+
             capacity = 0;
+        }
+
+        // 绑定/解绑外部 d_pos_pred 指针（绑定时释放原自有内存以避免泄漏）
+        void bindExternalPosPred(float4* ptr) {
+            if (d_pos_pred && !posPredExternal) {
+                CUDA_CHECK(cudaFree(d_pos_pred));
+            }
+            d_pos_pred = ptr;
+            posPredExternal = true;
+        }
+        void detachExternalPosPred() {
+            d_pos_pred = nullptr;
+            posPredExternal = false;
         }
 
         ~DeviceBuffers() { release(); }

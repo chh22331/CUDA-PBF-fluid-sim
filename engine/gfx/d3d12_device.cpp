@@ -85,7 +85,8 @@ void D3D12Device::present() {
 
     endFrame();
 
-    m_swapchain->Present(1, 0);
+    // P0: 按配置控制 VSync（syncInterval 0/1）
+    m_swapchain->Present(m_params.vsync ? 1 : 0, 0);
 
     const UINT64 fenceToSignal = ++m_fenceValues[m_frameIndex];
     m_lastSignaledFenceValue = fenceToSignal;
