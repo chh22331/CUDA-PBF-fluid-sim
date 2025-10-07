@@ -6,12 +6,12 @@
 
 namespace {
 
-    // XSPH: v_i' = v_i + c * (m/ρ0) * Σ_j (v_j - v_i) W_poly6(x_i - x_j)
     __global__ void KXSPH(
         float4* __restrict__ vel_out,
         const float4* __restrict__ vel_in,
         const float4* __restrict__ pos_pred,
         const uint32_t* __restrict__ indicesSorted,
+        const uint32_t* __restrict__ keysSorted,    // 新增
         const uint32_t* __restrict__ cellStart,
         const uint32_t* __restrict__ cellEnd,
         sim::DeviceParams dp,
@@ -28,39 +28,33 @@ namespace {
         float3 pi = to_float3(pos_pred[i]);
         float3 vi = to_float3(vel_in[i]);
 
-        float3 rel = make_float3((pi.x - grid.mins.x) / grid.cellSize,
-            (pi.y - grid.mins.y) / grid.cellSize,
-            (pi.z - grid.mins.z) / grid.cellSize);
-        int3 ci = make_int3(floorf(rel.x), floorf(rel.y), floorf(rel.z));
-        ci.x = max(0, min(ci.x, grid.dim.x - 1));
-        ci.y = max(0, min(ci.y, grid.dim.y - 1));
-        ci.z = max(0, min(ci.z, grid.dim.z - 1));
+        // 用 key 还原单元
+        const uint32_t key = keysSorted[sortedIdx];
+        int3 ci;
+        ci.x = int(key % uint32_t(grid.dim.x));
+        uint32_t key_div_x = key / uint32_t(grid.dim.x);
+        ci.y = int(key_div_x % uint32_t(grid.dim.y));
+        ci.z = int(key_div_x / uint32_t(grid.dim.y));
 
         float3 dv_sum = make_float3(0.f, 0.f, 0.f);
-
-        const bool capEnabled = (dp.maxNeighbors > 0);
         int neighborCount = 0;
 
-        for (int dz = -1; dz <= 1; ++dz) {
-            for (int dy = -1; dy <= 1; ++dy) {
-                for (int dx = -1; dx <= 1; ++dx) {
-                    if (capEnabled && neighborCount >= dp.maxNeighbors) break;
+        const float h = kc.h;
+        const float cs = grid.cellSize;
+        const int reach = (cs > 0.f) ? max(1, int(ceilf(h / cs))) : 1;
 
+        for (int dz = -reach; dz <= reach; ++dz) {
+            for (int dy = -reach; dy <= reach; ++dy) {
+                for (int dx = -reach; dx <= reach; ++dx) {
                     int3 cc = make_int3(ci.x + dx, ci.y + dy, ci.z + dz);
-                    if (cc.x < 0 || cc.x >= grid.dim.x ||
-                        cc.y < 0 || cc.y >= grid.dim.y ||
-                        cc.z < 0 || cc.z >= grid.dim.z) {
-                        continue;
-                    }
+                    if (!sim::inBounds(cc, grid.dim)) continue;
 
-                    uint32_t cidx = static_cast<uint32_t>((cc.z * grid.dim.y + cc.y) * grid.dim.x + cc.x);
+                    uint32_t cidx = sim::linIdx(cc, grid.dim);
                     uint32_t beg = cellStart[cidx];
                     uint32_t end = cellEnd[cidx];
                     if (beg == 0xFFFFFFFFu || beg >= end) continue;
 
                     for (uint32_t k = beg; k < end; ++k) {
-                        if (capEnabled && neighborCount >= dp.maxNeighbors) break;
-
                         uint32_t j = indicesSorted[k];
                         if (j == i) continue;
 
@@ -83,11 +77,19 @@ namespace {
             }
         }
 
+        float gate = 1.0f;
+        if (dp.pbf.xsph_gate_enable) {
+            const int nMin = max(0, dp.pbf.xsph_n_min);
+            const int nMax = max(nMin + 1, dp.pbf.xsph_n_max);
+            float t = (float(neighborCount) - float(nMin)) / float(nMax - nMin);
+            gate = fminf(1.f, fmaxf(0.f, t));
+        }
+
         const float mass_over_rest = (dp.restDensity > 0.f) ? (dp.particleMass / dp.restDensity) : 0.f;
         float3 vnew = make_float3(
-            vi.x + xsph_c * mass_over_rest * dv_sum.x,
-            vi.y + xsph_c * mass_over_rest * dv_sum.y,
-            vi.z + xsph_c * mass_over_rest * dv_sum.z
+            vi.x + (xsph_c * gate) * mass_over_rest * dv_sum.x,
+            vi.y + (xsph_c * gate) * mass_over_rest * dv_sum.y,
+            vi.z + (xsph_c * gate) * mass_over_rest * dv_sum.z
         );
 
         vel_out[i] = make_float4(vnew.x, vnew.y, vnew.z, 0.0f);
@@ -100,6 +102,7 @@ extern "C" void LaunchXSPH(
     const float4* vel_in,
     const float4* pos_pred,
     const uint32_t* indicesSorted,
+    const uint32_t* keysSorted,           // 新增
     const uint32_t* cellStart,
     const uint32_t* cellEnd,
     sim::DeviceParams dp,
@@ -109,5 +112,5 @@ extern "C" void LaunchXSPH(
     if (N == 0 || dp.xsph_c <= 0.f) return;
     const int BS = 256;
     dim3 block(BS), gridDim((N + BS - 1) / BS);
-    KXSPH << <gridDim, block, 0, s >> > (vel_out, vel_in, pos_pred, indicesSorted, cellStart, cellEnd, dp, N);
+    KXSPH << <gridDim, block, 0, s >> > (vel_out, vel_in, pos_pred, indicesSorted, keysSorted, cellStart, cellEnd, dp, N);
 }

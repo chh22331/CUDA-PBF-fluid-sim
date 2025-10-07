@@ -49,13 +49,28 @@ namespace console {
             // 日志与诊断开关（新增）
             bool printHotReload = false;        // [HotReload] 提示
             bool printDebugKeys = false;        // [Debug] 键位回显
-            bool printPeriodicStats = false;    // [SimStats] 周期统计打印
-            bool printSanitize = false;         // [Sanitize] 钳制提示
-            bool printWarnings = false;          // [Warn]/[Info] 类一般提示/告警
+            bool printPeriodicStats = true;    // [SimStats] 周期统计打印
+            bool printSanitize = true;         // [Sanitize] 钳制提示
+            bool printWarnings = true;          // [Warn]/[Info] 类一般提示/告警
 
             // 高开销“塌陷诊断”（包含主机拷贝/近邻统计）
             bool enableAdvancedCollapseDiag = false;
             int  advancedCollapseSampleStride = 16; // >=1，子采样步长
+
+            // —— 数值稳定性专项日志（新增） ——
+            // 总开关 + 频率控制
+            bool logStabilityBasic = true;    // 开：输出基础稳定性指标（速度/密度/CFL 等）
+            int  logEveryN = 60;               // 每多少帧打印一次（>=1）
+            int  logSampleStride = 8;          // 统计核采样步长（>=1）
+            int  logMaxHostSample = 65536;     // 允许拷回主机的最大样本数（限制高开销项）
+
+            // 细项开关（在 logStabilityBasic=true 时生效，否则均忽略）
+            bool logCFL = true;                // 打印基于 avg/max 速度的 CFL 估算
+            bool logLambda = true;             // 打印 PBF λ（约束解）min/max/avg（主机拷样）
+            bool logBoundaryApprox = true;     // 估计边界接触占比（主机拷样）
+            bool logEnergy = true;             // 打印动能估算与衰减率（主机拷样）
+            // 注：logXSphEffect 暂不实现精确估算（需修改核/双缓对比），保留占位以便后续扩展
+            bool logXSphEffect = false;        // 占位：XSPH 平滑实际效果估算（未来扩展）
         } debug;
 
         // 仿真配置（集中所有物理与发射/域参数）
@@ -66,7 +81,7 @@ namespace console {
             uint32_t emitPerStep = 20;
             bool     faucetFillEnable = true;
             bool     recycleToNozzle = false;
-            float3   nozzlePos   = make_float3(25.0f, 49.0f, 25.0f);
+            float3   nozzlePos   = make_float3(50.0f, 99.0f, 50.0f);
             float3   nozzleDir   = make_float3(0.0f, -1.0f, 0.0f);
             // 缩回与 h 同阶的喷口尺度
             float    nozzleRadius= 20.0f;
@@ -84,7 +99,7 @@ namespace console {
 
             // 质量定义（完全由 console 统一下发）
             enum class MassMode : uint32_t { Explicit = 0, SphereByRadius = 1, UniformLattice = 2 };
-            MassMode massMode = MassMode::Explicit;
+            MassMode massMode = MassMode::UniformLattice;
             float    lattice_spacing_factor_h = 1.0f;
             float    particleMass = 1.0f;     
             float    particleVolumeScale = 1.0f; 
@@ -98,17 +113,17 @@ namespace console {
             sim::PbfTuning pbf{};
 
             // XSPH 系数（移动到 console：<=0 关闭，常用 0.01~0.1）
-            float    xsph_c = 0.05f;
+            float    xsph_c = 0.1f;
 
             // 邻域核参数
             float    smoothingRadius = 2.0f;
             float3   gridMins = make_float3(0.0f, 0.0f, 0.0f);
-            float3   gridMaxs = make_float3(50.0f, 50.0f, 50.0f);
+            float3   gridMaxs = make_float3(100.0f, 100.0f, 100.0f);
             float    cellSize = 0.0f;
 
             // 其他数值参数
             int      solverIters = 4;
-            int      maxNeighbors = 16384;
+            int      maxNeighbors = 64;
             bool     useMixedPrecision = true;
             int      sortEveryN = 1;
             float    boundaryRestitution = 0.0f;

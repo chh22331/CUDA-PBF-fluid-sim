@@ -11,6 +11,7 @@
 #include <cuda_runtime.h>
 // 新增：集中从控制台获取发射/回收参数
 #include "../engine/core/console.h"
+#include <limits>
 
 // —— 内核包装的全局声明（与 .cu 文件保持一致的 extern "C" + 全局命名空间） 
 extern "C" void LaunchIntegratePred(float4* pos, const float4* vel, float4* pos_pred, float3 gravity, float dt, uint32_t N, cudaStream_t s); 
@@ -20,6 +21,7 @@ extern "C" void LaunchLambda(
     float* lambda,
     const float4* pos_pred,
     const uint32_t* indicesSorted,
+    const uint32_t* keysSorted,             // 新增
     const uint32_t* cellStart,
     const uint32_t* cellEnd,
     sim::DeviceParams dp,
@@ -31,11 +33,24 @@ extern "C" void LaunchDeltaApply(
     float4* delta,
     const float* lambda,
     const uint32_t* indicesSorted,
+    const uint32_t* keysSorted,             // 新增
     const uint32_t* cellStart,
     const uint32_t* cellEnd,
     sim::DeviceParams dp,
     uint32_t N,
-    cudaStream_t s); 
+    cudaStream_t s);
+
+extern "C" void LaunchXSPH(
+    float4* vel_out,
+    const float4* vel_in,
+    const float4* pos_pred,
+    const uint32_t* indicesSorted,
+    const uint32_t* keysSorted,             // 新增
+    const uint32_t* cellStart,
+    const uint32_t* cellEnd,
+    sim::DeviceParams dp,
+    uint32_t N,
+    cudaStream_t s);
 extern "C" void LaunchVelocity(float4* vel, const float4* pos, const float4* pos_pred, float inv_dt, uint32_t N, cudaStream_t s);
 // 保持与工程中 boundary.cu 的签名一致（包含 restitution） 
 extern "C" void LaunchBoundary(float4* pos_pred, float4* vel, sim::GridBounds grid, float restitution, uint32_t N, cudaStream_t s);
@@ -74,16 +89,6 @@ extern "C" bool LaunchComputeStatsBruteforce(const float4* pos_pred,
     double* outAvgSpeed,
     double* outAvgRhoRel,
     double* outAvgRho,
-    cudaStream_t s);
-extern "C" void LaunchXSPH(
-    float4* vel_out,
-    const float4* vel_in,
-    const float4* pos_pred,
-    const uint32_t* indicesSorted,
-    const uint32_t* cellStart,
-    const uint32_t* cellEnd,
-    sim::DeviceParams dp,
-    uint32_t N,
     cudaStream_t s);
 
 // 新增：Poisson-disk 采样（2D 圆盘，Bridson 算法）
@@ -596,13 +601,151 @@ namespace sim {
         CUDA_CHECK(cudaEventRecord(m_evEnd, m_stream));
         CUDA_CHECK(cudaEventSynchronize(m_evEnd));
         float ms = 0.f; cudaEventElapsedTime(&ms, m_evStart, m_evEnd);
-        ++m_frameIndex;
-        return true;
+
+        // —— 数值稳定性诊断（按需输出，避免影响性能） ——
+        if (c.debug.logStabilityBasic && c.debug.logEveryN > 0 && m_params.numParticles > 0) {
+            const int logEveryN = (((1) > (c.debug.logEveryN)) ? (1) : (c.debug.logEveryN));
+            if ((m_frameIndex % (uint64_t)logEveryN) == 0ull) {
+                // 1) 基础统计：邻居/速度/密度（复用 GPU 统计核，低开销，支持子采样）
+                double avgN = 0.0, avgV = 0.0, avgRRel = 0.0, avgR = 0.0;
+                const uint32_t stride = (c.debug.logSampleStride <= 0 ? 1u : (uint32_t)c.debug.logSampleStride);
+                (void)LaunchComputeStats(
+                    m_bufs.d_pos_pred,
+                    m_bufs.d_vel,
+                    m_bufs.d_indices_sorted,
+                    m_bufs.d_cellStart,
+                    m_bufs.d_cellEnd,
+                    m_params.grid,
+                    m_params.kernel,
+                    m_params.particleMass,
+                    m_params.numParticles,
+                    m_numCells,
+                    stride,
+                    &avgN, &avgV, &avgRRel, &avgR,
+                    m_stream);
+                CUDA_CHECK(cudaStreamSynchronize(m_stream));
+
+                static double s_prevAvgV = -1.0;
+                const double v_decay = (s_prevAvgV > 0.0) ? (avgV / (((1e-12) > (s_prevAvgV)) ? (1e-12) : (s_prevAvgV))) : 0.0;
+                s_prevAvgV = avgV;
+ 
+                // 2) CFL 估算（使用 avgV 近似，下界；若需 maxV 可开启下方主机采样）
+                double cfl_est_avg = 0.0;
+                if (c.debug.logCFL && m_params.kernel.h > 0.0f) {
+                    cfl_est_avg = (double)m_params.dt * avgV / (double)m_params.kernel.h;
+                }
+ 
+                // 3) 可选：PBF λ 统计（主机拷样）
+                double lamMin = 0.0, lamMax = 0.0, lamAvg = 0.0;
+                if (c.debug.logLambda) {
+                    const uint32_t M = std::min<uint32_t>(m_params.numParticles, (uint32_t) (((1) > (c.debug.logMaxHostSample)) ? (1) : (c.debug.logMaxHostSample)));
+                    std::vector<float> h_lambda(M);
+                    if (M > 0 && m_bufs.d_lambda) {
+                        CUDA_CHECK(cudaMemcpy((void*)h_lambda.data(), (const void*)m_bufs.d_lambda, sizeof(float) * M, cudaMemcpyDeviceToHost));
+                        lamMin = lamMax = (double)h_lambda[0];
+                        double s = 0.0;
+                        for (uint32_t i = 0; i < M; ++i) {
+                            const double v = (double)h_lambda[i];
+                            s += v; lamMin = ((lamMin) < (v)) ? (lamMin) : (v); lamMax = (((lamMax) > (v)) ? (lamMax) : (v));
+                        }
+                        lamAvg = (M > 0) ? (s / (double)M) : 0.0;
+                    }
+                }
+ 
+                // 4) 可选：动能估算（主机拷样）
+                static double s_prevKE = -1.0;
+                double KE = 0.0, KE_decay = 0.0;
+                if (c.debug.logEnergy) {
+                    const uint32_t M = std::min<uint32_t>(m_params.numParticles, (uint32_t) (((1) > (c.debug.logMaxHostSample)) ? (1) : (c.debug.logMaxHostSample)));
+                    std::vector<float4> h_vel(M);
+                    CUDA_CHECK(cudaMemcpy((void*)h_vel.data(), (const void*)m_bufs.d_vel, sizeof(float4) * M, cudaMemcpyDeviceToHost));
+                    double sumv2 = 0.0;
+                    for (uint32_t i = 0; i < M; ++i) {
+                        const double vx = h_vel[i].x, vy = h_vel[i].y, vz = h_vel[i].z;
+                        sumv2 += vx * vx + vy * vy + vz * vz;
+                    }
+                    const double mp = (double)m_params.particleMass;
+                    const double invM = (M > 0) ? (1.0 / (double)M) : 0.0;
+                    // 以样本均值估算全局平均动能（单位质量一致即可用于相对比较/衰减率）
+                    KE = 0.5 * mp * sumv2 * invM;
+                    if (s_prevKE > 0.0) KE_decay = KE / (((1e-18) > (s_prevKE)) ? (1e-18) : (s_prevKE));
+                    s_prevKE = KE;
+                }
+ 
+                // 5) 可选：边界接触占比（主机拷样，近似统计六面接触）
+                double fracBoundary = 0.0;
+                if (c.debug.logBoundaryApprox) {
+                    const uint32_t M = std::min<uint32_t>(m_params.numParticles, (uint32_t)(((1) > (c.debug.logMaxHostSample)) ? (1) : (c.debug.logMaxHostSample)));
+                    std::vector<float4> h_pos(M);
+                    CUDA_CHECK(cudaMemcpy((void*)h_pos.data(), (const void*)m_bufs.d_pos_pred, sizeof(float4) * M, cudaMemcpyDeviceToHost));
+                    const float eps = (((1e-5f) > (0.5f * m_params.kernel.h)) ? (1e-5f) : (0.5f * m_params.kernel.h)); // h/2 作为接触阈值
+                    const float3 mn = m_params.grid.mins, mx = m_params.grid.maxs;
+                    uint32_t cnt = 0, cx=0, cX=0, cy=0, cY=0, cz=0, cZ=0;
+                    for (uint32_t i = 0; i < M; ++i) {
+                        const float x = h_pos[i].x, y = h_pos[i].y, z = h_pos[i].z;
+                        bool isNear = false;
+                        if (x - mn.x <= eps) { isNear = true; ++cx; }
+                        if (mx.x - x <= eps) { isNear = true; ++cX; }
+                        if (y - mn.y <= eps) { isNear = true; ++cy; }
+                        if (mx.y - y <= eps) { isNear = true; ++cY; }
+                        if (z - mn.z <= eps) { isNear = true; ++cz; }
+                        if (mx.z - z <= eps) { isNear = true; ++cZ; }
+                        if (isNear) ++cnt;
+                    }
+                    fracBoundary = (M > 0) ? ((double)cnt / (double)M) : 0.0;
+                    std::fprintf(stderr,
+                        "[Stab] Boundary contact approx: frac=%.3f | x-=%u x+=%u y-=%u y+=%u z-=%u z+=%u (sample=%u)\n",
+                        fracBoundary, cx, cX, cy, cY, cz, cZ, (unsigned)M);
+                }
+ 
+                // 6) 汇总打印与启发式提示
+                std::fprintf(stderr,
+                    "[Stab] Frame=%llu | N=%u | dt=%.4g iters=%d | xsph=%.3g rest=%.3g | avgSpeed=%.4g (decay=%.3f) | avgRhoRel=%.4f",
+                    (unsigned long long)m_frameIndex, m_params.numParticles,
+                    (double)m_params.dt, m_params.solverIters,
+                    (double)m_params.xsph_c, (double)m_params.boundaryRestitution,
+                    avgV, v_decay, avgRRel);
+                if (c.debug.logCFL) {
+                    std::fprintf(stderr, " | CFL(avg)=%.4f", cfl_est_avg);
+                }
+                if (c.debug.logLambda) {
+                    std::fprintf(stderr, " | lambda[min,avg,max]=[%.3g, %.3g, %.3g]", lamMin, lamAvg, lamMax);
+                }
+                if (c.debug.logEnergy) {
+                    std::fprintf(stderr, " | KE=%.4g (decay=%.3f)", KE, KE_decay);
+                }
+                std::fprintf(stderr, "\n");
+ 
+                // 问题导向提示（常见导致“落地振荡不止”的配置）
+                if (m_params.boundaryRestitution > 0.05f) {
+                    std::fprintf(stderr, "[Hint] boundaryRestitution=%.3g 偏大，建议接近 0 以抑制反弹。\n", (double)m_params.boundaryRestitution);
+                }
+                if (m_params.xsph_c <= 0.0f) {
+                    std::fprintf(stderr, "[Hint] 未开启 XSPH（xsph_c<=0），落地后速度需要额外阻尼，建议 xsph_c~[0.02, 0.1]。\n");
+                }
+                if (m_params.solverIters < 4) {
+                    std::fprintf(stderr, "[Hint] solverIters=%d 偏低，密度误差难以收敛，建议 >=4（可视效果常用 5~8）。\n", m_params.solverIters);
+                }
+                if (cfl_est_avg > (double)c.sim.cfl * 1.25) {
+                    std::fprintf(stderr, "[Hint] CFL(avg)=%.3f 高于目标 cfl=%.3f，建议减小 dt 或增大 h/减小速度。\n",
+                        cfl_est_avg, (double)c.sim.cfl);
+                }
+                if (avgRRel > 1.05) {
+                    std::fprintf(stderr, "[Hint] 平均相对密度偏高(>1.05)，表明约束未充分收敛，可增大迭代或减小 dt。\n");
+                }
+            }
+        }
+  
+       ++m_frameIndex;
+       return true;
     }
 
     // —— 阶段封装 ——
     void Simulator::kIntegratePred(cudaStream_t s, const SimParams& p) {
+        // 预测步
         ::LaunchIntegratePred(m_bufs.d_pos, m_bufs.d_vel, m_bufs.d_pos_pred, p.gravity, p.dt, p.numParticles, s);
+        // 关键修正：在建立邻域前先做一次“位置投影式”边界处理，避免邻域/约束在域外失真
+        ::LaunchBoundary(m_bufs.d_pos_pred, m_bufs.d_vel, p.grid, /*restitution=*/0.0f, p.numParticles, s);
     }
 
     void Simulator::kHashKeys(cudaStream_t s, const SimParams& p) {
@@ -629,39 +772,39 @@ namespace sim {
         sim::DeviceParams dp = sim::MakeDeviceParams(p);
 
         ::LaunchLambda(m_bufs.d_lambda, m_bufs.d_pos_pred, m_bufs.d_indices_sorted,
+            m_bufs.d_cellKeys_sorted,                // 新增
             m_bufs.d_cellStart, m_bufs.d_cellEnd,
             dp, p.numParticles, s);
 
-        ::LaunchDeltaApply(m_bufs.d_pos_pred, m_bufs.d_delta, m_bufs.d_lambda, m_bufs.d_indices_sorted,
+        ::LaunchDeltaApply(m_bufs.d_pos_pred, m_bufs.d_delta, m_bufs.d_lambda,
+            m_bufs.d_indices_sorted,
+            m_bufs.d_cellKeys_sorted,                // 新增
             m_bufs.d_cellStart, m_bufs.d_cellEnd,
             dp, p.numParticles, s);
+
+        // 关键修正：每次 PBF 位置更新后再做一次边界投影，避免迭代把粒子推到域外
+        //::LaunchBoundary(m_bufs.d_pos_pred, m_bufs.d_vel, p.grid, /*restitution=*/0.0f, p.numParticles, s);
     }
 
     void Simulator::kVelocityAndPost(cudaStream_t s, const SimParams& p) {
-        // 1) 先用位置差分得到“约束后的”速度
         ::LaunchVelocity(m_bufs.d_vel, m_bufs.d_pos, m_bufs.d_pos_pred, 1.0f / p.dt, p.numParticles, s);
 
-        // 2) 可选：XSPH 平滑速度（基于本帧邻域）
         if (p.xsph_c > 0.0f && p.numParticles > 0) {
             sim::DeviceParams dp = sim::MakeDeviceParams(p);
             ::LaunchXSPH(
                 /*vel_out*/ m_bufs.d_delta,
                 /*vel_in */ m_bufs.d_vel,
                 /*pos    */ m_bufs.d_pos_pred,
-                /*grid   */ m_bufs.d_indices_sorted, m_bufs.d_cellStart, m_bufs.d_cellEnd,
+                /*idx    */ m_bufs.d_indices_sorted,
+                /*keys   */ m_bufs.d_cellKeys_sorted,    // 新增
+                /*grid   */ m_bufs.d_cellStart, m_bufs.d_cellEnd,
                 dp, p.numParticles, s);
             CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_vel, m_bufs.d_delta, sizeof(float4) * p.numParticles,
                 cudaMemcpyDeviceToDevice, s));
         }
 
-        // 3) 边界处理应当作用在“最终速度”与位置上，保证反弹/阻尼生效
         ::LaunchBoundary(m_bufs.d_pos_pred, m_bufs.d_vel, p.grid, p.boundaryRestitution, p.numParticles, s);
-
-        // 4) 回收到喷口（如启用）：该核需同时设置新位置与期望初速度
-        ::LaunchRecycleToNozzleConst(m_bufs.d_pos, m_bufs.d_pos_pred, m_bufs.d_vel,
-            p.grid, p.dt, p.numParticles, /*enabled*/ 1, s);
-
-        // 5) 提交位置
+        ::LaunchRecycleToNozzleConst(m_bufs.d_pos, m_bufs.d_pos_pred, m_bufs.d_vel, p.grid, p.dt, p.numParticles, /*enabled*/ 0, s);
         CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_pos, m_bufs.d_pos_pred, sizeof(float4) * p.numParticles,
             cudaMemcpyDeviceToDevice, s));
     }
@@ -791,7 +934,7 @@ namespace sim {
         if (m_params.numParticles == 0 || m_bufs.capacity == 0) { out = {}; return true; }
 
         // 1) 先跑基于网格的统计
-        double avgN_grid = 0.0, avgV = 0.0, avgRRel_grid = 0.0, avgR_grid = 0.0;
+        double avgN_grid = 0.0, avgV = 0.0, avgRhoRel_grid = 0.0, avgR_grid = 0.0;
         const uint32_t stride = (sampleStride == 0 ? 1u : sampleStride);
         bool ok_grid = LaunchComputeStats(
             m_bufs.d_pos_pred,
@@ -805,7 +948,7 @@ namespace sim {
             m_params.numParticles,
             m_numCells,
             stride,
-            &avgN_grid, &avgV, &avgRRel_grid, &avgR_grid,
+            &avgN_grid, &avgV, &avgRhoRel_grid, &avgR_grid,
             m_stream);
         if (!ok_grid) return false;
 
@@ -813,11 +956,11 @@ namespace sim {
         out.N = m_params.numParticles;
         out.avgNeighbors = avgN_grid;
         out.avgSpeed = avgV;
-        out.avgRhoRel = avgRRel_grid;
+        out.avgRhoRel = avgRhoRel_grid;
         out.avgRho = avgR_grid;
 
         // 2) 跑一小批暴力法，对比差异（代价有限，便于诊断）
-        double avgN_bf = 0.0, avgV_bf = 0.0, avgRRel_bf = 0.0, avgR_bf = 0.0;
+        double avgN_bf = 0.0, avgV_bf = 0.0, avgRhoRel_bf = 0.0, avgR_bf = 0.0;
         const uint32_t kMaxISamples = 2048; // 限制参与暴力法的采样粒子数，控制开销
         bool ok_bf = LaunchComputeStatsBruteforce(
             m_bufs.d_pos_pred,
@@ -827,7 +970,7 @@ namespace sim {
             m_params.numParticles,
             stride,
             kMaxISamples,
-            &avgN_bf, &avgV_bf, &avgRRel_bf, &avgR_bf,
+            &avgN_bf, &avgV_bf, &avgRhoRel_bf, &avgR_bf,
             m_stream);
 
         if (!ok_bf) return true; // 暴力统计失败时，不中断，直接返回 grid 结果
@@ -862,7 +1005,7 @@ namespace sim {
 
             std::fprintf(stderr,
                 "[Diag] Neighbors: grid=%.3f, brute=%.3f | RhoRel: grid=%.3f, brute=%.3f | maxNeighbors=%d%s\n",
-                avgN_grid, avgN_bf, avgRRel_grid, avgRRel_bf, m_params.maxNeighbors,
+                avgN_grid, avgN_bf, avgRhoRel_grid, avgRhoRel_bf, m_params.maxNeighbors,
                 (nearCap ? " (near cap -> risk of truncation)" : ""));
 
             if (ratio_cell_h < 0.9) {

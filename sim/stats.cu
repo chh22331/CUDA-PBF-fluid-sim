@@ -45,6 +45,9 @@ __global__ void StatsKernel(const float4* pos_pred,
     float locSumW = 0.f;
     uint32_t locSamples = 0;
 
+    // 自适应邻域层数
+    const int reach = (grid.cellSize > 0.f) ? max(1, int(ceilf(kc.h / grid.cellSize))) : 1;
+
     for (uint32_t i = tid; i < N; i += stride) {
         if (sampleStride > 1 && (i % sampleStride) != 0) continue;
         const float3 pi = make_float3(pos_pred[i].x, pos_pred[i].y, pos_pred[i].z);
@@ -55,11 +58,11 @@ __global__ void StatsKernel(const float4* pos_pred,
         float neighbors = 0.0f;
         float sumW = 0.0f;
 
-        for (int dz = -1; dz <= 1; ++dz) {
+        for (int dz = -reach; dz <= reach; ++dz) {
             int z = c.z + dz; if (z < 0 || z >= grid.dim.z) continue;
-            for (int dy = -1; dy <= 1; ++dy) {
+            for (int dy = -reach; dy <= reach; ++dy) {
                 int y = c.y + dy; if (y < 0 || y >= grid.dim.y) continue;
-                for (int dx = -1; dx <= 1; ++dx) {
+                for (int dx = -reach; dx <= reach; ++dx) {
                     int x = c.x + dx; if (x < 0 || x >= grid.dim.x) continue;
                     uint32_t cellId = cellToLinear(grid, x, y, z);
                     if (cellId >= numCells) continue;
