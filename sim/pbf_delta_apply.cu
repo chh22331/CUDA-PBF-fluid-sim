@@ -11,7 +11,7 @@ namespace {
         const float4* __restrict__ pos_pred,
         const float* __restrict__ lambda,
         const uint32_t* __restrict__ indicesSorted,
-        const uint32_t* __restrict__ keysSorted,        // 新增
+        const uint32_t* __restrict__ keysSorted,
         const uint32_t* __restrict__ cellStart,
         const uint32_t* __restrict__ cellEnd,
         sim::DeviceParams dp,
@@ -27,7 +27,7 @@ namespace {
         uint32_t i = indicesSorted[sortedIdx];
         float3 pi = to_float3(pos_pred[i]);
 
-        // 由 key 还原单元（固定为建表时的单元）
+        // 由 key 还原单元
         const uint32_t key = keysSorted[sortedIdx];
         int3 ci;
         ci.x = int(key % uint32_t(grid.dim.x));
@@ -35,7 +35,6 @@ namespace {
         ci.y = int(key_div_x % uint32_t(grid.dim.y));
         ci.z = int(key_div_x / uint32_t(grid.dim.y));
 
-        // s_corr 参考权重
         const float dq = pbf.scorr_dq_h * kc.h;
         const float hr2_q = kc.h2 - dq * dq;
         const float w_q = (hr2_q > 0.f) ? (kc.poly6 * hr2_q * hr2_q * hr2_q) : pbf.wq_min;
@@ -49,7 +48,6 @@ namespace {
         for (int dz = -reach; dz <= reach; ++dz) {
             for (int dy = -reach; dy <= reach; ++dy) {
                 for (int dx = -reach; dx <= reach; ++dx) {
-
                     int3 cc = make_int3(ci.x + dx, ci.y + dy, ci.z + dz);
                     if (!sim::inBounds(cc, grid.dim)) continue;
 
@@ -59,7 +57,6 @@ namespace {
                     if (beg == 0xFFFFFFFFu || beg >= end) continue;
 
                     for (uint32_t k = beg; k < end; ++k) {
-
                         uint32_t j = indicesSorted[k];
                         if (j == i) continue;
 
@@ -71,7 +68,9 @@ namespace {
                         float r = sqrtf(r2);
                         float t = kc.h - r;
 
-                        const float coeff = (r > pbf.grad_r_eps) ? (-3.0f * kc.spiky * (t * t) / r) : 0.0f;
+                        // 与 λ 阶段一致的 r_safe
+                        const float r_safe = fmaxf(r, pbf.grad_r_eps);
+                        const float coeff = (-3.0f * kc.spiky * (t * t) / r_safe);
                         float3 grad = make_float3(coeff * rij.x, coeff * rij.y, coeff * rij.z);
 
                         float scorr = 0.0f;
@@ -80,6 +79,7 @@ namespace {
                             float w = kc.poly6 * hr2 * hr2 * hr2;
                             const float ratio = (w_q > 0.f) ? (w / w_q) : 0.0f;
                             scorr = -pbf.scorr_k * powf(ratio, pbf.scorr_n);
+                            if (pbf.scorr_min < 0.f) scorr = fmaxf(scorr, pbf.scorr_min);
                         }
 
                         const float lij = (lambda[i] + lambda[j] + scorr);
@@ -91,8 +91,15 @@ namespace {
             }
         }
 
-        const float mass_over_rest = (dp.restDensity > 0.f) ? (dp.particleMass / dp.restDensity) : 0.f;
-        float3 di = make_float3(mass_over_rest * dxi.x, mass_over_rest * dxi.y, mass_over_rest * dxi.z);
+        // 修正：使用 1/ρ0（标准 PBF），而非 m/ρ0
+        const float invRest = (dp.restDensity > 0.f) ? (1.0f / dp.restDensity) : 0.f;
+        float3 di = make_float3(invRest * dxi.x, invRest * dxi.y, invRest * dxi.z);
+
+        if (pbf.enable_relax) {
+            di.x *= pbf.relax_omega;
+            di.y *= pbf.relax_omega;
+            di.z *= pbf.relax_omega;
+        }
 
         if (pbf.enable_disp_clamp) {
             const float maxDisp = pbf.disp_clamp_max_h * kc.h;
@@ -129,7 +136,7 @@ extern "C" void LaunchDeltaApply(
     float4* delta,
     const float* lambda,
     const uint32_t* indicesSorted,
-    const uint32_t* keysSorted,                 // 新增
+    const uint32_t* keysSorted,
     const uint32_t* cellStart,
     const uint32_t* cellEnd,
     sim::DeviceParams dp,
@@ -140,5 +147,5 @@ extern "C" void LaunchDeltaApply(
     dim3 block(BS), gridDim((N + BS - 1) / BS);
 
     KDeltaCompute << <gridDim, block, 0, s >> > (delta, pos_pred, lambda, indicesSorted, keysSorted, cellStart, cellEnd, dp, N);
-    KApplyDelta   << <gridDim, block, 0, s >> > (pos_pred, delta, indicesSorted, N);
+    KApplyDelta << <gridDim, block, 0, s >> > (pos_pred, delta, indicesSorted, N);
 }

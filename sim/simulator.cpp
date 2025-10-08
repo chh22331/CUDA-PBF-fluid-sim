@@ -628,17 +628,17 @@ namespace sim {
                 static double s_prevAvgV = -1.0;
                 const double v_decay = (s_prevAvgV > 0.0) ? (avgV / (((1e-12) > (s_prevAvgV)) ? (1e-12) : (s_prevAvgV))) : 0.0;
                 s_prevAvgV = avgV;
- 
+
                 // 2) CFL 估算（使用 avgV 近似，下界；若需 maxV 可开启下方主机采样）
                 double cfl_est_avg = 0.0;
                 if (c.debug.logCFL && m_params.kernel.h > 0.0f) {
                     cfl_est_avg = (double)m_params.dt * avgV / (double)m_params.kernel.h;
                 }
- 
+
                 // 3) 可选：PBF λ 统计（主机拷样）
                 double lamMin = 0.0, lamMax = 0.0, lamAvg = 0.0;
                 if (c.debug.logLambda) {
-                    const uint32_t M = std::min<uint32_t>(m_params.numParticles, (uint32_t) (((1) > (c.debug.logMaxHostSample)) ? (1) : (c.debug.logMaxHostSample)));
+                    const uint32_t M = std::min<uint32_t>(m_params.numParticles, (uint32_t)(((1) > (c.debug.logMaxHostSample)) ? (1) : (c.debug.logMaxHostSample)));
                     std::vector<float> h_lambda(M);
                     if (M > 0 && m_bufs.d_lambda) {
                         CUDA_CHECK(cudaMemcpy((void*)h_lambda.data(), (const void*)m_bufs.d_lambda, sizeof(float) * M, cudaMemcpyDeviceToHost));
@@ -651,12 +651,12 @@ namespace sim {
                         lamAvg = (M > 0) ? (s / (double)M) : 0.0;
                     }
                 }
- 
+
                 // 4) 可选：动能估算（主机拷样）
                 static double s_prevKE = -1.0;
                 double KE = 0.0, KE_decay = 0.0;
                 if (c.debug.logEnergy) {
-                    const uint32_t M = std::min<uint32_t>(m_params.numParticles, (uint32_t) (((1) > (c.debug.logMaxHostSample)) ? (1) : (c.debug.logMaxHostSample)));
+                    const uint32_t M = std::min<uint32_t>(m_params.numParticles, (uint32_t)(((1) > (c.debug.logMaxHostSample)) ? (1) : (c.debug.logMaxHostSample)));
                     std::vector<float4> h_vel(M);
                     CUDA_CHECK(cudaMemcpy((void*)h_vel.data(), (const void*)m_bufs.d_vel, sizeof(float4) * M, cudaMemcpyDeviceToHost));
                     double sumv2 = 0.0;
@@ -666,45 +666,22 @@ namespace sim {
                     }
                     const double mp = (double)m_params.particleMass;
                     const double invM = (M > 0) ? (1.0 / (double)M) : 0.0;
-                    // 以样本均值估算全局平均动能（单位质量一致即可用于相对比较/衰减率）
                     KE = 0.5 * mp * sumv2 * invM;
                     if (s_prevKE > 0.0) KE_decay = KE / (((1e-18) > (s_prevKE)) ? (1e-18) : (s_prevKE));
                     s_prevKE = KE;
                 }
- 
-                // 5) 可选：边界接触占比（主机拷样，近似统计六面接触）
-                double fracBoundary = 0.0;
-                if (c.debug.logBoundaryApprox) {
-                    const uint32_t M = std::min<uint32_t>(m_params.numParticles, (uint32_t)(((1) > (c.debug.logMaxHostSample)) ? (1) : (c.debug.logMaxHostSample)));
-                    std::vector<float4> h_pos(M);
-                    CUDA_CHECK(cudaMemcpy((void*)h_pos.data(), (const void*)m_bufs.d_pos_pred, sizeof(float4) * M, cudaMemcpyDeviceToHost));
-                    const float eps = (((1e-5f) > (0.5f * m_params.kernel.h)) ? (1e-5f) : (0.5f * m_params.kernel.h)); // h/2 作为接触阈值
-                    const float3 mn = m_params.grid.mins, mx = m_params.grid.maxs;
-                    uint32_t cnt = 0, cx=0, cX=0, cy=0, cY=0, cz=0, cZ=0;
-                    for (uint32_t i = 0; i < M; ++i) {
-                        const float x = h_pos[i].x, y = h_pos[i].y, z = h_pos[i].z;
-                        bool isNear = false;
-                        if (x - mn.x <= eps) { isNear = true; ++cx; }
-                        if (mx.x - x <= eps) { isNear = true; ++cX; }
-                        if (y - mn.y <= eps) { isNear = true; ++cy; }
-                        if (mx.y - y <= eps) { isNear = true; ++cY; }
-                        if (z - mn.z <= eps) { isNear = true; ++cz; }
-                        if (mx.z - z <= eps) { isNear = true; ++cZ; }
-                        if (isNear) ++cnt;
-                    }
-                    fracBoundary = (M > 0) ? ((double)cnt / (double)M) : 0.0;
-                    std::fprintf(stderr,
-                        "[Stab] Boundary contact approx: frac=%.3f | x-=%u x+=%u y-=%u y+=%u z-=%u z+=%u (sample=%u)\n",
-                        fracBoundary, cx, cX, cy, cY, cz, cZ, (unsigned)M);
-                }
- 
-                // 6) 汇总打印与启发式提示
+
+                // 基于统计值派生：ρ/ρ0（用于打印与阈值判断）与 sumW（核权重和）
+                const double rhoRelPrint = (m_params.restDensity > 0.0f) ? (avgR / (double)m_params.restDensity) : 0.0;
+                const double sumWPrint = avgRRel; // 原 avgRhoRel 实际为 ΣW
+
+                // 5) 汇总打印与启发式提示
                 std::fprintf(stderr,
-                    "[Stab] Frame=%llu | N=%u | dt=%.4g iters=%d | xsph=%.3g rest=%.3g | avgSpeed=%.4g (decay=%.3f) | avgRhoRel=%.4f",
+                    "[Stab] Frame=%llu | N=%u | dt=%.4g iters=%d | xsph=%.3g rest=%.3g | avgSpeed=%.4g (decay=%.3f) | avgRhoRel=%.4f | sumW=%.4f",
                     (unsigned long long)m_frameIndex, m_params.numParticles,
                     (double)m_params.dt, m_params.solverIters,
                     (double)m_params.xsph_c, (double)m_params.boundaryRestitution,
-                    avgV, v_decay, avgRRel);
+                    avgV, v_decay, rhoRelPrint, sumWPrint);
                 if (c.debug.logCFL) {
                     std::fprintf(stderr, " | CFL(avg)=%.4f", cfl_est_avg);
                 }
@@ -715,8 +692,8 @@ namespace sim {
                     std::fprintf(stderr, " | KE=%.4g (decay=%.3f)", KE, KE_decay);
                 }
                 std::fprintf(stderr, "\n");
- 
-                // 问题导向提示（常见导致“落地振荡不止”的配置）
+
+                // 问题导向提示
                 if (m_params.boundaryRestitution > 0.05f) {
                     std::fprintf(stderr, "[Hint] boundaryRestitution=%.3g 偏大，建议接近 0 以抑制反弹。\n", (double)m_params.boundaryRestitution);
                 }
@@ -730,7 +707,8 @@ namespace sim {
                     std::fprintf(stderr, "[Hint] CFL(avg)=%.3f 高于目标 cfl=%.3f，建议减小 dt 或增大 h/减小速度。\n",
                         cfl_est_avg, (double)c.sim.cfl);
                 }
-                if (avgRRel > 1.05) {
+                // 使用 ρ/ρ0 进行判断
+                if (rhoRelPrint > 1.05) {
                     std::fprintf(stderr, "[Hint] 平均相对密度偏高(>1.05)，表明约束未充分收敛，可增大迭代或减小 dt。\n");
                 }
             }
@@ -783,7 +761,7 @@ namespace sim {
             dp, p.numParticles, s);
 
         // 关键修正：每次 PBF 位置更新后再做一次边界投影，避免迭代把粒子推到域外
-        //::LaunchBoundary(m_bufs.d_pos_pred, m_bufs.d_vel, p.grid, /*restitution=*/0.0f, p.numParticles, s);
+        ::LaunchBoundary(m_bufs.d_pos_pred, m_bufs.d_vel, p.grid, /*restitution=*/0.0f, p.numParticles, s);
     }
 
     void Simulator::kVelocityAndPost(cudaStream_t s, const SimParams& p) {
@@ -956,12 +934,14 @@ namespace sim {
         out.N = m_params.numParticles;
         out.avgNeighbors = avgN_grid;
         out.avgSpeed = avgV;
-        out.avgRhoRel = avgRhoRel_grid;
+        // 语义改为 ρ/ρ0（此前 avgRhoRel_grid 为 ΣW）
+        const double rhoRel_grid = (m_params.restDensity > 0.0f) ? (avgR_grid / (double)m_params.restDensity) : 0.0;
+        out.avgRhoRel = rhoRel_grid;
         out.avgRho = avgR_grid;
 
         // 2) 跑一小批暴力法，对比差异（代价有限，便于诊断）
         double avgN_bf = 0.0, avgV_bf = 0.0, avgRhoRel_bf = 0.0, avgR_bf = 0.0;
-        const uint32_t kMaxISamples = 2048; // 限制参与暴力法的采样粒子数，控制开销
+        const uint32_t kMaxISamples = 2048;
         bool ok_bf = LaunchComputeStatsBruteforce(
             m_bufs.d_pos_pred,
             m_bufs.d_vel,
@@ -973,27 +953,26 @@ namespace sim {
             &avgN_bf, &avgV_bf, &avgRhoRel_bf, &avgR_bf,
             m_stream);
 
-        if (!ok_bf) return true; // 暴力统计失败时，不中断，直接返回 grid 结果
+        if (!ok_bf) return true;
 
-        // 3) 对比并判定异常
         const bool hasNeighborCap = (m_params.maxNeighbors > 0);
         const double capN = hasNeighborCap ? double(m_params.maxNeighbors) : std::numeric_limits<double>::infinity();
-        const double nearCapRatio = 0.9; // 90% 视为接近上限
+        const double nearCapRatio = 0.9;
         const bool nearCap = hasNeighborCap && (avgN_grid >= nearCapRatio * capN);
 
-        // grid 与暴力差距（邻居或密度）阈值
-        const double nAbsThresh = 2.0;      // 绝对差大于 2 视为可疑
-        const double nRelThresh = 0.5;      // grid 结果比暴力法低于 50%
+        const double nAbsThresh = 2.0;
+        const double nRelThresh = 0.5;
         const bool nSeverelyUndercount =
             (avgN_bf > 0.0) && ((avgN_grid + nAbsThresh) < avgN_bf * (1.0 - nRelThresh));
 
-        // 4) 仅在发现异常时打印诊断（同帧节流）
+        // 使用 ρ/ρ0 进行对比打印（不再打印 ΣW）
+        const double rhoRel_bf = (m_params.restDensity > 0.0f) ? (avgR_bf / (double)m_params.restDensity) : 0.0;
+
         static uint64_t s_lastDiagFrame = UINT64_MAX;
         const bool shouldDiag = (nSeverelyUndercount || nearCap);
         if (shouldDiag && s_lastDiagFrame != m_frameIndex) {
             s_lastDiagFrame = m_frameIndex;
 
-            // 4.1 基础参数与建议
             const double h = double(m_params.kernel.h);
             const double cell = double(m_params.grid.cellSize);
             const double ratio_cell_h = (h > 0.0) ? (cell / h) : 0.0;
@@ -1004,8 +983,8 @@ namespace sim {
                 m_params.grid.dim.x, m_params.grid.dim.y, m_params.grid.dim.z, m_numCells);
 
             std::fprintf(stderr,
-                "[Diag] Neighbors: grid=%.3f, brute=%.3f | RhoRel: grid=%.3f, brute=%.3f | maxNeighbors=%d%s\n",
-                avgN_grid, avgN_bf, avgRhoRel_grid, avgRhoRel_bf, m_params.maxNeighbors,
+                "[Diag] Neighbors: grid=%.3f, brute=%.3f | RhoRel(ρ/ρ0): grid=%.3f, brute=%.3f | maxNeighbors=%d%s\n",
+                avgN_grid, avgN_bf, rhoRel_grid, rhoRel_bf, m_params.maxNeighbors,
                 (nearCap ? " (near cap -> risk of truncation)" : ""));
 
             if (ratio_cell_h < 0.9) {
@@ -1088,7 +1067,9 @@ namespace sim {
         out.N = m_params.numParticles;
         out.avgNeighbors = avgN;
         out.avgSpeed = avgV;
-        out.avgRhoRel = avgRRel;
+        // 语义改为 ρ/ρ0（此前 avgRRel 为 ΣW）
+        const double rhoRel_bf = (m_params.restDensity > 0.0f) ? (avgR / (double)m_params.restDensity) : 0.0;
+        out.avgRhoRel = rhoRel_bf;
         out.avgRho = avgR;
         return true;
     }

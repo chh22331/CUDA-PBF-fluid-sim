@@ -20,29 +20,31 @@ namespace sim {
         int3   dim;
     };
 
-    // 调参与稳健性
     struct PbfTuning {
-        // —— tensile instability 修正 s_corr = -k * (W(r)/W(dq))^n
         int   scorr_enable = 1;
-        float scorr_k = 0.02f;       // 原 0.003f -> 0.02f，显著减轻聚团
+        float scorr_k = 0.012f;      // 原 0.003f -> 略增强排斥，抑制穿插/回弹
         float scorr_n = 4.0f;
         float scorr_dq_h = 0.3f;
         float wq_min = 1e-12f;
+        float scorr_min = -0.25f;    // 放宽负向上限，近接时更有力
 
-        // 梯度与 λ 分母正则（略增稳健）
         float grad_r_eps = 1e-6f;
-        float lambda_denom_eps = 1e-4f; // 原 1e-5f -> 1e-4f，缓解 λ 过大
+        float lambda_denom_eps = 1e-4f;
 
-        // λ 与位移钳制（略收紧位移）
+        float compliance = 0.0f;     // 关闭 XPBD 软度，先确保可静止
+
         int   enable_lambda_clamp = 1;
         float lambda_max_abs = 50.0f;
         int   enable_disp_clamp = 1;
-        float disp_clamp_max_h = 0.05f; // 原 0.1f -> 0.05f
+        float disp_clamp_max_h = 0.10f; // 放宽单步位移夹取，提高收敛
 
-        // —— XSPH 稀疏区门控（新增）
-        int   xsph_gate_enable = 1;  // 1=按邻居数门控
-        int   xsph_n_min = 8;        // n <= 8 基本不施加 XSPH
-        int   xsph_n_max = 28;       // n >= 28 完全施加 XSPH
+        int   enable_relax = 1;
+        float relax_omega = 0.75f;   // 略加强阻尼，防迭代过冲
+
+        // 建议先关门控，或降低门槛以保证靠近边界仍有阻尼
+        int   xsph_gate_enable = 0;  // 先禁用门控验证
+        int   xsph_n_min = 0;
+        int   xsph_n_max = 8;
     };
 
     struct SimParams {
@@ -62,7 +64,7 @@ namespace sim {
         float    particleMass;
         PbfTuning pbf{};
 
-        float    xsph_c = 0.0f; // 控制台下发
+        float    xsph_c = 0.05f;     // 默认开启一定阻尼
 
         KernelCoeffs kernel{};
         GridBounds  grid{};
@@ -108,7 +110,7 @@ namespace sim {
         dp.boundaryRestitution = sp.boundaryRestitution;
         dp.maxNeighbors = sp.maxNeighbors;
         dp.particleMass = sp.particleMass;
-        dp.pbf = sp.pbf;      // 包含新门控参数
+        dp.pbf = sp.pbf;
         dp.xsph_c = sp.xsph_c;
         return dp;
     }

@@ -39,7 +39,7 @@ namespace console {
 
         // Debug/控制（新增）
         struct Debug {
-            bool enabled = true;        // 开启 Debug 模式
+            bool enabled = false;        // 开启 Debug 模式
             bool pauseOnStart = true;   // 启动即暂停在第 1 帧
             // 采用 Windows VK 与 ASCII 兼容编码（无需包含 windows.h）
             int  keyStep = 32;          // 空格：推进一帧
@@ -49,17 +49,16 @@ namespace console {
             // 日志与诊断开关（新增）
             bool printHotReload = false;        // [HotReload] 提示
             bool printDebugKeys = false;        // [Debug] 键位回显
-            bool printPeriodicStats = true;    // [SimStats] 周期统计打印
-            bool printSanitize = true;         // [Sanitize] 钳制提示
-            bool printWarnings = true;          // [Warn]/[Info] 类一般提示/告警
+            bool printPeriodicStats = false;    // [SimStats] 周期统计打印
+            bool printSanitize = false;         // [Sanitize] 钳制提示
+            bool printWarnings = false;          // [Warn]/[Info] 类一般提示/告警
 
             // 高开销“塌陷诊断”（包含主机拷贝/近邻统计）
             bool enableAdvancedCollapseDiag = false;
             int  advancedCollapseSampleStride = 16; // >=1，子采样步长
 
             // —— 数值稳定性专项日志（新增） ——
-            // 总开关 + 频率控制
-            bool logStabilityBasic = true;    // 开：输出基础稳定性指标（速度/密度/CFL 等）
+            bool logStabilityBasic = false;    // 开：输出基础稳定性指标（速度/密度/CFL 等）
             int  logEveryN = 60;               // 每多少帧打印一次（>=1）
             int  logSampleStride = 8;          // 统计核采样步长（>=1）
             int  logMaxHostSample = 65536;     // 允许拷回主机的最大样本数（限制高开销项）
@@ -77,18 +76,17 @@ namespace console {
         struct Simulation {
             // 粒子与发射器
             uint32_t numParticles = 1;
-            uint32_t maxParticles = 20000;
+            uint32_t maxParticles = 100000;
             uint32_t emitPerStep = 20;
             bool     faucetFillEnable = true;
             bool     recycleToNozzle = false;
             float3   nozzlePos   = make_float3(50.0f, 99.0f, 50.0f);
             float3   nozzleDir   = make_float3(0.0f, -1.0f, 0.0f);
-            // 缩回与 h 同阶的喷口尺度
             float    nozzleRadius= 20.0f;
             float    nozzleSpeed = 50.0f;
             float    recycleYOffset = 1e-3f;
 
-            // Poisson-disk 发射的最小间距（相对 h 的倍数）
+            // Poisson-disk 最小间距（相对 h）
             float    poisson_min_spacing_factor_h = 0.8f;
 
             // 基本动力学
@@ -97,12 +95,12 @@ namespace console {
             float3   gravity = make_float3(0.0f, -9.8f, 0.0f);
             float    restDensity = 1.0f;
 
-            // 质量定义（完全由 console 统一下发）
+            // 质量定义
             enum class MassMode : uint32_t { Explicit = 0, SphereByRadius = 1, UniformLattice = 2 };
             MassMode massMode = MassMode::UniformLattice;
             float    lattice_spacing_factor_h = 1.0f;
-            float    particleMass = 1.0f;     
-            float    particleVolumeScale = 1.0f; 
+            float    particleMass = 1.0f;
+            float    particleVolumeScale = 1.0f;
 
             // 物理几何定义
             float    particleRadiusWorld = 1.0f;
@@ -112,7 +110,7 @@ namespace console {
             // PBF 调参
             sim::PbfTuning pbf{};
 
-            // XSPH 系数（移动到 console：<=0 关闭，常用 0.01~0.1）
+            // XSPH 系数
             float    xsph_c = 0.1f;
 
             // 邻域核参数
@@ -122,16 +120,23 @@ namespace console {
             float    cellSize = 0.0f;
 
             // 其他数值参数
-            int      solverIters = 4;
+            int      solverIters = 2;
             int      maxNeighbors = 64;
             bool     useMixedPrecision = true;
             int      sortEveryN = 1;
             float    boundaryRestitution = 0.0f;
+
+            // —— 新增：自适应 h/喷口半径（降低稀疏场景下“无邻居”概率） —__
+            bool     auto_tune_h = true;     // 开启基于目标邻居数的 h 估算
+            int      target_neighbors = 30;  // 目标邻居数（期望范围 20~60）
+            float    h_min = 0.25f;          // h 下限（避免过小）
+            float    h_max = 1e3f;           // h 上限防失控
+            float    nozzle_radius_factor_h = 1.5f; // 喷口半径上限系数：min(nozzleRadius, factor*h)
         } sim;
 
         struct Performance {
             float grid_cell_size_multiplier = 1.0f;
-            int   neighbor_cap = 0;          
+            int   neighbor_cap = 0;
             int   launch_bounds_tbs = 256;
             int   min_blocks_per_sm = 2;
             bool  use_cuda_graphs = true;

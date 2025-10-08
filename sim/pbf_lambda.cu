@@ -9,7 +9,7 @@ namespace {
 
     __global__ void KLambda(float* lambda, const float4* pos_pred,
         const uint32_t* indicesSorted,
-        const uint32_t* keysSorted,                 // 新增
+        const uint32_t* keysSorted,
         const uint32_t* cellStart, const uint32_t* cellEnd,
         sim::DeviceParams dp, uint32_t N) {
         uint32_t sortedIdx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -24,7 +24,7 @@ namespace {
         uint32_t i = indicesSorted[sortedIdx];
         float3 pi = to_float3(pos_pred[i]);
 
-        // 用排序后的 key 还原单元坐标（与 cellStart/cellEnd 一致）
+        // 由 key 还原单元
         const uint32_t key = keysSorted[sortedIdx];
         int3 ci;
         ci.x = int(key % uint32_t(grid.dim.x));
@@ -36,14 +36,8 @@ namespace {
         float3 gradSum = make_float3(0.f, 0.f, 0.f);
         float sumGrad2 = 0.f;
 
-        // 自项密度
-        {
-            const float hr2 = kc.h2;
-            const float w0 = kc.poly6 * hr2 * hr2 * hr2;
-            density += particleMass * w0;
-        }
-
-        // 自适应邻域层数：覆盖半径 h
+        // 统计有效邻居（不含自项），用于“无邻居早退”
+        int neighborContrib = 0;
         const float h = kc.h;
         const float cs = grid.cellSize;
         const int reach = (cs > 0.f) ? max(1, int(ceilf(h / cs))) : 1;
@@ -53,7 +47,6 @@ namespace {
                 for (int dx = -reach; dx <= reach; ++dx) {
                     int3 cc = make_int3(ci.x + dx, ci.y + dy, ci.z + dz);
                     if (!sim::inBounds(cc, grid.dim)) continue;
-
                     uint32_t cidx = sim::linIdx(cc, grid.dim);
                     uint32_t beg = cellStart[cidx];
                     uint32_t end = cellEnd[cidx];
@@ -67,13 +60,16 @@ namespace {
                         float r2 = rij.x * rij.x + rij.y * rij.y + rij.z * rij.z;
                         if (r2 > kc.h2) continue;
 
+                        neighborContrib++;
+
                         float hr2 = kc.h2 - r2;
                         float w = kc.poly6 * hr2 * hr2 * hr2;
                         density += particleMass * w;
 
                         float r = sqrtf(r2);
+                        float r_safe = fmaxf(r, pbf.grad_r_eps);
                         float t = kc.h - r;
-                        const float coeff = (r > pbf.grad_r_eps) ? (-3.0f * kc.spiky * (t * t) / r) : 0.0f;
+                        const float coeff = (-3.0f * kc.spiky * (t * t) / r_safe);
                         float3 grad = make_float3(coeff * rij.x, coeff * rij.y, coeff * rij.z);
 
                         gradSum.x += grad.x; gradSum.y += grad.y; gradSum.z += grad.z;
@@ -85,10 +81,22 @@ namespace {
 
         const float gradSum2 = gradSum.x * gradSum.x + gradSum.y * gradSum.y + gradSum.z * gradSum.z;
         const float scale = (restDensity > 0.f) ? (particleMass / restDensity) : 0.f;
+
         float denom = (scale * scale) * (sumGrad2 + gradSum2) + pbf.lambda_denom_eps;
+
+        // XPBD：顺应性（0=关闭）
+        if (pbf.compliance > 0.f && dp.dt > 0.f) {
+            denom += pbf.compliance / (dp.dt * dp.dt);
+        }
         denom = fmaxf(denom, pbf.lambda_denom_eps);
 
-        const float C = density / restDensity - 1.f;
+        // 邻居极少或梯度极小：早退，避免 lam 爆大
+        if (neighborContrib < 2 || (sumGrad2 + gradSum2) < 1e-12f) {
+            lambda[i] = 0.0f;
+            return;
+        }
+
+        const float C = (restDensity > 0.f) ? (density / restDensity - 1.f) : 0.f;
         float lam = -C / denom;
 
         if (!isfinite(lam)) lam = 0.0f;
@@ -103,7 +111,7 @@ namespace {
 } // anon
 
 extern "C" void LaunchLambda(float* lambda, const float4* pos_pred, const uint32_t* indicesSorted,
-    const uint32_t* keysSorted,                     // 新增
+    const uint32_t* keysSorted,
     const uint32_t* cellStart, const uint32_t* cellEnd,
     sim::DeviceParams dp,
     uint32_t N, cudaStream_t s) {
