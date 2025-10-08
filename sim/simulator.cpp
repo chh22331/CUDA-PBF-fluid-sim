@@ -263,12 +263,19 @@ namespace sim {
         return approxEq(a.h, b.h, eps) && approxEq(a.inv_h, b.inv_h, eps) && approxEq(a.h2, b.h2, eps)
             && approxEq(a.poly6, b.poly6, eps) && approxEq(a.spiky, b.spiky, eps) && approxEq(a.visc, b.visc, eps);
     }
+}
+
+namespace sim {
 
     bool Simulator::initialize(const SimParams& p) {
         m_params = p;
         CUDA_CHECK(cudaStreamCreateWithFlags(&m_stream, cudaStreamNonBlocking));
-        CUDA_CHECK(cudaEventCreate(&m_evStart));
-        CUDA_CHECK(cudaEventCreate(&m_evEnd));
+
+        // 事件双缓冲
+        for (int i = 0; i < 2; ++i) {
+            CUDA_CHECK(cudaEventCreate(&m_evStart[i]));
+            CUDA_CHECK(cudaEventCreate(&m_evEnd[i]));
+        }
 
         // 读取运行时性能策略（默认开启哈希网格，但当前仍回退到稠密构建）
         {
@@ -297,6 +304,10 @@ namespace sim {
 
         m_graphDirty = true;
         m_captured = {}; // 清空快照
+        m_cachedNodesReady = false;
+        m_nodeRecycleFull = m_nodeRecycleCheap = nullptr;
+        m_lastFrameMs = -1.0f;
+        m_evCursor = 0;
         return true;
     }
 
@@ -310,8 +321,12 @@ namespace sim {
         if (m_graphFull) { cudaGraphDestroy(m_graphFull);          m_graphFull = nullptr; }
         if (m_graphExecCheap) { cudaGraphExecDestroy(m_graphExecCheap); m_graphExecCheap = nullptr; }
         if (m_graphCheap) { cudaGraphDestroy(m_graphCheap);         m_graphCheap = nullptr; }
-        if (m_evStart) { cudaEventDestroy(m_evStart); m_evStart = nullptr; }
-        if (m_evEnd) { cudaEventDestroy(m_evEnd);   m_evEnd = nullptr; }
+
+        for (int i = 0; i < 2; ++i) {
+            if (m_evStart[i]) { cudaEventDestroy(m_evStart[i]); m_evStart[i] = nullptr; }
+            if (m_evEnd[i]) { cudaEventDestroy(m_evEnd[i]); m_evEnd[i] = nullptr; }
+        }
+
         if (m_stream) { cudaStreamDestroy(m_stream); m_stream = nullptr; }
     }
 
@@ -373,7 +388,6 @@ namespace sim {
         if (p.solverIters != m_captured.solverIters) return true;
         if (p.numParticles != m_captured.numParticles) return true;
         if (p.maxNeighbors != m_captured.maxNeighbors) return true;
-        if (p.sortEveryN != m_captured.sortEveryN) return true;
 
         int3 dim;
         dim.x = int(ceilf((p.grid.maxs.x - p.grid.mins.x) / p.grid.cellSize));
@@ -389,6 +403,63 @@ namespace sim {
         if (!approxEq(p.restDensity, m_captured.restDensity)) return true;
 
         return false;
+    }
+
+    bool Simulator::cacheGraphNodes() {
+        m_nodeRecycleFull = nullptr;
+        m_nodeRecycleCheap = nullptr;
+        m_kpRecycleBaseFull = {};
+        m_kpRecycleBaseCheap = {};
+        m_cachedNodesReady = false;
+
+        void* target = GetRecycleKernelPtr();
+
+        // 搜索 Full 图的回收节点（仅执行一次）
+        if (m_graphFull) {
+            size_t numNodes = 0;
+            CUDA_CHECK(cudaGraphGetNodes(m_graphFull, nullptr, &numNodes));
+            if (numNodes > 0) {
+                std::vector<cudaGraphNode_t> nodes(numNodes);
+                CUDA_CHECK(cudaGraphGetNodes(m_graphFull, nodes.data(), &numNodes));
+                for (auto n : nodes) {
+                    cudaGraphNodeType t;
+                    CUDA_CHECK(cudaGraphNodeGetType(n, &t));
+                    if (t != cudaGraphNodeTypeKernel) continue;
+                    cudaKernelNodeParams kp{};
+                    CUDA_CHECK(cudaGraphKernelNodeGetParams(n, &kp));
+                    if (kp.func == target) {
+                        m_nodeRecycleFull = n;
+                        m_kpRecycleBaseFull = kp; // 作为模板
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 搜索 Cheap 图的回收节点（仅执行一次）
+        if (m_graphCheap) {
+            size_t numNodes = 0;
+            CUDA_CHECK(cudaGraphGetNodes(m_graphCheap, nullptr, &numNodes));
+            if (numNodes > 0) {
+                std::vector<cudaGraphNode_t> nodes(numNodes);
+                CUDA_CHECK(cudaGraphGetNodes(m_graphCheap, nodes.data(), &numNodes));
+                for (auto n : nodes) {
+                    cudaGraphNodeType t;
+                    CUDA_CHECK(cudaGraphNodeGetType(n, &t));
+                    if (t != cudaGraphNodeTypeKernel) continue;
+                    cudaKernelNodeParams kp{};
+                    CUDA_CHECK(cudaGraphKernelNodeGetParams(n, &kp));
+                    if (kp.func == target) {
+                        m_nodeRecycleCheap = n;
+                        m_kpRecycleBaseCheap = kp; // 作为模板
+                        break;
+                    }
+                }
+            }
+        }
+
+        m_cachedNodesReady = true;
+        return true;
     }
 
     bool Simulator::captureGraphIfNeeded(const SimParams& p) {
@@ -421,26 +492,8 @@ namespace sim {
         kVelocityAndPost(m_stream, p);
         CUDA_CHECK(cudaStreamEndCapture(m_stream, &m_graphFull));
         CUDA_CHECK(cudaGraphInstantiate(&m_graphExecFull, m_graphFull, nullptr, nullptr, 0));
-
-        // 回收节点定位（沿用 Full 图即可）
-        m_nodeRecycle = nullptr;
-        {
-            void* target = GetRecycleKernelPtr();
-            size_t numNodes = 0;
-            CUDA_CHECK(cudaGraphGetNodes(m_graphFull, nullptr, &numNodes));
-            if (numNodes > 0) {
-                std::vector<cudaGraphNode_t> nodes(numNodes);
-                CUDA_CHECK(cudaGraphGetNodes(m_graphFull, nodes.data(), &numNodes));
-                for (auto n : nodes) {
-                    cudaGraphNodeType t;
-                    CUDA_CHECK(cudaGraphNodeGetType(n, &t));
-                    if (t != cudaGraphNodeTypeKernel) continue;
-                    cudaKernelNodeParams kp{};
-                    CUDA_CHECK(cudaGraphKernelNodeGetParams(n, &kp));
-                    if (kp.func == target) { m_nodeRecycle = n; break; }
-                }
-            }
-        }
+        // 预上传减少首帧 launch 延迟
+        CUDA_CHECK(cudaGraphUpload(m_graphExecFull, m_stream));
 
         // —— 捕获 Cheap Graph（省略 Hash/Sort/Build） —— //
         CUDA_CHECK(cudaStreamBeginCapture(m_stream, cudaStreamCaptureModeGlobal));
@@ -449,6 +502,10 @@ namespace sim {
         kVelocityAndPost(m_stream, p);
         CUDA_CHECK(cudaStreamEndCapture(m_stream, &m_graphCheap));
         CUDA_CHECK(cudaGraphInstantiate(&m_graphExecCheap, m_graphCheap, nullptr, nullptr, 0));
+        CUDA_CHECK(cudaGraphUpload(m_graphExecCheap, m_stream));
+
+        // 缓存需要动态更新的节点（仅回收节点）
+        cacheGraphNodes();
 
         // 保存快照
         int3 dim;
@@ -520,12 +577,22 @@ namespace sim {
                     const uint32_t begin = m_params.numParticles;
                     const uint32_t end = begin + emit;
 
-                    std::vector<float4> h_pos(emit);
-                    std::vector<float4> h_vel(emit);
+                    // —— 使用 pinned host staging，真正异步 —— //
+                    static float4* s_h_pos = nullptr;
+                    static float4* s_h_vel = nullptr;
+                    static uint32_t s_h_cap = 0;
+                    if (s_h_cap < emit) {
+                        if (s_h_pos) { cudaFreeHost(s_h_pos); s_h_pos = nullptr; }
+                        if (s_h_vel) { cudaFreeHost(s_h_vel); s_h_vel = nullptr; }
+                        CUDA_CHECK(cudaMallocHost((void**)&s_h_pos, sizeof(float4) * emit));
+                        CUDA_CHECK(cudaMallocHost((void**)&s_h_vel, sizeof(float4) * emit));
+                        s_h_cap = emit;
+                    }
+                    float4* h_pos = s_h_pos;
+                    float4* h_vel = s_h_vel;
 
                     // —— 圆盘内 Poisson-disk 采样 —— 
                     const float3 dir = normalize3(ep.nozzleDir);
-                    // 构造与 dir 正交的基 u,v
                     float3 ref = fabsf(dir.y) < 0.99f ? make_float3(0, 1, 0) : make_float3(1, 0, 0);
                     float3 u = normalize3(cross3(ref, dir));
                     float3 v = cross3(dir, u);
@@ -538,9 +605,10 @@ namespace sim {
                     const float minSpacing = (((1e-6f) > (c.sim.poisson_min_spacing_factor_h * h)) ? (1e-6f) : (c.sim.poisson_min_spacing_factor_h * h));
 
                     std::vector<float2> pts;
-                    poisson_disk_in_circle(R, minSpacing, (int)emit, rng, pts);
+                    {
+                        poisson_disk_in_circle(R, minSpacing, (int)emit, rng, pts);
+                    }
 
-                    // 若 Poisson 无法凑满 emit（半径太小/间距太大等），余量回退到均匀随机
                     const uint32_t nPoisson = (uint32_t)pts.size();
                     const uint32_t nRemain = emit - nPoisson;
 
@@ -554,7 +622,6 @@ namespace sim {
                     }
 
                     for (uint32_t i = 0; i < nRemain; ++i) {
-                        // 面积均匀：回退为圆盘内均匀随机，保证发射速率
                         const float u0 = U(rng);
                         const float u1 = U(rng);
                         const float r = R * sqrtf(u0);
@@ -568,9 +635,9 @@ namespace sim {
                     }
 
                     // 写入设备（pos 与 pos_pred 初始一致）
-                    CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_pos + begin, h_pos.data(), sizeof(float4) * emit, cudaMemcpyHostToDevice, m_stream));
-                    CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_pos_pred + begin, h_pos.data(), sizeof(float4) * emit, cudaMemcpyHostToDevice, m_stream));
-                    CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_vel + begin, h_vel.data(), sizeof(float4) * emit, cudaMemcpyHostToDevice, m_stream));
+                    CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_pos + begin, h_pos, sizeof(float4) * emit, cudaMemcpyHostToDevice, m_stream));
+                    CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_pos_pred + begin, h_pos, sizeof(float4) * emit, cudaMemcpyHostToDevice, m_stream));
+                    CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_vel + begin, h_vel, sizeof(float4) * emit, cudaMemcpyHostToDevice, m_stream));
 
                     // 更新活动粒子数
                     m_params.numParticles = end;
@@ -596,7 +663,6 @@ namespace sim {
         if (needsGraphRebuild(m_params)) {
             m_graphDirty = true;
         }
-        // 修复：校验 Full/Cheap 两套 exec
         if (!captureGraphIfNeeded(m_params) || !m_graphExecFull || !m_graphExecCheap) {
             if (c.debug.printErrors) {
                 std::fprintf(stderr, "Simulator::step: CUDA Graph not ready (capture failed or exec == nullptr)\n");
@@ -604,64 +670,35 @@ namespace sim {
             return false;
         }
 
-        // —— 每 N 帧重建邻域（Full vs Cheap） —— //
-        // 复用前面的 c，避免重定义
         const int everyN = (c.perf.sort_compact_every_n <= 0) ? 1 : c.perf.sort_compact_every_n;
         const bool needFullThisFrame =
             (m_frameIndex == 0) ||
             (m_lastFullFrame < 0) ||
             ((m_frameIndex - m_lastFullFrame) >= everyN) ||
-            (m_params.numParticles != m_captured.numParticles); // 发射增加时强制 Full
+            (m_params.numParticles != m_captured.numParticles);
 
-        // 若捕获到了回收节点：仅更新 gridDim，保持原有参数传递模式（kernelParams/extra）不变
-               // 若捕获到了回收节点：仅更新 gridDim，保持原有参数传递模式（kernelParams/extra）不变
-        if (m_nodeRecycle) {
-            // 计算本帧 block 数（至少 1）
+        // —— 事件双缓冲：记录本帧 start —— //
+        const int cur = (m_evCursor & 1);
+        const int prev = ((m_evCursor + 1) & 1);
+        CUDA_CHECK(cudaEventRecord(m_evStart[cur], m_stream));
+
+        // —— 每帧只更新已缓存的回收节点 gridDim（无需再扫描 Graph） —— //
+        auto updateRecycleGridDim = [&](cudaGraphExec_t exec, cudaGraphNode_t node, const cudaKernelNodeParams& base) {
+            if (!exec || !node || m_params.numParticles == 0) return;
             uint32_t blocks = (m_params.numParticles + 255u) / 256u;
             if (blocks == 0u) blocks = 1u;
-
-            // 读取 Full 图上该节点的原始配置
-            cudaKernelNodeParams kpBase{};
-            CUDA_CHECK(cudaGraphKernelNodeGetParams(m_nodeRecycle, &kpBase));
-
-            // 仅修改 gridDim，保持 func/blockDim/sharedMemBytes 及参数传递模式（kernelParams/extra）不变
-            cudaKernelNodeParams kp = kpBase;
+            cudaKernelNodeParams kp = base; // 复制模板
             kp.gridDim = dim3(blocks, 1, 1);
+            CUDA_CHECK(cudaGraphExecKernelNodeSetParams(exec, node, &kp));
+        };
 
-            CUDA_CHECK(cudaGraphExecKernelNodeSetParams(m_graphExecFull, m_nodeRecycle, &kp));
-
-            // 额外：一并更新 Cheap 图（每帧在当前 Cheap 图中重新定位该节点，避免使用失效的静态缓存）
-            if (m_graphCheap && m_graphExecCheap) {
-                cudaGraphNode_t nodeRecycleCheap = nullptr;
-
-                // 在 Cheap 图中定位与 Full 图同一包装核（通过函数指针判定）
-                size_t numNodes = 0;
-                CUDA_CHECK(cudaGraphGetNodes(m_graphCheap, nullptr, &numNodes));
-                if (numNodes > 0) {
-                    std::vector<cudaGraphNode_t> nodes(numNodes);
-                    CUDA_CHECK(cudaGraphGetNodes(m_graphCheap, nodes.data(), &numNodes));
-                    for (auto n : nodes) {
-                        cudaGraphNodeType t;
-                        CUDA_CHECK(cudaGraphNodeGetType(n, &t));
-                        if (t != cudaGraphNodeTypeKernel) continue;
-                        cudaKernelNodeParams kpt{};
-                        CUDA_CHECK(cudaGraphKernelNodeGetParams(n, &kpt));
-                        if (kpt.func == kpBase.func) { nodeRecycleCheap = n; break; }
-                    }
-                }
-
-                if (nodeRecycleCheap) {
-                    cudaKernelNodeParams kpBaseCheap{};
-                    CUDA_CHECK(cudaGraphKernelNodeGetParams(nodeRecycleCheap, &kpBaseCheap));
-
-                    cudaKernelNodeParams kpCheap = kpBaseCheap;
-                    kpCheap.gridDim = dim3(blocks, 1, 1);
-
-                    CUDA_CHECK(cudaGraphExecKernelNodeSetParams(m_graphExecCheap, nodeRecycleCheap, &kpCheap));
-                }
-            }
+        if (needFullThisFrame) {
+            updateRecycleGridDim(m_graphExecFull, m_nodeRecycleFull, m_kpRecycleBaseFull);
+        } else {
+            updateRecycleGridDim(m_graphExecCheap, m_nodeRecycleCheap, m_kpRecycleBaseCheap);
         }
-        CUDA_CHECK(cudaEventRecord(m_evStart, m_stream));
+
+        // —— 提交图 —— //
         if (c.perf.use_cuda_graphs) {
             if (needFullThisFrame) {
                 CUDA_CHECK(cudaGraphLaunch(m_graphExecFull, m_stream));
@@ -672,24 +709,32 @@ namespace sim {
             }
         }
         else {
-            // 非 Graph 路径：按需执行 Full/近邻重建 或 Cheap
             kIntegratePred(m_stream, m_params);
             if (needFullThisFrame) {
                 kHashKeys(m_stream, m_params);
                 kSort(m_stream, m_params);
                 if (m_useHashedGrid) kCellRangesCompact(m_stream, m_params);
-                else                 kCellRanges(m_stream, p);
+                else                 kCellRanges(m_stream, m_params);
                 m_lastFullFrame = m_frameIndex;
             }
             for (int i = 0; i < m_params.solverIters; ++i) kSolveIter(m_stream, m_params);
             kVelocityAndPost(m_stream, m_params);
         }
 
-        CUDA_CHECK(cudaEventRecord(m_evEnd, m_stream));
-        CUDA_CHECK(cudaEventSynchronize(m_evEnd));
-        float ms = 0.f; cudaEventElapsedTime(&ms, m_evStart, m_evEnd);
+        // —— 记录本帧 end（不阻塞），并尝试非阻塞读取上一帧时间 —— //
+        CUDA_CHECK(cudaEventRecord(m_evEnd[cur], m_stream));
+        if (m_frameIndex > 0) {
+            const cudaError_t q = cudaEventQuery(m_evEnd[prev]);
+            if (q == cudaSuccess) {
+                float ms = 0.f;
+                CUDA_CHECK(cudaEventElapsedTime(&ms, m_evStart[prev], m_evEnd[prev]));
+                m_lastFrameMs = ms;
+            }
+            // 若未完成，不做同步，沿用上一帧 m_lastFrameMs
+        }
+        ++m_evCursor;
 
-        // —— 压缩网格统计（可选） —— //
+        // 可选：输出网格压缩统计（会产生 D2H）
         if (m_useHashedGrid && c.perf.log_grid_compact_stats) {
             uint32_t M = 0;
             CUDA_CHECK(cudaMemcpy((void*)&M, (const void*)m_bufs.d_compactCount, sizeof(uint32_t), cudaMemcpyDeviceToHost));
@@ -703,11 +748,10 @@ namespace sim {
             }
         }
 
-        // —— 数值稳定性诊断（按需输出，避免影响性能） ——
+        // 可选：数值稳定性日志（注意：此路径会触发同步/D2H，建议关闭以追求极致性能）
         if (c.debug.logStabilityBasic && c.debug.logEveryN > 0 && m_params.numParticles > 0) {
             const int logEveryN = (((1) > (c.debug.logEveryN)) ? (1) : (c.debug.logEveryN));
             if ((m_frameIndex % (uint64_t)logEveryN) == 0ull) {
-                // 1) 基础统计：邻居/速度/密度（复用 GPU 统计核，低开销，支持子采样）
                 double avgN = 0.0, avgV = 0.0, avgRRel = 0.0, avgR = 0.0;
                 const uint32_t stride = (c.debug.logSampleStride <= 0 ? 1u : (uint32_t)c.debug.logSampleStride);
                 (void)LaunchComputeStats(
@@ -724,22 +768,20 @@ namespace sim {
                     stride,
                     &avgN, &avgV, &avgRRel, &avgR,
                     m_stream);
-                CUDA_CHECK(cudaStreamSynchronize(m_stream));
+                CUDA_CHECK(cudaStreamSynchronize(m_stream)); // 若追求极限性能，请关闭 logStabilityBasic 以跳过这条同步
 
                 static double s_prevAvgV = -1.0;
                 const double v_decay = (s_prevAvgV > 0.0) ? (avgV / (((1e-12) > (s_prevAvgV)) ? (1e-12) : (s_prevAvgV))) : 0.0;
                 s_prevAvgV = avgV;
 
-                // 2) CFL 估算（使用 avgV 近似，下界；若需 maxV 可开启下方主机采样）
                 double cfl_est_avg = 0.0;
                 if (c.debug.logCFL && m_params.kernel.h > 0.0f) {
                     cfl_est_avg = (double)m_params.dt * avgV / (double)m_params.kernel.h;
                 }
 
-                // 3) 可选：PBF λ 统计（主机拷样）
                 double lamMin = 0.0, lamMax = 0.0, lamAvg = 0.0;
                 if (c.debug.logLambda) {
-                    const uint32_t M = std::min<uint32_t>(m_params.numParticles, (uint32_t)(((1) > (c.debug.logMaxHostSample)) ? (1) : (c.debug.logMaxHostSample)));
+                    const uint32_t M = std::min<uint32_t>(m_params.numParticles, (uint32_t)((1) > (c.debug.logMaxHostSample)) ? (1) : (c.debug.logMaxHostSample));
                     std::vector<float> h_lambda(M);
                     if (M > 0 && m_bufs.d_lambda) {
                         CUDA_CHECK(cudaMemcpy((void*)h_lambda.data(), (const void*)m_bufs.d_lambda, sizeof(float) * M, cudaMemcpyDeviceToHost));
@@ -747,13 +789,12 @@ namespace sim {
                         double s = 0.0;
                         for (uint32_t i = 0; i < M; ++i) {
                             const double v = (double)h_lambda[i];
-                            s += v; lamMin = ((lamMin) < (v)) ? (lamMin) : (v); lamMax = (((lamMax) > (v)) ? (lamMax) : (v));
+                            s += v; lamMin = (((lamMin) < (v)) ? (lamMin) : (v)); lamMax = (((lamMax) > (v)) ? (lamMax) : (v));
                         }
                         lamAvg = (M > 0) ? (s / (double)M) : 0.0;
                     }
                 }
 
-                // 4) 可选：动能估算（主机拷样）
                 static double s_prevKE = -1.0;
                 double KE = 0.0, KE_decay = 0.0;
                 if (c.debug.logEnergy) {
@@ -768,15 +809,13 @@ namespace sim {
                     const double mp = (double)m_params.particleMass;
                     const double invM = (M > 0) ? (1.0 / (double)M) : 0.0;
                     KE = 0.5 * mp * sumv2 * invM;
-                    if (s_prevKE > 0.0) KE_decay = KE / (((1e-18) > (s_prevKE)) ? (1e-18) : (s_prevKE));
+                    if (s_prevKE > 0.0) KE_decay = KE /(((1e-18) > (s_prevKE)) ? (1e-18) : (s_prevKE));
                     s_prevKE = KE;
                 }
 
-                // 基于统计值派生：ρ/ρ0（用于打印与阈值判断）与 sumW（核权重和）
                 const double rhoRelPrint = (m_params.restDensity > 0.0f) ? (avgR / (double)m_params.restDensity) : 0.0;
-                const double sumWPrint = avgRRel; // 原 avgRhoRel 实际为 ΣW
+                const double sumWPrint = avgRRel;
 
-                // 5) 汇总打印与启发式提示
                 std::fprintf(stderr,
                     "[Stab] Frame=%llu | N=%u | dt=%.4g iters=%d | xsph=%.3g rest=%.3g | avgSpeed=%.4g (decay=%.3f) | avgRhoRel=%.4f | sumW=%.4f",
                     (unsigned long long)m_frameIndex, m_params.numParticles,
@@ -794,7 +833,6 @@ namespace sim {
                 }
                 std::fprintf(stderr, "\n");
 
-                // 问题导向提示
                 if (m_params.boundaryRestitution > 0.05f) {
                     std::fprintf(stderr, "[Hint] boundaryRestitution=%.3g 偏大，建议接近 0 以抑制反弹。\n", (double)m_params.boundaryRestitution);
                 }
@@ -808,15 +846,14 @@ namespace sim {
                     std::fprintf(stderr, "[Hint] CFL(avg)=%.3f 高于目标 cfl=%.3f，建议减小 dt 或增大 h/减小速度。\n",
                         cfl_est_avg, (double)c.sim.cfl);
                 }
-                // 使用 ρ/ρ0 进行判断
                 if (rhoRelPrint > 1.05) {
                     std::fprintf(stderr, "[Hint] 平均相对密度偏高(>1.05)，表明约束未充分收敛，可增大迭代或减小 dt。\n");
                 }
             }
         }
-  
-       ++m_frameIndex;
-       return true;
+
+        ++m_frameIndex;
+        return true;
     }
 
     // —— 阶段封装 ——
@@ -845,7 +882,6 @@ namespace sim {
     }
 
     void Simulator::kCellRangesCompact(cudaStream_t s, const SimParams& p) {
-        // 真实压缩构建：对 keys_sorted 做 run-length encode -> 写 uniqueKeys/offsets/compactCount
         ::LaunchCellRangesCompact(
             m_bufs.d_cellUniqueKeys,
             m_bufs.d_cellOffsets,
@@ -853,7 +889,6 @@ namespace sim {
             m_bufs.d_cellKeys_sorted,
             p.numParticles,
             s);
-        // m_numCompactCells 仅用于主机日志，运行期依赖 d_compactCount（设备）读取
         m_numCompactCells = 0;
         (void)p;
     }
@@ -1055,7 +1090,19 @@ namespace sim {
 
         const auto& c = console::Instance();
 
-        // 1) 先跑基于网格的统计
+        // 若当前启用压缩网格，统计前构建一次稠密段表（低频调用，开销可接受）
+        if (m_useHashedGrid) {
+            LaunchCellRanges(
+                m_bufs.d_cellStart,
+                m_bufs.d_cellEnd,
+                m_bufs.d_cellKeys_sorted,
+                m_params.numParticles,
+                m_numCells,
+                m_stream);
+            CUDA_CHECK(cudaStreamSynchronize(m_stream));
+        }
+
+        // 1) 基于网格的统计（便宜）
         double avgN_grid = 0.0, avgV = 0.0, avgRhoRel_grid = 0.0, avgR_grid = 0.0;
         const uint32_t stride = (sampleStride == 0 ? 1u : sampleStride);
         bool ok_grid = LaunchComputeStats(
@@ -1074,16 +1121,22 @@ namespace sim {
             m_stream);
         if (!ok_grid) return false;
 
-        // 默认以 grid 结果回填输出
         out.N = m_params.numParticles;
         out.avgNeighbors = avgN_grid;
         out.avgSpeed = avgV;
-        // 语义改为 ρ/ρ0（此前 avgRhoRel_grid 为 ΣW）
         const double rhoRel_grid = (m_params.restDensity > 0.0f) ? (avgR_grid / (double)m_params.restDensity) : 0.0;
         out.avgRhoRel = rhoRel_grid;
         out.avgRho = avgR_grid;
 
-        // 2) 跑一小批暴力法，对比差异（代价有限，便于诊断）
+        // 仅在需要诊断输出时才运行暴力法，并按帧间隔降频
+        const bool wantDiag = (c.debug.printDiagnostics || c.debug.printWarnings || c.debug.printHints);
+        const uint64_t diagEvery = (uint64_t)(c.debug.logEveryN <= 0 ? 1 : c.debug.logEveryN);
+        if (!wantDiag || ((m_frameIndex % diagEvery) != 0ull)) {
+            // 不需要诊断，直接返回网格统计结果
+            return true;
+        }
+
+        // 2) 暴力法（小批采样）—— 仅在需要诊断时运行
         double avgN_bf = 0.0, avgV_bf = 0.0, avgRhoRel_bf = 0.0, avgR_bf = 0.0;
         const uint32_t kMaxISamples = 2048;
         bool ok_bf = LaunchComputeStatsBruteforce(
@@ -1109,7 +1162,6 @@ namespace sim {
         const bool nSeverelyUndercount =
             (avgN_bf > 0.0) && ((avgN_grid + nAbsThresh) < avgN_bf * (1.0 - nRelThresh));
 
-        // 使用 ρ/ρ0 进行对比打印（不再打印 ΣW）
         const double rhoRel_bf = (m_params.restDensity > 0.0f) ? (avgR_bf / (double)m_params.restDensity) : 0.0;
 
         static uint64_t s_lastDiagFrame = UINT64_MAX;
@@ -1136,20 +1188,19 @@ namespace sim {
 
             if (c.debug.printHints) {
                 if (ratio_cell_h < 0.9) {
-                    std::fprintf(stderr, "[Hint] cellSize 明显小于 h：请设为 ~[1.0, 1.5]h，过小会导致需要更大邻接层数或漏邻居。\n");
+                    std::fprintf(stderr, "[Hint] cellSize 明显小于 h：请设为 ~[1.0, 1.5]h。\n");
                 }
                 else if (ratio_cell_h > 2.0) {
-                    std::fprintf(stderr, "[Hint] cellSize 明显大于 h：请设为 ~[1.0, 1.5]h，过大将导致单元过大、邻居暴涨与排序压力。\n");
+                    std::fprintf(stderr, "[Hint] cellSize 明显大于 h：请设为 ~[1.0, 1.5]h。\n");
                 }
                 if (nearCap) {
                     std::fprintf(stderr, "[Hint] avgNeighbors_grid 接近上限 maxNeighbors=%d：建议临时设为 0（无限）或调大，以排除截断偏差。\n", m_params.maxNeighbors);
                 }
                 if (nSeverelyUndercount) {
-                    std::fprintf(stderr, "[Hint] grid 邻居显著小于暴力法：排查 cellSize/h 是否匹配、邻域遍历是否完整（不要因达到上限而提前停止遍历）。\n");
+                    std::fprintf(stderr, "[Hint] grid 邻居显著小于暴力法：排查 cellSize/h 是否匹配、邻域遍历是否完整。\n");
                 }
             }
 
-            // 回读单元范围并统计占用直方（仅在需要诊断时执行，避免无谓开销）
             if (c.debug.printDiagnostics) {
                 CUDA_CHECK(cudaStreamSynchronize(m_stream));
                 std::vector<uint32_t> h_start(m_numCells), h_end(m_numCells);
@@ -1158,10 +1209,8 @@ namespace sim {
 
                 const uint32_t EMPTY = 0xFFFFFFFFu;
                 uint64_t nonEmpty = 0, empty = 0;
-                uint64_t sumCnt = 0;
-                uint64_t sumCnt2 = 0;
-                uint32_t minCnt = UINT32_MAX, maxCnt = 0;
-                uint32_t maxIdx = 0;
+                uint64_t sumCnt = 0, sumCnt2 = 0;
+                uint32_t minCnt = UINT32_MAX, maxCnt = 0, maxIdx = 0;
                 for (uint32_t i = 0; i < m_numCells; ++i) {
                     const uint32_t s = h_start[i], e = h_end[i];
                     if (s == EMPTY || e == EMPTY || e < s) { ++empty; continue; }
@@ -1192,10 +1241,6 @@ namespace sim {
                     (unsigned long long)nonEmpty,
                     (unsigned)(nonEmpty ? minCnt : 0u), meanCnt, (unsigned)maxCnt,
                     cMax.x, cMax.y, cMax.z, 100.0 * fracMaxCell, stdCnt);
-
-                if (c.debug.printWarnings && fracMaxCell > 0.05) {
-                    std::fprintf(stderr, "[Warn] 单一网格单元承载了 %.2f%% 的粒子，出现明显团聚。请检查喷口尺度/域尺度、h 与发射速率是否匹配。\n", 100.0 * fracMaxCell);
-                }
             }
         }
 
@@ -1203,7 +1248,7 @@ namespace sim {
     }
     bool Simulator::computeStatsBruteforce(SimStats& out, uint32_t sampleStride, uint32_t maxISamples) const {
         if (m_params.numParticles == 0) { out = {}; return true; }
-        double avgN = 0.0, avgV = 0.0, avgRRel = 0.0, avgR = 0.0;
+        double avgN = 0.0, avgV = 0.0, avgRhoRel = 0.0, avgR = 0.0;
         bool ok = LaunchComputeStatsBruteforce(
             m_bufs.d_pos_pred,
             m_bufs.d_vel,
@@ -1212,7 +1257,7 @@ namespace sim {
             m_params.numParticles,
             (sampleStride == 0 ? 1u : sampleStride),
             maxISamples,
-            &avgN, &avgV, &avgRRel, &avgR,
+            &avgN, &avgV, &avgRhoRel, &avgR,
             m_stream);
         if (!ok) return false;
         out.N = m_params.numParticles;

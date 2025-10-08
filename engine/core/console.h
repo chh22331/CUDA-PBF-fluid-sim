@@ -81,11 +81,11 @@ namespace console {
         struct Simulation {
             // 粒子与发射器
             uint32_t numParticles = 1;
-            uint32_t maxParticles = 100000;
-            uint32_t emitPerStep = 20;
+            uint32_t maxParticles = 300000;
+            uint32_t emitPerStep = 50;
             bool     faucetFillEnable = true;
             bool     recycleToNozzle = false;
-            float3   nozzlePos   = make_float3(50.0f, 99.0f, 50.0f);
+            float3   nozzlePos   = make_float3(100.0f, 199.0f, 100.0f);
             float3   nozzleDir   = make_float3(0.0f, -1.0f, 0.0f);
             float    nozzleRadius= 20.0f;
             float    nozzleSpeed = 50.0f;
@@ -121,7 +121,7 @@ namespace console {
             // 邻域核参数
             float    smoothingRadius = 2.0f;
             float3   gridMins = make_float3(0.0f, 0.0f, 0.0f);
-            float3   gridMaxs = make_float3(100.0f, 100.0f, 100.0f);
+            float3   gridMaxs = make_float3(200.0f, 200.0f, 200.0f);
             float    cellSize = 0.0f;
 
             // 其他数值参数

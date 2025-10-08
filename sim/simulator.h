@@ -3,6 +3,7 @@
 #include "parameters.h" 
 #include "device_buffers.cuh"
 #include "stats.h" // 新增
+#include <vector>
 
 namespace sim {
     class Simulator {
@@ -50,6 +51,9 @@ namespace sim {
         void kSolveIter(cudaStream_t s, const SimParams& p);
         void kVelocityAndPost(cudaStream_t s, const SimParams& p);
 
+        // 新增：捕获后缓存 Graph 节点，避免每帧扫描
+        bool cacheGraphNodes();
+
     private:
         SimParams m_params{};
         DeviceBuffers m_bufs{};
@@ -59,12 +63,17 @@ namespace sim {
         uint32_t m_numCompactCells = 0;
 
         cudaStream_t m_stream = nullptr;
-        cudaEvent_t  m_evStart = nullptr, m_evEnd = nullptr;
 
-        // —— 改为双 Graph：Full（包含 Hash/Sort/Build），Cheap（省略这些阶段） ——
-        cudaGraph_t    m_graphFull = nullptr;
+        // —— 事件双缓冲非阻塞计时 —— //
+        cudaEvent_t  m_evStart[2] = { nullptr, nullptr };
+        cudaEvent_t  m_evEnd[2]   = { nullptr, nullptr };
+        int          m_evCursor   = 0;
+        float        m_lastFrameMs = -1.0f; // 最近一次成功读取到的 GPU 帧耗时
+
+        // —— 双 Graph：Full（包含 Hash/Sort/Build），Cheap（省略这些阶段） —— //
+        cudaGraph_t     m_graphFull = nullptr;
         cudaGraphExec_t m_graphExecFull = nullptr;
-        cudaGraph_t    m_graphCheap = nullptr;
+        cudaGraph_t     m_graphCheap = nullptr;
         cudaGraphExec_t m_graphExecCheap = nullptr;
         bool m_graphDirty = true;
 
@@ -85,6 +94,12 @@ namespace sim {
         } m_captured{};
 
         cudaExternalMemory_t m_extPosPred = nullptr;
-        cudaGraphNode_t m_nodeRecycle = nullptr;
+
+        // —— 缓存需要动态更新 gridDim 的节点（当前仅回收内核） —— //
+        cudaGraphNode_t       m_nodeRecycleFull  = nullptr;
+        cudaGraphNode_t       m_nodeRecycleCheap = nullptr;
+        cudaKernelNodeParams  m_kpRecycleBaseFull{};
+        cudaKernelNodeParams  m_kpRecycleBaseCheap{};
+        bool                  m_cachedNodesReady = false;
     };
 } // namespace sim

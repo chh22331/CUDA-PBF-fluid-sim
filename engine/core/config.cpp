@@ -1,468 +1,392 @@
 #include "config.h"
 #include <fstream>
 #include <sstream>
-#include <algorithm>
-#include <charconv>
+#include <chrono>
+#include <system_error>
+#include <unordered_map>
+#include <cstdio>
+
+#if __has_include(<nlohmann/json.hpp>)
+    #include <nlohmann/json.hpp>
+    using json = nlohmann::json;
+    #define PBFX_HAVE_JSON 1
+#else
+    #define PBFX_HAVE_JSON 0
+#endif
+
+namespace fs = std::filesystem;
 
 namespace {
 
-// —— 轻量 JSON 读取工具（仅服务于本项目字段；非通用 JSON 解析器） ——
-
-struct JsonDoc {
-    std::string text;
-    bool ok = false;
-};
-
-static JsonDoc ReadTextFile(const std::string& path, std::string* err) {
-    std::ifstream f(path, std::ios::binary);
-    JsonDoc d{};
-    if (!f) {
-        if (err) *err = "config: failed to open file: " + path;
-        return d;
+    static inline std::string slurpFile(const std::string& path, std::error_code& ec) {
+        std::ifstream ifs(path, std::ios::binary);
+        if (!ifs) { ec = std::make_error_code(std::errc::no_such_file_or_directory); return {}; }
+        std::ostringstream oss; oss << ifs.rdbuf();
+        ec.clear();
+        return oss.str();
     }
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    d.text = ss.str();
-    d.ok = true;
-    return d;
-}
 
-// 去除空白帮助
-static inline bool isSpace(char c) {
-    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
-}
-static void skipSpaces(const std::string& s, size_t& i) {
-    while (i < s.size() && isSpace(s[i])) ++i;
-}
+    static inline bool fileTime(const std::string& path, fs::file_time_type& out, std::error_code& ec) {
+        ec.clear();
+        if (!fs::exists(path, ec)) return false;
+        out = fs::last_write_time(path, ec);
+        return !ec;
+    }
 
-// 在父节起点后查找 key（"key" 形式）；若 parentKey 为空，则全局搜索
-static size_t findKey(const std::string& s, const std::string& key, size_t from = 0) {
-    // 查找 "key"
-    const std::string pat = "\"" + key + "\"";
-    return s.find(pat, from);
-}
-
-// 定位对象节："section": { ... }，返回大括号内 [l,r) 范围起点
-static bool findObjectSection(const std::string& s, const std::string& section, size_t& outBegin, size_t& outEnd) {
-    size_t pos = findKey(s, section, 0);
-    if (pos == std::string::npos) return false;
-    pos = s.find(':', pos);
-    if (pos == std::string::npos) return false;
-    // 跳到 '{'
-    pos = s.find('{', pos);
-    if (pos == std::string::npos) return false;
-    size_t start = pos + 1;
-    int depth = 1;
-    for (size_t i = start; i < s.size(); ++i) {
-        if (s[i] == '{') ++depth;
-        else if (s[i] == '}') {
-            --depth;
-            if (depth == 0) {
-                outBegin = start;
-                outEnd = i; // 不包含 '}'
-                return true;
+    // —— 将 io 用 tmp 中的同名字段覆盖（仅白名单映射的那几个） —— //
+    static void ApplyWhitelistDiff(const std::vector<std::string>& whitelist,
+                                   const console::RuntimeConsole& tmp,
+                                   console::RuntimeConsole& io,
+                                   config::State& st) {
+        // 注意：仅覆盖以下少量字段，保证 M0 可用；未实现的白名单项忽略
+        for (const auto& k : whitelist) {
+            if (k == "simulation.solver_iterations") {
+                io.sim.solverIters = tmp.sim.solverIters;
+            } else if (k == "simulation.max_neighbors") {
+                io.sim.maxNeighbors = tmp.sim.maxNeighbors;
+            } else if (k == "performance.neighbor_cap") {
+                io.perf.neighbor_cap = tmp.perf.neighbor_cap;
+            } else if (k == "viewer.point_size_px") {
+                io.viewer.point_size_px = tmp.viewer.point_size_px;
+            } else if (k == "performance.sort_frequency") {
+                // 未实现 sort_frequency 概念，对应到 io.sim.sortEveryN（every_step=1）
+                // 若后续引入完整枚举，可在此处转换
+                // 保持不变以免误伤当前逻辑
+            } else if (k == "viewer.color_mode") {
+                // 当前 RuntimeConsole 未包含 color_mode，忽略
+            } else if (k == "profile") {
+                // 仅更新状态，不做 profiles 覆盖（M0）：
+                // 如果需要真正应用 profiles，可扩展至 JSON 分支
+                // st.activeProfile 在 LoadFile 中已刷新
             }
         }
     }
-    return false;
-}
 
-// 在指定对象范围内查找标量 value（number/bool/string 简单形式）
-template <typename T>
-static bool parseNumberInObject(const std::string& s, size_t objBegin, size_t objEnd, const std::string& key, T& outVal) {
-    size_t k = findKey(s, key, objBegin);
-    if (k == std::string::npos || k >= objEnd) return false;
-    size_t colon = s.find(':', k);
-    if (colon == std::string::npos || colon >= objEnd) return false;
-    size_t i = colon + 1; skipSpaces(s, i);
-    // 支持整数/浮点
-    size_t j = i;
-    // 允许负号和小数/指数
-    while (j < objEnd) {
-        char c = s[j];
-        if ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.' || c == 'e' || c == 'E') { ++j; continue; }
-        break;
+#if !PBFX_HAVE_JSON
+    // —— 极简 JSON 解析兜底：只解析我们要的少量字段（容错有限，确保 M0 不因为缺少 JSON 库而链接失败） —— //
+    static bool parseBool(const std::string& s, size_t& pos, bool& out) {
+        // 跳过空白
+        while (pos < s.size() && isspace((unsigned char)s[pos])) ++pos;
+        if (s.compare(pos, 4, "true") == 0) { out = true; pos += 4; return true; }
+        if (s.compare(pos, 5, "false") == 0) { out = false; pos += 5; return true; }
+        return false;
     }
-    if (j == i) return false;
-    // 利用 from_chars 解析为 double/float/int
-    T val{};
-    auto fcres = std::from_chars(s.data() + i, s.data() + j, val);
-    if (fcres.ec != std::errc()) {
-        // 对 float 使用 std::strtod 简易兜底
-        if constexpr (std::is_same_v<T, float>) {
-            char* endp = nullptr;
-            val = static_cast<float>(std::strtod(s.c_str() + i, &endp));
-            if (endp != s.c_str() + j) return false;
-        } else if constexpr (std::is_same_v<T, double>) {
-            char* endp = nullptr;
-            val = std::strtod(s.c_str() + i, &endp);
-            if (endp != s.c_str() + j) return false;
-        } else {
-            return false;
+    static bool parseNumber(const std::string& s, size_t& pos, double& out) {
+        while (pos < s.size() && isspace((unsigned char)s[pos])) ++pos;
+        size_t start = pos;
+        bool seen = false;
+        while (pos < s.size()) {
+            char c = s[pos];
+            if ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.' || c == 'e' || c == 'E') { ++pos; seen = true; }
+            else break;
         }
+        if (!seen) return false;
+        try {
+            out = std::stod(s.substr(start, pos - start));
+            return true;
+        } catch (...) { return false; }
     }
-    outVal = val;
-    return true;
-}
-
-static bool parseBoolInObject(const std::string& s, size_t objBegin, size_t objEnd, const std::string& key, bool& outVal) {
-    size_t k = findKey(s, key, objBegin);
-    if (k == std::string::npos || k >= objEnd) return false;
-    size_t colon = s.find(':', k);
-    if (colon == std::string::npos || colon >= objEnd) return false;
-    size_t i = colon + 1; skipSpaces(s, i);
-    if (i >= objEnd) return false;
-    if (s.compare(i, 4, "true") == 0) { outVal = true; return true; }
-    if (s.compare(i, 5, "false") == 0) { outVal = false; return true; }
-    return false;
-}
-
-static bool parseStringInObject(const std::string& s, size_t objBegin, size_t objEnd, const std::string& key, std::string& outVal) {
-    size_t k = findKey(s, key, objBegin);
-    if (k == std::string::npos || k >= objEnd) return false;
-    size_t colon = s.find(':', k);
-    if (colon == std::string::npos || colon >= objEnd) return false;
-    size_t i = s.find('"', colon);
-    if (i == std::string::npos || i >= objEnd) return false;
-    size_t j = s.find('"', i + 1);
-    if (j == std::string::npos || j > objEnd) return false;
-    outVal = s.substr(i + 1, j - (i + 1));
-    return true;
-}
-
-static bool parseFloatArrayNInObject(const std::string& s, size_t objBegin, size_t objEnd, const std::string& key, float* outVals, int n) {
-    size_t k = findKey(s, key, objBegin);
-    if (k == std::string::npos || k >= objEnd) return false;
-    size_t colon = s.find(':', k);
-    if (colon == std::string::npos || colon >= objEnd) return false;
-    size_t i = s.find('[', colon);
-    if (i == std::string::npos || i >= objEnd) return false;
-    size_t j = s.find(']', i + 1);
-    if (j == std::string::npos || j > objEnd) return false;
-    // 解析 n 个 float
-    size_t p = i + 1;
-    for (int idx = 0; idx < n; ++idx) {
-        skipSpaces(s, p);
-        // 读取一个数
-        size_t q = p;
-        while (q < j) {
-            char c = s[q];
-            if ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.' || c == 'e' || c == 'E') { ++q; continue; }
-            break;
-        }
-        if (q == p) return false;
-        char* endp = nullptr;
-        outVals[idx] = static_cast<float>(std::strtod(s.c_str() + p, &endp));
-        p = s.find(',', q);
-        if (p == std::string::npos || p > j) p = j; else ++p;
-    }
-    return true;
-}
-
-static bool parseStringArrayInObject(const std::string& s, size_t objBegin, size_t objEnd, const std::string& key, std::vector<std::string>& outVals) {
-    size_t k = findKey(s, key, objBegin);
-    if (k == std::string::npos || k >= objEnd) return false;
-    size_t colon = s.find(':', k);
-    if (colon == std::string::npos || colon >= objEnd) return false;
-    size_t i = s.find('[', colon);
-    if (i == std::string::npos || i >= objEnd) return false;
-    size_t j = s.find(']', i + 1);
-    if (j == std::string::npos || j > objEnd) return false;
-    size_t p = i + 1;
-    while (p < j) {
-        size_t q1 = s.find('"', p);
-        if (q1 == std::string::npos || q1 >= j) break;
-        size_t q2 = s.find('"', q1 + 1);
-        if (q2 == std::string::npos || q2 > j) break;
-        outVals.emplace_back(s.substr(q1 + 1, q2 - (q1 + 1)));
-        p = s.find(',', q2);
-        if (p == std::string::npos || p > j) break; else ++p;
-    }
-    return !outVals.empty();
-}
-
-// 从 profiles 中提取 profileName 对应的对象范围
-static bool findProfileObject(const std::string& s, const std::string& profileName, size_t& outBegin, size_t& outEnd) {
-    size_t profBegin, profEnd;
-    if (!findObjectSection(s, "profiles", profBegin, profEnd)) return false;
-    // 在 profiles 对象中查找 "profileName": { ... }
-    size_t keyPos = findKey(s, profileName, profBegin);
-    if (keyPos == std::string::npos || keyPos >= profEnd) return false;
-    size_t colon = s.find(':', keyPos);
-    if (colon == std::string::npos || colon >= profEnd) return false;
-    size_t lb = s.find('{', colon);
-    if (lb == std::string::npos || lb >= profEnd) return false;
-    int depth = 1;
-    size_t start = lb + 1;
-    for (size_t i = start; i < profEnd; ++i) {
-        if (s[i] == '{') ++depth;
-        else if (s[i] == '}') {
-            --depth;
-            if (depth == 0) {
-                outBegin = start;
-                outEnd = i;
+    static bool parseString(const std::string& s, size_t& pos, std::string& out) {
+        while (pos < s.size() && isspace((unsigned char)s[pos])) ++pos;
+        if (pos >= s.size() || s[pos] != '"') return false;
+        ++pos;
+        std::string res;
+        while (pos < s.size()) {
+            char c = s[pos++];
+            if (c == '\\') {
+                if (pos < s.size()) {
+                    char esc = s[pos++];
+                    res.push_back(esc);
+                }
+            } else if (c == '"') {
+                out = std::move(res);
                 return true;
+            } else {
+                res.push_back(c);
             }
         }
+        return false;
     }
-    return false;
-}
+    static bool findObject(const std::string& s, const std::string& key, size_t from, size_t& objBegin, size_t& objEnd) {
+        // 简单查找 "key" : { ... }
+        size_t kpos = s.find("\"" + key + "\"", from);
+        if (kpos == std::string::npos) return false;
+        size_t colon = s.find(':', kpos);
+        if (colon == std::string::npos) return false;
+        size_t brace = s.find('{', colon);
+        if (brace == std::string::npos) return false;
+        // 匹配花括号
+        int depth = 0; size_t i = brace;
+        for (; i < s.size(); ++i) {
+            if (s[i] == '{') ++depth;
+            else if (s[i] == '}') { --depth; if (depth == 0) { objBegin = brace + 1; objEnd = i; return true; } }
+        }
+        return false;
+    }
+    static bool findArray(const std::string& s, const std::string& key, size_t from, size_t& arrBegin, size_t& arrEnd) {
+        size_t kpos = s.find("\"" + key + "\"", from);
+        if (kpos == std::string::npos) return false;
+        size_t colon = s.find(':', kpos);
+        if (colon == std::string::npos) return false;
+        size_t lb = s.find('[', colon);
+        if (lb == std::string::npos) return false;
+        int depth = 0; size_t i = lb;
+        for (; i < s.size(); ++i) {
+            if (s[i] == '[') ++depth;
+            else if (s[i] == ']') { --depth; if (depth == 0) { arrBegin = lb + 1; arrEnd = i; return true; } }
+        }
+        return false;
+    }
+    static bool findNumberInObject(const std::string& obj, const std::string& key, double& out) {
+        size_t kpos = obj.find("\"" + key + "\"");
+        if (kpos == std::string::npos) return false;
+        size_t colon = obj.find(':', kpos);
+        if (colon == std::string::npos) return false;
+        size_t p = colon + 1;
+        return parseNumber(obj, p, out);
+    }
+    static bool findBoolInObject(const std::string& obj, const std::string& key, bool& out) {
+        size_t kpos = obj.find("\"" + key + "\"");
+        if (kpos == std::string::npos) return false;
+        size_t colon = obj.find(':', kpos);
+        if (colon == std::string::npos) return false;
+        size_t p = colon + 1;
+        return parseBool(obj, p, out);
+    }
+    static bool findStringInObject(const std::string& obj, const std::string& key, std::string& out) {
+        size_t kpos = obj.find("\"" + key + "\"");
+        if (kpos == std::string::npos) return false;
+        size_t colon = obj.find(':', kpos);
+        if (colon == std::string::npos) return false;
+        size_t p = colon + 1;
+        return parseString(obj, p, out);
+    }
+#endif
 
-static int mapSortFrequencyToN(const std::string& freq) {
-    if (freq == "every_step") return 1;
-    if (freq == "every_2_steps") return 2;
-    // auto_threshold 暂用 1（后续加入阈值逻辑）
-    return 1;
-}
-
-} // anon
+} // anonymous
 
 namespace config {
 
-    static void applySystemSection(const std::string& s, console::RuntimeConsole& io, std::vector<std::string>& whitelistOut) {
-        size_t b, e;
-        if (!findObjectSection(s, "system", b, e)) return;
-
-        float res2[2]{};
-        if (parseFloatArrayNInObject(s, b, e, "resolution", res2, 2)) {
-            io.app.width = static_cast<uint32_t>((((1.0f) > (res2[0])) ? (1.0f) : (res2[0])));
-            io.app.height = static_cast<uint32_t>((((1.0f) > (res2[1])) ? (1.0f) : (res2[1])));
-        }
-        bool vs = false;
-        if (parseBoolInObject(s, b, e, "vsync", vs)) io.app.vsync = vs;
-
-        std::string csv;
-        if (parseStringInObject(s, b, e, "csv_stats_path", csv)) io.app.csv_path = csv;
-
-        // hot_reload_whitelist
-        std::vector<std::string> wl;
-        if (parseStringArrayInObject(s, b, e, "hot_reload_whitelist", wl)) {
-            whitelistOut = wl;
-        }
-    }
-
-    static void applyViewerSection(const std::string& s, console::RuntimeConsole& io) {
-        size_t b, e;
-        if (!findObjectSection(s, "viewer", b, e)) return;
-        bool en = true;
-        if (parseBoolInObject(s, b, e, "enabled", en)) io.viewer.enabled = en;
-
-        float ps = 0.f;
-        if (parseNumberInObject<float>(s, b, e, "point_size_px", ps)) io.viewer.point_size_px = ps;
-
-        float bg[4]{};
-        if (parseFloatArrayNInObject(s, b, e, "background_color", bg, 3)) {
-            io.viewer.background_color[0] = bg[0];
-            io.viewer.background_color[1] = bg[1];
-            io.viewer.background_color[2] = bg[2];
-            io.viewer.background_color[3] = 1.0f;
-        }
-    }
-
-    static void applySimulationSection(const std::string& s, console::RuntimeConsole& io) {
-        size_t b, e;
-        if (!findObjectSection(s, "simulation", b, e)) return;
-
-        float cfl = 0.f;
-        if (parseNumberInObject<float>(s, b, e, "cfl", cfl)) io.sim.cfl = cfl;
-
-        float rho0 = 0.f;
-        if (parseNumberInObject<float>(s, b, e, "rest_density", rho0)) io.sim.restDensity = rho0;
-
-        float h = 0.f;
-        if (parseNumberInObject<float>(s, b, e, "kernel_radius", h)) {
-            io.sim.smoothingRadius = h;
-            io.sim.cellSize = h;
-        }
-
-        int K = 0;
-        if (parseNumberInObject<int>(s, b, e, "solver_iterations", K)) io.sim.solverIters = K;
-
-        int cap = 0;
-        if (parseNumberInObject<int>(s, b, e, "max_neighbors", cap)) io.sim.maxNeighbors = cap;
-    }
-
-    static void applyPerformanceSection(const std::string& s, console::RuntimeConsole& io) {
-        size_t b, e;
-        if (!findObjectSection(s, "performance", b, e)) return;
-
-        float mul = 0.f;
-        if (parseNumberInObject<float>(s, b, e, "grid_cell_size_multiplier", mul)) {
-            io.perf.grid_cell_size_multiplier = mul;
-        }
-
-        std::string sf;
-        if (parseStringInObject(s, b, e, "sort_frequency", sf)) {
-            io.sim.sortEveryN = mapSortFrequencyToN(sf);
-        }
-
-        int nc = 0;
-        if (parseNumberInObject<int>(s, b, e, "neighbor_cap", nc)) {
-            io.perf.neighbor_cap = nc;
-            io.sim.maxNeighbors = (((io.sim.maxNeighbors) < (nc)) ? (io.sim.maxNeighbors) : (nc));
-        }
-
-        int tbs = 0;
-        if (parseNumberInObject<int>(s, b, e, "launch_bounds_tbs", tbs)) io.perf.launch_bounds_tbs = tbs;
-        int mbs = 0;
-        if (parseNumberInObject<int>(s, b, e, "min_blocks_per_sm", mbs)) io.perf.min_blocks_per_sm = mbs;
-
-        bool graphs = true;
-        if (parseBoolInObject(s, b, e, "use_cuda_graphs", graphs)) io.perf.use_cuda_graphs = graphs;
-    }
-
-    static void applyProfileOverrides(const std::string& s, const std::string& profile, console::RuntimeConsole& io) {
-        if (profile.empty()) return;
-        size_t pb, pe;
-        if (!findProfileObject(s, profile, pb, pe)) return;
-
-        // profiles.<name>.simulation.solver_iterations/max_neighbors
-        size_t sb, se;
-        if (findObjectSection(s.substr(pb, pe - pb), "simulation", sb, se)) {
-            sb += pb; se += pb;
-            int K = 0;
-            if (parseNumberInObject<int>(s, sb, se, "solver_iterations", K)) io.sim.solverIters = K;
-            int cap = 0;
-            if (parseNumberInObject<int>(s, sb, se, "max_neighbors", cap)) io.sim.maxNeighbors = cap;
-        }
-
-        // profiles.<name>.performance.neighbor_cap/mixed_precision
-        if (findObjectSection(s.substr(pb, pe - pb), "performance", sb, se)) {
-            sb += pb; se += pb;
-            int nc = 0;
-            if (parseNumberInObject<int>(s, sb, se, "neighbor_cap", nc)) {
-                io.perf.neighbor_cap = nc;
-                io.sim.maxNeighbors = (((io.sim.maxNeighbors) < (nc)) ? (io.sim.maxNeighbors) : (nc));
+    // 以“Merge”策略填充 cc：仅当 JSON 存在某字段时才覆盖现值
+    static void MergeIntoConsole_Safe(console::RuntimeConsole& cc,
+#if PBFX_HAVE_JSON
+        const json& j,
+        State* state
+#else
+        const std::string& raw,
+        State* state
+#endif
+    ) {
+#if PBFX_HAVE_JSON
+        // system
+        if (j.contains("system") && j["system"].is_object()) {
+            const auto& s = j["system"];
+            if (s.contains("resolution") && s["resolution"].is_array() && s["resolution"].size() >= 2) {
+                cc.app.width = s["resolution"][0].get<uint32_t>();
+                cc.app.height = s["resolution"][1].get<uint32_t>();
             }
-            // mixed_precision 仅占位（当前不改变 sim.useMixedPrecision 的枚举）
-            std::string mp;
-            if (parseStringInObject(s, sb, se, "mixed_precision", mp)) {
-                // 可根据 mp=off|fp16_mid|fp16_more 映射为 bool/枚举；当前保持占位
-                io.sim.useMixedPrecision = (mp != "off");
+            if (s.contains("vsync")) cc.app.vsync = s["vsync"].get<bool>();
+            if (s.contains("csv_stats_path")) cc.app.csv_path = s["csv_stats_path"].get<std::string>();
+        }
+        // viewer
+        if (j.contains("viewer") && j["viewer"].is_object()) {
+            const auto& v = j["viewer"];
+            if (v.contains("enabled")) cc.viewer.enabled = v["enabled"].get<bool>();
+            if (v.contains("point_size_px")) cc.viewer.point_size_px = v["point_size_px"].get<float>();
+            if (v.contains("fixed_color") && v["fixed_color"].is_array() && v["fixed_color"].size() >= 3) {
+                cc.viewer.fixed_color[0] = v["fixed_color"][0].get<float>();
+                cc.viewer.fixed_color[1] = v["fixed_color"][1].get<float>();
+                cc.viewer.fixed_color[2] = v["fixed_color"][2].get<float>();
+            }
+            if (v.contains("background_color") && v["background_color"].is_array() && v["background_color"].size() >= 3) {
+                cc.viewer.background_color[0] = v["background_color"][0].get<float>();
+                cc.viewer.background_color[1] = v["background_color"][1].get<float>();
+                cc.viewer.background_color[2] = v["background_color"][2].get<float>();
             }
         }
-    }
-
-    static void applyProfileName(const std::string& s, std::string& outProfile) {
-        // 顶层 "profile": "balanced"
-        size_t b=0, e= s.size();
-        std::string prof;
-        if (parseStringInObject(s, b, e, "profile", prof)) {
-            outProfile = prof;
+        // performance
+        if (j.contains("performance") && j["performance"].is_object()) {
+            const auto& p = j["performance"];
+            if (p.contains("grid_cell_size_multiplier")) cc.perf.grid_cell_size_multiplier = p["grid_cell_size_multiplier"].get<float>();
+            if (p.contains("neighbor_cap")) cc.perf.neighbor_cap = p["neighbor_cap"].get<int>();
+            if (p.contains("launch_bounds_tbs")) cc.perf.launch_bounds_tbs = p["launch_bounds_tbs"].get<int>();
+            if (p.contains("min_blocks_per_sm")) cc.perf.min_blocks_per_sm = p["min_blocks_per_sm"].get<int>();
+            if (p.contains("use_cuda_graphs")) cc.perf.use_cuda_graphs = p["use_cuda_graphs"].get<bool>();
+            if (p.contains("use_hashed_grid")) cc.perf.use_hashed_grid = p["use_hashed_grid"].get<bool>();
+            if (p.contains("sort_compact_every_n")) cc.perf.sort_compact_every_n = p["sort_compact_every_n"].get<int>();
+            if (p.contains("compact_binary_search")) cc.perf.compact_binary_search = p["compact_binary_search"].get<bool>();
+            if (p.contains("log_grid_compact_stats")) cc.perf.log_grid_compact_stats = p["log_grid_compact_stats"].get<bool>();
         }
-    }
-
-    static bool shouldApplyField(const std::vector<std::string>& whitelist, const std::string& dottedKey) {
-        if (whitelist.empty()) return false;
-        return std::find(whitelist.begin(), whitelist.end(), dottedKey) != whitelist.end();
-    }
-
-    // 局部热加载：仅应用白名单字段（最小实现）
-    static void applyHotReloadWhitelisted(const std::string& s, const std::vector<std::string>& whitelist, console::RuntimeConsole& io, std::string& activeProfile) {
-        size_t bSim, eSim, bPerf, ePerf, bView, eView;
-        if (findObjectSection(s, "simulation", bSim, eSim)) {
-            if (shouldApplyField(whitelist, "simulation.solver_iterations")) {
-                int K = 0; if (parseNumberInObject<int>(s, bSim, eSim, "solver_iterations", K)) io.sim.solverIters = K;
-            }
-            if (shouldApplyField(whitelist, "simulation.max_neighbors")) {
-                int cap = 0; if (parseNumberInObject<int>(s, bSim, eSim, "max_neighbors", cap)) io.sim.maxNeighbors = cap;
-            }
+        // simulation（仅 M0 需要的子集）
+        if (j.contains("simulation") && j["simulation"].is_object()) {
+            const auto& s = j["simulation"];
+            if (s.contains("dt_min")) {/*M0 不用*/}
+            if (s.contains("dt_max")) {/*M0 不用*/}
+            if (s.contains("cfl")) cc.sim.cfl = s["cfl"].get<float>();
+            if (s.contains("rest_density")) cc.sim.restDensity = s["rest_density"].get<float>();
+            if (s.contains("kernel_radius")) cc.sim.smoothingRadius = s["kernel_radius"].get<float>();
+            if (s.contains("solver_iterations")) cc.sim.solverIters = s["solver_iterations"].get<int>();
+            if (s.contains("max_neighbors")) cc.sim.maxNeighbors = s["max_neighbors"].get<int>();
+            if (s.contains("xsph_c")) cc.sim.xsph_c = s["xsph_c"].get<float>();
         }
-        if (findObjectSection(s, "performance", bPerf, ePerf)) {
-            if (shouldApplyField(whitelist, "performance.sort_frequency")) {
-                std::string sf; if (parseStringInObject(s, bPerf, ePerf, "sort_frequency", sf)) io.sim.sortEveryN = mapSortFrequencyToN(sf);
-            }
-            if (shouldApplyField(whitelist, "performance.neighbor_cap")) {
-                int nc=0; if (parseNumberInObject<int>(s, bPerf, ePerf, "neighbor_cap", nc)) {
-                    io.perf.neighbor_cap = nc;
-                    io.sim.maxNeighbors = (((io.sim.maxNeighbors) < (nc)) ? (io.sim.maxNeighbors) : (nc));
+        // profile 名
+        if (j.contains("profile") && j["profile"].is_string()) {
+            if (state) state->activeProfile = j["profile"].get<std::string>();
+        }
+        // profiles（M0：仅应用能映射到现有 RuntimeConsole 的少量字段）
+        if (state && !state->activeProfile.empty() && j.contains("profiles") && j["profiles"].is_object()) {
+            const auto& pr = j["profiles"];
+            auto it = pr.find(state->activeProfile);
+            if (it != pr.end() && it->is_object()) {
+                const auto& P = *it;
+                if (P.contains("simulation") && P["simulation"].is_object()) {
+                    const auto& ps = P["simulation"];
+                    if (ps.contains("solver_iterations")) cc.sim.solverIters = ps["solver_iterations"].get<int>();
+                    if (ps.contains("max_neighbors")) cc.sim.maxNeighbors = ps["max_neighbors"].get<int>();
+                }
+                if (P.contains("performance") && P["performance"].is_object()) {
+                    const auto& pp = P["performance"];
+                    if (pp.contains("neighbor_cap")) cc.perf.neighbor_cap = pp["neighbor_cap"].get<int>();
+                    // mixed_precision 等暂不映射
                 }
             }
         }
-        if (findObjectSection(s, "viewer", bView, eView)) {
-            if (shouldApplyField(whitelist, "viewer.point_size_px")) {
-                float ps=0.f; if (parseNumberInObject<float>(s, bView, eView, "point_size_px", ps)) io.viewer.point_size_px = ps;
+#else
+        // 无第三方 JSON 库时：极简解析（仅解析少量关键字段）
+        size_t objB = 0, objE = 0;
+        // system
+        if (findObject(raw, "system", 0, objB, objE)) {
+            std::string sys = raw.substr(objB, objE - objB);
+            // resolution: [w,h]
+            size_t ab = 0, ae = 0;
+            if (findArray(sys, "resolution", 0, ab, ae)) {
+                std::string arr = sys.substr(ab, ae - ab);
+                // 解析两个数字
+                size_t p = 0; double a = 0, b = 0;
+                if (parseNumber(arr, p, a)) {
+                    while (p < arr.size() && arr[p] != ',') ++p;
+                    if (p < arr.size()) ++p;
+                    if (parseNumber(arr, p, b)) {
+                        if (a > 0 && b > 0) { cc.app.width = (uint32_t)a; cc.app.height = (uint32_t)b; }
+                    }
+                }
             }
-            // viewer.color_mode 暂未落地到渲染器，先忽略
+            bool vs = false;
+            if (findBoolInObject(sys, "vsync", vs)) cc.app.vsync = vs;
+            std::string csv;
+            if (findStringInObject(sys, "csv_stats_path", csv)) cc.app.csv_path = csv;
         }
-        if (shouldApplyField(whitelist, "profile")) {
-            std::string prof; applyProfileName(s, prof);
-            if (!prof.empty() && prof != activeProfile) {
-                activeProfile = prof;
-                applyProfileOverrides(s, activeProfile, io);
+        // viewer
+        if (findObject(raw, "viewer", 0, objB, objE)) {
+            std::string vw = raw.substr(objB, objE - objB);
+            bool en = false; if (findBoolInObject(vw, "enabled", en)) cc.viewer.enabled = en;
+            double ps = 0.0; if (findNumberInObject(vw, "point_size_px", ps)) cc.viewer.point_size_px = float(ps);
+            // 背景色略
+        }
+        // performance
+        if (findObject(raw, "performance", 0, objB, objE)) {
+            std::string pf = raw.substr(objB, objE - objB);
+            double gmul = 0.0; if (findNumberInObject(pf, "grid_cell_size_multiplier", gmul)) cc.perf.grid_cell_size_multiplier = float(gmul);
+            double ncap = 0.0; if (findNumberInObject(pf, "neighbor_cap", ncap)) cc.perf.neighbor_cap = int(ncap);
+            bool graphs = false; if (findBoolInObject(pf, "use_cuda_graphs", graphs)) cc.perf.use_cuda_graphs = graphs;
+            bool hashed = false; if (findBoolInObject(pf, "use_hashed_grid", hashed)) cc.perf.use_hashed_grid = hashed;
+            double every = 0.0; if (findNumberInObject(pf, "sort_compact_every_n", every)) cc.perf.sort_compact_every_n = int(every);
+        }
+        // simulation
+        if (findObject(raw, "simulation", 0, objB, objE)) {
+            std::string sm = raw.substr(objB, objE - objB);
+            double cfl = 0.0; if (findNumberInObject(sm, "cfl", cfl)) cc.sim.cfl = float(cfl);
+            double rd = 0.0;  if (findNumberInObject(sm, "rest_density", rd)) cc.sim.restDensity = float(rd);
+            double h  = 0.0;  if (findNumberInObject(sm, "kernel_radius", h)) cc.sim.smoothingRadius = float(h);
+            double K  = 0.0;  if (findNumberInObject(sm, "solver_iterations", K)) cc.sim.solverIters = int(K);
+            double MN = 0.0;  if (findNumberInObject(sm, "max_neighbors", MN)) cc.sim.maxNeighbors = int(MN);
+            double X  = 0.0;  if (findNumberInObject(sm, "xsph_c", X)) cc.sim.xsph_c = float(X);
+        }
+        // profile
+        {
+            size_t p = raw.find("\"profile\"");
+            if (p != std::string::npos) {
+                size_t colon = raw.find(':', p);
+                if (colon != std::string::npos) {
+                    std::string v; size_t q = colon + 1;
+                    if (parseString(raw, q, v)) {
+                        if (state) state->activeProfile = v;
+                    }
+                }
             }
         }
+#endif
+        (void)state;
+    }
+
+    static const std::vector<std::string>& ResolveWhitelist(const State* state) {
+        if (state && !state->hotReloadWhitelist.empty()) return state->hotReloadWhitelist;
+        return DefaultWhitelist();
     }
 
     bool LoadFile(const std::string& path, console::RuntimeConsole& io, State* state, std::string* errOut) {
-        std::string err;
-        auto doc = ReadTextFile(path, &err);
-        if (!doc.ok) {
-            if (errOut) *errOut = err;
-            if (state) state->lastError = err;
+        if (state) state->path = path;
+        std::error_code ec;
+        std::string raw = slurpFile(path, ec);
+        if (ec || raw.empty()) {
+            if (errOut) {
+                if (ec) *errOut = "config: open failed: " + ec.message();
+                else     *errOut = "config: empty or unreadable file";
+            }
+            // 文件缺失时不视为致命错误，直接沿用默认参数
+            if (state) {
+                if (!state->missingWarnedOnce) {
+                    state->lastError = (errOut ? *errOut : std::string("config missing."));
+                }
+                state->missingWarnedOnce = true;
+            }
             return false;
         }
 
-        // 基本节应用
-        std::vector<std::string> wl; // 从文件读取的白名单
-        applySystemSection(doc.text, io, wl);
-        applyViewerSection(doc.text, io);
-        applySimulationSection(doc.text, io);
-        applyPerformanceSection(doc.text, io);
-
-        // profile 名与覆盖
-        std::string profName;
-        applyProfileName(doc.text, profName);
-        if (!profName.empty()) {
-            applyProfileOverrides(doc.text, profName, io);
-        }
-
-        // 维护 state
+        // 记录 mtime
         if (state) {
-            state->path = path;
-            std::error_code ec;
-            state->lastWrite = std::filesystem::last_write_time(path, ec);
-            if (ec) { /* ignore */ }
-            state->hotReloadWhitelist = wl.empty() ? DefaultWhitelist() : wl;
-            state->activeProfile = profName;
-            state->lastError.clear();
+            std::error_code ec2;
+            fs::file_time_type ft;
+            if (fileTime(path, ft, ec2)) state->lastWrite = ft;
         }
-        if (errOut) errOut->clear();
+
+#if PBFX_HAVE_JSON
+        try {
+            json j = json::parse(raw);
+            MergeIntoConsole_Safe(io, j, state);
+        } catch (const std::exception& e) {
+            if (errOut) *errOut = std::string("config: json parse error: ") + e.what();
+            if (state) state->lastError = *errOut;
+            return false;
+        }
+#else
+        // 兜底解析（功能有限）
+        MergeIntoConsole_Safe(io, raw, state);
+#endif
         return true;
     }
 
     bool TryHotReload(State& state, console::RuntimeConsole& io, std::string* errOut) {
         std::error_code ec;
-        auto cur = std::filesystem::last_write_time(state.path, ec);
-        if (ec) {
-            std::string err = "config: last_write_time failed: " + state.path;
-            if (errOut) *errOut = err;
-            state.lastError = err;
-            return false;
-        }
-        if (state.lastWrite == std::filesystem::file_time_type{}) {
-            state.lastWrite = cur;
-            return false;
-        }
-        if (cur <= state.lastWrite) return false;
+        fs::file_time_type ft;
+        if (!fileTime(state.path, ft, ec) || ec) return false;
+        if (state.lastWrite == fs::file_time_type{} || ft <= state.lastWrite) return false;
 
-        // 文件已更新 → 读取文本并应用白名单字段
+        // 先完整加载到 tmp，再按白名单复制到 io
+        console::RuntimeConsole tmp = io;
+        State tmpState = state;
         std::string err;
-        auto doc = ReadTextFile(state.path, &err);
-        if (!doc.ok) {
+        if (!LoadFile(state.path, tmp, &tmpState, &err)) {
             if (errOut) *errOut = err;
-            state.lastError = err;
             return false;
         }
 
-        // 应用热加载白名单字段
-        const auto& wl = state.hotReloadWhitelist.empty() ? DefaultWhitelist() : state.hotReloadWhitelist;
-        applyHotReloadWhitelisted(doc.text, wl, io, state.activeProfile);
+        const auto& wl = ResolveWhitelist(&state);
+        ApplyWhitelistDiff(wl, tmp, io, state);
 
-        // 更新时间戳
-        state.lastWrite = cur;
-        state.lastError.clear();
-        if (errOut) errOut->clear();
+        // 同步新 mtime 与 profile
+        state.lastWrite = tmpState.lastWrite;
+        state.activeProfile = tmpState.activeProfile;
         return true;
     }
 

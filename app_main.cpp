@@ -27,6 +27,14 @@ static inline bool KeyDown(int vk) {
     return (GetAsyncKeyState(vk) & 0x8000) != 0;
 }
 
+// 更新窗口标题栏（粒子数 + FPS）
+static void UpdateWindowTitleHUD(HWND hwnd, uint32_t particleCount, double fps) {
+    wchar_t buf[256];
+    if (fps < 1e-3) fps = 0.0;
+    swprintf(buf, L"PBF-X | N=%u | FPS=%.1f", particleCount, fps);
+    SetWindowTextW(hwnd, buf);
+}
+
 // 上升沿触发（去抖）
 static bool KeyPressedOnce(int vk) {
     static uint8_t prev[512] = {};
@@ -503,12 +511,12 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
             }
 
             sim::SimStats sBF{};
-            if (simulator.computeStatsBruteforce(sBF, /*sampleStride=*/16, /*maxISamples=*/512)) {
+            if ((cc.debug.printDiagnostics || cc.debug.printWarnings || cc.debug.printHints) &&
+                simulator.computeStatsBruteforce(sBF, /*sampleStride=*/16, /*maxISamples=*/512)) {
                 profiler.addCounter("avg_neighbors_bf_x1000", (int64_t)llround(sBF.avgNeighbors * 1000.0));
                 profiler.addCounter("avg_rho_rel_bf_x1000", (int64_t)llround(sBF.avgRhoRel * 1000.0));
                 profiler.addCounter("avg_rho_bf_x1000", (int64_t)llround(sBF.avgRho * 1000.0));
 
-                // 差异百分比（x1000，单位 ‰）
                 double nDiff = (sBF.avgNeighbors > 1e-9) ? (1.0 - sGrid.avgNeighbors / sBF.avgNeighbors) : 0.0;
                 profiler.addCounter("neighbor_grid_vs_bf_diff_permille", (int64_t)llround(nDiff * 1000.0));
             }
@@ -655,8 +663,16 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
             renderer.SetParticleCount(active);
         }
 
+        // 计算/平滑 FPS（使用真实帧间隔 dtSec）
+        static double s_fpsEma = 0.0;
+        double fpsInst = (dtSec > 1e-6f) ? (1.0 / dtSec) : 0.0;
+        s_fpsEma = (s_fpsEma <= 0.0) ? fpsInst : (0.9 * s_fpsEma + 0.1 * fpsInst);
+
         // 渲染
         renderer.RenderFrame(profiler);
+
+        // 同步标题栏 HUD（使用当前活动粒子数与平滑 FPS）
+        UpdateWindowTitleHUD(hwnd, simParams.numParticles, s_fpsEma);
 
         // 帧计时与 CSV
         core::CpuTimer ft; ft.begin();
