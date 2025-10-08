@@ -51,7 +51,7 @@ namespace console {
             bool printDebugKeys = false;        // [Debug] 键位回显
             bool printPeriodicStats = false;    // [SimStats] 周期统计打印
             bool printSanitize = false;         // [Sanitize] 钳制提示
-            bool printWarnings = false;          // [Warn]/[Info] 类一般提示/告警
+            bool printWarnings = false;         // [Warn]/[Info] 类一般提示/告警
 
             // 高开销“塌陷诊断”（包含主机拷贝/近邻统计）
             bool enableAdvancedCollapseDiag = false;
@@ -70,6 +70,11 @@ namespace console {
             bool logEnergy = true;             // 打印动能估算与衰减率（主机拷样）
             // 注：logXSphEffect 暂不实现精确估算（需修改核/双缓对比），保留占位以便后续扩展
             bool logXSphEffect = false;        // 占位：XSPH 平滑实际效果估算（未来扩展）
+
+            // —— 新增：统一约束零散日志的分类开关 ——
+            bool printDiagnostics = false;     // [Diag] 诊断与网格占用直方等
+            bool printHints = false;           // [Hint] 启发式建议
+            bool printErrors = true;           // 错误/致命提示（默认开）
         } debug;
 
         // 仿真配置（集中所有物理与发射/域参数）
@@ -140,6 +145,15 @@ namespace console {
             int   launch_bounds_tbs = 256;
             int   min_blocks_per_sm = 2;
             bool  use_cuda_graphs = true;
+
+            // 新增：启用哈希/压缩网格（按 cell-key 排序 + 压缩段表）
+            bool  use_hashed_grid = true;
+            // 新增：压缩段表重建频率（帧）：>=1
+            int   sort_compact_every_n = 4;
+            // 新增：邻域查段方式（true=对压缩 key 做二分；false=使用辅表哈希，后续扩展）
+            bool  compact_binary_search = true;
+            // 新增：打印网格统计（非空 cell 数、均值/最大 occupancy 等）
+            bool  log_grid_compact_stats = false;
         } perf;
     };
 

@@ -37,7 +37,7 @@ namespace sim {
     private:
         bool buildGrid(const SimParams& p);
         bool ensureSortTemp(std::size_t bytes);
-        bool captureGraphIfNeeded(const SimParams& p);
+        bool captureGraphIfNeeded(const SimParams& p); // 保留名，但内部构建两套 Graph
 
         bool updateGridIfNeeded(const SimParams& p);
         bool needsGraphRebuild(const SimParams& p) const;
@@ -46,6 +46,7 @@ namespace sim {
         void kHashKeys(cudaStream_t s, const SimParams& p);
         void kSort(cudaStream_t s, const SimParams& p);
         void kCellRanges(cudaStream_t s, const SimParams& p);
+        void kCellRangesCompact(cudaStream_t s, const SimParams& p);
         void kSolveIter(cudaStream_t s, const SimParams& p);
         void kVelocityAndPost(cudaStream_t s, const SimParams& p);
 
@@ -54,16 +55,22 @@ namespace sim {
         DeviceBuffers m_bufs{};
         uint32_t m_numCells = 0;
 
+        bool     m_useHashedGrid = false;
+        uint32_t m_numCompactCells = 0;
+
         cudaStream_t m_stream = nullptr;
         cudaEvent_t  m_evStart = nullptr, m_evEnd = nullptr;
 
-        cudaGraph_t m_graph = nullptr;
-        cudaGraphExec_t m_graphExec = nullptr;
+        // —— 改为双 Graph：Full（包含 Hash/Sort/Build），Cheap（省略这些阶段） ——
+        cudaGraph_t    m_graphFull = nullptr;
+        cudaGraphExec_t m_graphExecFull = nullptr;
+        cudaGraph_t    m_graphCheap = nullptr;
+        cudaGraphExec_t m_graphExecCheap = nullptr;
         bool m_graphDirty = true;
 
         int m_frameIndex = 0;
+        int m_lastFullFrame = -1; // 上一次运行 Full 的帧号（用于每 N 帧重建）
 
-        // 记录上次捕获 Graph 的关键参数快照（用于判定是否需要重建）
         struct GraphCapturedParams {
             uint32_t numParticles = 0;
             uint32_t numCells = 0;
@@ -77,10 +84,7 @@ namespace sim {
             float    restDensity = 0.0f;
         } m_captured{};
 
-        // 新增：CUDA 外部内存（映射 d_pos_pred）
         cudaExternalMemory_t m_extPosPred = nullptr;
-
-        // 新增：回收内核对应的 Graph 节点（捕获后定位，逐帧改参数）
         cudaGraphNode_t m_nodeRecycle = nullptr;
     };
 } // namespace sim

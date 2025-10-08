@@ -81,11 +81,13 @@
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <CudaCompile Include="cuda sim\cell_compact.cu" />
     <CudaCompile Include="cuda sim\pbf_delta_apply.cu" />
     <CudaCompile Include="cuda sim\pbf_lambda.cu" />
     <CudaCompile Include="cuda sim\xsph.cu" />
     <CudaCompile Include="kernel.cu" />
     <CudaCompile Include="sim\boundary.cu" />
+    <CudaCompile Include="sim\cell_compact.cu" />
     <CudaCompile Include="sim\cell_ranges.cu" />
     <CudaCompile Include="sim\eimtter.cu" />
     <CudaCompile Include="sim\emit_params.cu" />

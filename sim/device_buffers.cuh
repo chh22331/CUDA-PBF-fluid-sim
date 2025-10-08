@@ -66,13 +66,21 @@ namespace sim {
         float* d_lambda = nullptr;      // PBF λ
         float4* d_delta = nullptr;      // 位置修正 Δx
 
-        // 哈希 / 排序
+        // 哈希 / 排序（稠密路径 + 压缩路径共享输入）
         uint32_t* d_cellKeys = nullptr;         // 每粒子cell key
         uint32_t* d_cellKeys_sorted = nullptr;  // 排序后的cell key
         uint32_t* d_indices = nullptr;          // 每粒子原始索引
         uint32_t* d_indices_sorted = nullptr;   // 排序后的索引
+
+        // 稠密网格范围（保留以向后兼容旧路径）
         uint32_t* d_cellStart = nullptr;        // 每cell起始（exclusive prefix）
         uint32_t* d_cellEnd = nullptr;          // 每cell结束
+
+        // —— 压缩网格段表（基于非空 cell） ——
+        uint32_t* d_cellUniqueKeys = nullptr;   // M
+        uint32_t* d_cellOffsets = nullptr;      // M+1
+        uint32_t* d_compactCount = nullptr;     // 设备端单元素，记录 M
+        uint32_t  compactCapacity = 0;          // 以 N 为上界（M <= N）
 
         // 临时与统计
         void* d_sortTemp = nullptr; size_t sortTempBytes = 0;
@@ -117,6 +125,21 @@ namespace sim {
             allocGridRanges(numCells);
         }
 
+        // 确保压缩段表容量（按 N 上界分配 M<=N 的缓冲）
+        void ensureCompactCapacity(uint32_t N) {
+            uint32_t need = (N == 0u) ? 1u : N;
+            if (need <= compactCapacity && d_cellUniqueKeys && d_cellOffsets && d_compactCount) return;
+            if (d_cellUniqueKeys) CUDA_CHECK(cudaFree(d_cellUniqueKeys));
+            if (d_cellOffsets)    CUDA_CHECK(cudaFree(d_cellOffsets));
+            if (d_compactCount)   CUDA_CHECK(cudaFree(d_compactCount));
+            compactCapacity = 0;
+            // M <= N，offsets 需要 M+1，按 N+1 分配；compactCount 为 1
+            CUDA_CHECK(cudaMalloc((void**)&d_cellUniqueKeys, sizeof(uint32_t) * need));
+            CUDA_CHECK(cudaMalloc((void**)&d_cellOffsets,    sizeof(uint32_t) * (need + 1)));
+            CUDA_CHECK(cudaMalloc((void**)&d_compactCount,   sizeof(uint32_t) * 1));
+            compactCapacity = need;
+        }
+
         void ensureSortTemp(size_t bytes) {
             if (bytes <= sortTempBytes) return;
             if (d_sortTemp) CUDA_CHECK(cudaFree(d_sortTemp));
@@ -141,6 +164,11 @@ namespace sim {
             fre(d_indices_sorted); d_indices_sorted = nullptr;
             fre(d_cellStart); d_cellStart = nullptr;
             fre(d_cellEnd);   d_cellEnd = nullptr;
+
+            fre(d_cellUniqueKeys); d_cellUniqueKeys = nullptr;
+            fre(d_cellOffsets);    d_cellOffsets = nullptr;
+            fre(d_compactCount);   d_compactCount = nullptr;
+            compactCapacity = 0;
 
             fre(d_sortTemp); d_sortTemp = nullptr; sortTempBytes = 0;
 
