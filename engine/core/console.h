@@ -22,7 +22,7 @@ namespace console {
 
         struct Renderer {
             float clearColor[4] = { 0.1f, 0.2f, 0.35f, 1.0f };
-            float particleRadiusPx = 3.0f;
+            float particleRadiusPx = 1.0f;
             float thicknessScale = 1.0f;
             float3 eye = make_float3(0.5f, 0.5f, 2.0f);
             float3 at  = make_float3(0.5f, 0.5f, 0.5f);
@@ -42,7 +42,7 @@ namespace console {
 
         // Debug/控制（新增）
         struct Debug {
-            bool enabled = false;        // 开启 Debug 模式
+            bool enabled = true;        // 开启 Debug 模式
             bool pauseOnStart = true;   // 启动即暂停在第 1 帧
             // 采用 Windows VK 与 ASCII 兼容编码（无需包含 windows.h）
             int  keyStep = 32;          // 空格：推进一帧
@@ -54,7 +54,7 @@ namespace console {
             bool printDebugKeys = false;        // [Debug] 键位回显
             bool printPeriodicStats = false;    // [SimStats] 周期统计打印
             bool printSanitize = false;         // [Sanitize] 钳制提示
-            bool printWarnings = false;         // [Warn]/[Info] 类一般提示/告警
+            bool printWarnings = true;         // [Warn]/[Info] 类一般提示/告警
 
             // 高开销“塌陷诊断”（包含主机拷贝/近邻统计）
             bool enableAdvancedCollapseDiag = false;
@@ -86,8 +86,8 @@ namespace console {
         // 仿真配置（集中所有物理与发射/域参数）
         struct Simulation {
             // 粒子与发射器
-            uint32_t numParticles = 350000;
-            uint32_t maxParticles = 400000;
+            uint32_t numParticles = 400000;
+            uint32_t maxParticles = 1000000;
             uint32_t emitPerStep = 50;
             bool     faucetFillEnable = true;
             bool     recycleToNozzle = false;
@@ -100,8 +100,19 @@ namespace console {
             // Poisson-disk 最小间距（相对 h）
             float    poisson_min_spacing_factor_h = 0.8f;
 
+            // —— 新增：初始/发射抖动（用于打破规则立方体格点导致的“团块不散”） —— 
+            // 初始格点随机扰动开关（seedBoxLattice / seedBoxLatticeAuto 后应用）
+            bool     initial_jitter_enable = true;
+            // 扰动幅度 = initial_jitter_scale_h * h （若 h 不可用则退化为 spacing）
+            float    initial_jitter_scale_h = 0.001f;
+            uint32_t initial_jitter_seed = 0xC0FFEEu;
+            // 发射粒子附加扰动（在喷口圆盘内 Poisson / 随机分布基础上再微扰）
+            bool     emit_jitter_enable = false;
+            float    emit_jitter_scale_h = 0.005f;
+            uint32_t emit_jitter_seed = 0xABCDEFu;
+
             // 基本动力学
-            float    dt = 0.004f;
+            float    dt = 0.01f;
             float    cfl = 0.45f;
             float3   gravity = make_float3(0.0f, -9.8f, 0.0f);
             float    restDensity = 1.0f;
@@ -122,7 +133,7 @@ namespace console {
             sim::PbfTuning pbf{};
 
             // XSPH 系数
-            float    xsph_c = 0.02f;
+            float    xsph_c = 0.05f;
 
             // 邻域核参数
             float    smoothingRadius = 2.0f;
@@ -134,7 +145,7 @@ namespace console {
             int      solverIters = 2;
             int      maxNeighbors = 64;
             bool     useMixedPrecision = true;
-            int      sortEveryN = 1;
+            int      sortEveryN = 4;
             float    boundaryRestitution = 0.0f;
 
             // —— 新增：自适应 h/喷口半径（降低稀疏场景下“无邻居”概率） —__
@@ -143,6 +154,69 @@ namespace console {
             float    h_min = 0.25f;          // h 下限（避免过小）
             float    h_max = 1e3f;           // h 上限防失控
             float    nozzle_radius_factor_h = 1.5f; // 喷口半径上限系数：min(nozzleRadius, factor*h)
+            // ================== 新增：Demo 模式选择 ==================
+            enum class DemoMode : uint32_t { Faucet = 0, CubeMix = 1 };
+            DemoMode demoMode = DemoMode::CubeMix; // 切换：水龙头 / 立方体混合
+
+            // ================== 新增：立方体混合参数 ==================
+            // 是否根据 numParticles 自动分解为 cube_group_count * (cube_edge_particles^3)
+            bool     cube_auto_partition = false;
+            // 手动指定立方体数量（粒子团数量），仅在 cube_auto_partition=false 时使用
+            uint32_t cube_group_count = 64;
+            // 单个立方体边长（按粒子数，边上粒子个数）；用于 cube_edge_particles^3
+            uint32_t cube_edge_particles = 21;
+            // 最大允许粒子团数量（用于颜色数组与安全限制）
+            static constexpr uint32_t cube_group_count_max = 512;
+
+            // 立方体层数（垂直分层放置）。若 cube_group_count=32 且 cube_layers=2 -> 每层16个
+            uint32_t cube_layers = 4;
+
+            // 立方体中心之间的水平间距（世界单位，沿 X/Z）
+            float    cube_group_spacing_world = 60.0f;
+            // 层之间的垂直间距（世界单位，立方体 Y 方向层距）
+            float    cube_layer_spacing_world = 100.0f;
+
+            // 立方体底层离地高度（世界坐标 Y）
+            float    cube_base_height = 50.0f;
+
+            // 单个立方体内格点的粒子间距缩放（相对 smoothingRadius 或 h），用于调节初始紧实程度
+            float    cube_lattice_spacing_factor_h = 1.05f;
+
+            // 立方体粒子团的初始密度（若需要与全局 restDensity 不同，可用于初始化时的质量或体积标定）
+            float    cube_initial_density = 1.0f;
+
+            // 颜色相关：是否为每个粒子团分配随机亮色
+            bool     cube_color_enable = true;
+            uint32_t cube_color_seed = 0xBADC0DEu;
+            // RGB 最低亮度（近似：max(r,g,b) 或简单使用每分量下限）
+            float    cube_color_min_component = 0.25f;
+            // 颜色最小欧氏距离阈值（避免相邻过相似）
+            float    cube_color_min_distance = 0.35f;
+            // 是否启用“相邻立方体避免相似”逻辑（基于网格邻接判断）
+            bool     cube_color_avoid_adjacent_similarity = true;
+
+            // 生成颜色失败时的重试上限（避免死循环）
+            int      cube_color_retry_max = 64;
+
+            // 是否在根据布置结果动态缩放 / 调整 gridMaxs
+            bool     cube_auto_fit_domain = true;
+            // 域扩展边界余量（相对排布包围盒的比例）
+            float    cube_domain_margin_scale = 1.2f;
+
+            // 是否应用 initial_jitter_* 到立方体粒子初始化（与水龙头播种逻辑分离控制）
+            bool     cube_apply_initial_jitter = true;
+
+            // 若需要对每层 Y 偏移做附加随机扰动（打散层间绝对平面）
+            bool     cube_layer_jitter_enable = false;
+            float    cube_layer_jitter_scale_h = 0.05f;
+            uint32_t cube_layer_jitter_seed = 0x13579BDFu;
+
+            // 预留：存储为每个粒子团生成的颜色（RGB）。运行时填充。
+            // 注意：实际使用时请限制访问范围 <= 实际 cube_group_count
+            float    cube_group_colors[cube_group_count_max][3] = {};
+
+            // 预留：分组粒子数（每团 edge^3），自动分解时写入，便于外部初始化阶段引用
+            uint32_t cube_particles_per_group = 0;
         } sim;
 
         struct Performance {
@@ -160,6 +234,8 @@ namespace console {
             bool  compact_binary_search = true;
             // 新增：打印网格统计（非空 cell 数、均值/最大 occupancy 等）
             bool  log_grid_compact_stats = false;
+            // 新增：NVTX 总开关（运行时控制
+            bool  enable_nvtx = true;
         } perf;
     };
 
@@ -171,5 +247,11 @@ namespace console {
     void BuildRenderInitParams(const RuntimeConsole& c, gfx::RenderInitParams& out);
     void ApplyRendererRuntime(const RuntimeConsole& c, gfx::RendererD3D12& r);
     void FitCameraToDomain(RuntimeConsole& c);
+    // —— 新增：CubeMix 准备（自动分解 + 域拟合 + 颜色） —— //
+    void PrepareCubeMix(RuntimeConsole& c);
+
+    // —— 新增：生成立方体中心列表（供播种使用，与 PrepareCubeMix 保持一致） —— //
+    void GenerateCubeMixCenters(const RuntimeConsole& c, std::vector<float3>& outCenters);
+
 
 } // namespace console

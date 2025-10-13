@@ -1,5 +1,6 @@
 #include "renderer.h"
 #include "../../sim/cuda_vec_math.cuh"
+#include "../core/prof_nvtx.h"
 #include <chrono>
 #include <d3dcompiler.h>
 #include <cstring>
@@ -14,53 +15,20 @@ namespace gfx {
     namespace {
 
         struct Mat4 { float m[16]; };
-
-        static Mat4 mul(const Mat4& a, const Mat4& b) {
-            Mat4 r{};
-            for (int c = 0; c < 4; ++c) {
-                for (int r0 = 0; r0 < 4; ++r0) {
-                    r.m[c * 4 + r0] =
-                        a.m[0 * 4 + r0] * b.m[c * 4 + 0] +
-                        a.m[1 * 4 + r0] * b.m[c * 4 + 1] +
-                        a.m[2 * 4 + r0] * b.m[c * 4 + 2] +
-                        a.m[3 * 4 + r0] * b.m[c * 4 + 3];
-                }
-            }
-            return r;
-        }
-
-        static Mat4 lookAtRH(float3 eye, float3 at, float3 up) {
-            float3 z = make_float3(eye.x - at.x, eye.y - at.y, eye.z - at.z);
-            float lenz = sqrtf(z.x * z.x + z.y * z.y + z.z * z.z);
-            z.x /= lenz; z.y /= lenz; z.z /= lenz;
-            float3 x = make_float3(up.y * z.z - up.z * z.y,
-                up.z * z.x - up.x * z.z,
-                up.x * z.y - up.y * z.x);
-            float lenx = sqrtf(x.x * x.x + x.y * x.y + x.z * x.z);
-            x.x /= lenx; x.y /= lenx; x.z /= lenx;
-            float3 y = make_float3(z.y * x.z - z.z * x.y,
-                z.z * x.x - z.x * x.z,
-                z.x * x.y - z.y * x.x);
-            Mat4 m{};
-            m.m[0] = x.x; m.m[4] = x.y; m.m[8] = x.z;  m.m[12] = -(x.x * eye.x + x.y * eye.y + x.z * eye.z);
-            m.m[1] = y.x; m.m[5] = y.y; m.m[9] = y.z;  m.m[13] = -(y.x * eye.x + y.y * eye.y + y.z * eye.z);
-            m.m[2] = z.x; m.m[6] = z.y; m.m[10] = z.z;  m.m[14] = -(z.x * eye.x + z.y * eye.y + z.z * eye.z);
-            m.m[3] = 0.f; m.m[7] = 0.f; m.m[11] = 0.f;  m.m[15] = 1.f;
-            return m;
-        }
-
-        static Mat4 perspectiveFovRH_ZO(float fovy, float aspect, float zn, float zf) {
-            float f = 1.0f / tanf(fovy * 0.5f);
-            Mat4 m{};
-            m.m[0] = f / aspect;
-            m.m[5] = f;
-            m.m[10] = zf / (zn - zf);
-            m.m[14] = (zf * zn) / (zn - zf);
-            m.m[11] = -1.0f;
-            return m;
-        }
-
-        static float Deg2Rad(float deg) { return deg * 3.14159265358979323846f / 180.0f; }
+        static Mat4 mul(const Mat4& a, const Mat4& b) { Mat4 r{}; for(int c=0;c<4;++c) for(int r0=0;r0<4;++r0) r.m[c*4+r0]=
+            a.m[0*4+r0]*b.m[c*4+0]+a.m[1*4+r0]*b.m[c*4+1]+a.m[2*4+r0]*b.m[c*4+2]+a.m[3*4+r0]*b.m[c*4+3]; return r; }
+        static Mat4 lookAtRH(float3 eye,float3 at,float3 up){ float3 z=make_float3(eye.x-at.x,eye.y-at.y,eye.z-at.z);
+            float lenz=sqrtf(z.x*z.x+z.y*z.y+z.z*z.z); z.x/=lenz; z.y/=lenz; z.z/=lenz;
+            float3 x=make_float3(up.y*z.z-up.z*z.y, up.z*z.x-up.x*z.z, up.x*z.y-up.y*z.x);
+            float lenx=sqrtf(x.x*x.x+x.y*x.y+x.z*x.z); x.x/=lenx; x.y/=lenx; x.z/=lenx;
+            float3 y=make_float3(z.y*x.z - z.z*x.y, z.z*x.x - z.x*x.z, z.x*x.y - z.y*x.x);
+            Mat4 m{}; m.m[0]=x.x; m.m[4]=x.y; m.m[8]=x.z;  m.m[12]=-(x.x*eye.x+x.y*eye.y+x.z*eye.z);
+            m.m[1]=y.x; m.m[5]=y.y; m.m[9]=y.z;  m.m[13]=-(y.x*eye.x+y.y*eye.y+y.z*eye.z);
+            m.m[2]=z.x; m.m[6]=z.y; m.m[10]=z.z; m.m[14]=-(z.x*eye.x+z.y*eye.y+z.z*eye.z);
+            m.m[3]=0.f; m.m[7]=0.f; m.m[11]=0.f; m.m[15]=1.f; return m; }
+        static Mat4 perspectiveFovRH_ZO(float fovy,float aspect,float zn,float zf){
+            float f=1.0f/tanf(fovy*0.5f); Mat4 m{}; m.m[0]=f/aspect; m.m[5]=f; m.m[10]=zf/(zn-zf); m.m[14]=(zf*zn)/(zn-zf); m.m[11]=-1.0f; return m; }
+        static float Deg2Rad(float deg){ return deg*3.14159265358979323846f/180.0f; }
 
         // 路径工具
         static std::wstring GetExeDirW() {
@@ -136,28 +104,47 @@ namespace gfx {
             return exeDir + L"\\" + rel;
         }
 
+        // 修复版 RootSignature：常量 + 粘贴 SRV(t0) + 调色板 SRV(t1)
         static Microsoft::WRL::ComPtr<ID3D12RootSignature> CreateRootSignatureGfx(ID3D12Device* dev) {
             using Microsoft::WRL::ComPtr;
 
-            D3D12_DESCRIPTOR_RANGE1 ranges[1] = {};
-            ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-            ranges[0].NumDescriptors = 1;
-            ranges[0].BaseShaderRegister = 0;
-            ranges[0].RegisterSpace = 0;
-            ranges[0].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
-            ranges[0].OffsetInDescriptorsFromTableStart = 0;
+            D3D12_DESCRIPTOR_RANGE1 rangeParticles{};
+            rangeParticles.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+            rangeParticles.NumDescriptors = 1;
+            rangeParticles.BaseShaderRegister = 0; // t0
+            rangeParticles.RegisterSpace = 0;
+            rangeParticles.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
+            rangeParticles.OffsetInDescriptorsFromTableStart = 0;
 
-            D3D12_ROOT_PARAMETER1 params[2] = {};
+            D3D12_DESCRIPTOR_RANGE1 rangePalette{};
+            rangePalette.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+            rangePalette.NumDescriptors = 1;
+            rangePalette.BaseShaderRegister = 1; // t1
+            rangePalette.RegisterSpace = 0;
+            rangePalette.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
+            rangePalette.OffsetInDescriptorsFromTableStart = 0;
+
+            D3D12_ROOT_PARAMETER1 params[3] = {};
+            // b0 constants
             params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
             params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-            params[0].Constants.ShaderRegister = 0; // b0
+            params[0].Constants.ShaderRegister = 0;
             params[0].Constants.RegisterSpace = 0;
-            params[0].Constants.Num32BitValues = sizeof(PerFrameCB) / 4;
-
+            params[0].Constants.Num32BitValues = sizeof(PerFrameCB)/4;
+            // t0 particles
             params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
             params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-            D3D12_ROOT_DESCRIPTOR_TABLE1 table{}; table.NumDescriptorRanges = 1; table.pDescriptorRanges = ranges;
-            params[1].DescriptorTable = table;
+            D3D12_ROOT_DESCRIPTOR_TABLE1 tbl0{};
+            tbl0.NumDescriptorRanges = 1;
+            tbl0.pDescriptorRanges = &rangeParticles;
+            params[1].DescriptorTable = tbl0;
+            // t1 palette
+            params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+            D3D12_ROOT_DESCRIPTOR_TABLE1 tbl1{};
+            tbl1.NumDescriptorRanges = 1;
+            tbl1.pDescriptorRanges = &rangePalette;
+            params[2].DescriptorTable = tbl1;
 
             D3D12_VERSIONED_ROOT_SIGNATURE_DESC vdesc{};
             vdesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
@@ -167,63 +154,82 @@ namespace gfx {
             vdesc.Desc_1_1.pStaticSamplers = nullptr;
             vdesc.Desc_1_1.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
-            Microsoft::WRL::ComPtr<ID3DBlob> blob, err;
+            ComPtr<ID3DBlob> blob, err;
             if (FAILED(D3D12SerializeVersionedRootSignature(&vdesc, &blob, &err))) {
                 if (err) OutputDebugStringA((char*)err->GetBufferPointer());
                 return nullptr;
             }
-            Microsoft::WRL::ComPtr<ID3D12RootSignature> rs;
+            ComPtr<ID3D12RootSignature> rs;
             if (FAILED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&rs)))) {
                 return nullptr;
             }
             return rs;
         }
 
-        D3D12_BLEND_DESC AlphaBlendDesc() {
-            D3D12_BLEND_DESC b{};
-            b.AlphaToCoverageEnable = FALSE;
-            b.IndependentBlendEnable = FALSE;
-            auto& rt = b.RenderTarget[0];
-            rt.BlendEnable = TRUE;
-            rt.SrcBlend = D3D12_BLEND_SRC_ALPHA;
-            rt.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
-            rt.BlendOp = D3D12_BLEND_OP_ADD;
-            rt.SrcBlendAlpha = D3D12_BLEND_ONE;
-            rt.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
-            rt.BlendOpAlpha = D3D12_BLEND_OP_ADD;
-            rt.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-            return b;
-        }
-
-        D3D12_RASTERIZER_DESC DefaultRasterizerNoCull() {
-            D3D12_RASTERIZER_DESC r{};
-            r.FillMode = D3D12_FILL_MODE_SOLID;
-            r.CullMode = D3D12_CULL_MODE_NONE;
-            r.FrontCounterClockwise = FALSE;
-            r.DepthBias = D3D12_DEFAULT_DEPTH_BIAS;
-            r.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
-            r.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS;
-            r.DepthClipEnable = TRUE;
-            r.MultisampleEnable = FALSE;
-            r.AntialiasedLineEnable = FALSE;
-            r.ForcedSampleCount = 0;
-            r.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
-            return r;
-        }
+        D3D12_BLEND_DESC AlphaBlendDesc(){ D3D12_BLEND_DESC b{}; b.AlphaToCoverageEnable=FALSE; b.IndependentBlendEnable=FALSE;
+            auto& rt=b.RenderTarget[0]; rt.BlendEnable=TRUE; rt.SrcBlend=D3D12_BLEND_SRC_ALPHA; rt.DestBlend=D3D12_BLEND_INV_SRC_ALPHA;
+            rt.BlendOp=D3D12_BLEND_OP_ADD; rt.SrcBlendAlpha=D3D12_BLEND_ONE; rt.DestBlendAlpha=D3D12_BLEND_INV_SRC_ALPHA;
+            rt.BlendOpAlpha=D3D12_BLEND_OP_ADD; rt.RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_ALL; return b; }
+        D3D12_RASTERIZER_DESC DefaultRasterizerNoCull(){ D3D12_RASTERIZER_DESC r{}; r.FillMode=D3D12_FILL_MODE_SOLID; r.CullMode=D3D12_CULL_MODE_NONE;
+            r.FrontCounterClockwise=FALSE; r.DepthBias=D3D12_DEFAULT_DEPTH_BIAS; r.DepthBiasClamp=D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
+            r.SlopeScaledDepthBias=D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS; r.DepthClipEnable=TRUE; r.MultisampleEnable=FALSE;
+            r.AntialiasedLineEnable=FALSE; r.ForcedSampleCount=0; r.ConservativeRaster=D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF; return r; }
 
         // 编译前先 ResolveShaderPath
         static Microsoft::WRL::ComPtr<ID3DBlob> Compile(const wchar_t* relativePath, const char* entry, const char* target) {
             UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
 #if defined(_DEBUG)
-            flags |= D3DCOMPILE_DEBUG;
+            flags|=D3DCOMPILE_DEBUG;
 #endif
             std::wstring full = ResolveShaderPath(relativePath);
+            // 手工读取文件，过滤 UTF-8 BOM / 非法首字节
+            std::ifstream ifs(full, std::ios::binary);
+            if (!ifs.is_open()) {
+                OutputDebugStringW((L"[HLSL] Open failed: " + full + L"\n").c_str());
+                return nullptr;
+            }
+            std::vector<char> bytes((std::istreambuf_iterator<char>(ifs)),
+            std::istreambuf_iterator<char>());
+            if (bytes.empty()) {
+                OutputDebugStringW((L"[HLSL] Empty file: " + full + L"\n").c_str());
+                return nullptr;
+            }
+            // 移除 UTF-8 BOM
+                if (bytes.size() >= 3 &&
+                    (unsigned char)bytes[0] == 0xEF &&
+                    (unsigned char)bytes[1] == 0xBB &&
+                    (unsigned char)bytes[2] == 0xBF) {
+                bytes.erase(bytes.begin(), bytes.begin() + 3);
+            }
+            // 过滤首个不可打印控制字符
+                while (!bytes.empty()) {
+                unsigned char c = (unsigned char)bytes[0];
+                if (c == 0x09 || c == 0x0A || c == 0x0D || (c >= 0x20 && c < 0x7F)) break;
+                bytes.erase(bytes.begin());
+            }
+            if (bytes.empty()) {
+                OutputDebugStringW((L"[HLSL] All leading bytes stripped, nothing left: " + full + L"\n").c_str());
+                return nullptr;
+            }
             Microsoft::WRL::ComPtr<ID3DBlob> cs, err;
-            HRESULT hr = D3DCompileFromFile(full.c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry, target, flags, 0, &cs, &err);
+            HRESULT hr = D3DCompile(bytes.data(), bytes.size(),
+                /*sourceName*/nullptr,
+                /*defines*/nullptr,
+                D3D_COMPILE_STANDARD_FILE_INCLUDE,
+                entry, target, flags, 0,
+                &cs, &err);
             if (FAILED(hr)) {
                 if (err) OutputDebugStringA((char*)err->GetBufferPointer());
                 std::wstring msg = L"[HLSL] Compile failed: " + full + L"\n";
                 OutputDebugStringW(msg.c_str());
+                // 输出前几个字节的十六进制辅助定位
+                char hexBuf[256]; int pos = 0;
+                pos += snprintf(hexBuf + pos, sizeof(hexBuf) - pos, "[HLSL] First bytes:");
+                for (size_t i = 0; i < std::min<size_t>(16, bytes.size()); ++i) {
+                    pos += snprintf(hexBuf + pos, sizeof(hexBuf) - pos, " %02X", (unsigned char)bytes[i]);
+                }
+                pos += snprintf(hexBuf + pos, sizeof(hexBuf) - pos, "\n");
+                OutputDebugStringA(hexBuf);
                 return nullptr;
             }
             std::wstring ok = L"[HLSL] Compile ok: " + full + L"\n";
@@ -233,64 +239,52 @@ namespace gfx {
 
     } // namespace
 
-    bool RendererD3D12::Initialize(HWND hwnd, const RenderInitParams& p) {
-        DeviceInitParams dp; dp.width = p.width; dp.height = p.height; dp.bufferCount = 3; dp.vsync = p.vsync;
-        if (!m_device.initialize(hwnd, dp)) return false;
-        m_device.createSrvHeap(256, true);
-        std::memcpy(m_clearColor, m_visual.clearColor, sizeof(m_clearColor));
+    bool RendererD3D12::Initialize(HWND hwnd,const RenderInitParams& p){
+        prof::Range r("Renderer.Initialize", prof::Color(0x20, 0x80, 0xC0));
+        DeviceInitParams dp; dp.width=p.width; dp.height=p.height; dp.bufferCount=3; dp.vsync=p.vsync;
+        if(!m_device.initialize(hwnd,dp)) return false;
+        m_device.createSrvHeap(256,true);
+        std::memcpy(m_clearColor,m_visual.clearColor,sizeof(m_clearColor));
         BuildFrameGraph();
         return true;
     }
 
-    void RendererD3D12::Shutdown() {
+    void RendererD3D12::Shutdown(){
         m_sharedParticleBuffer.Reset();
+        m_paletteBuffer.Reset();
         m_device.shutdown();
     }
 
-    bool RendererD3D12::CreateSharedParticleBuffer(uint32_t numElements, uint32_t strideBytes, HANDLE& outSharedHandle) {
-        outSharedHandle = nullptr;
-
-        const UINT64 sizeBytes = UINT64(numElements) * UINT64(strideBytes);
-
-        D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
-        D3D12_RESOURCE_DESC rd{}; rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; rd.Alignment = 0;
-        rd.Width = sizeBytes; rd.Height = 1; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
-        rd.Format = DXGI_FORMAT_UNKNOWN; rd.SampleDesc = { 1, 0 }; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-        rd.Flags = D3D12_RESOURCE_FLAG_NONE;
-
+    bool RendererD3D12::CreateSharedParticleBuffer(uint32_t numElements,uint32_t strideBytes,HANDLE& outSharedHandle){
+        outSharedHandle=nullptr;
+        const UINT64 sizeBytes=UINT64(numElements)*UINT64(strideBytes);
+        D3D12_HEAP_PROPERTIES hp{}; hp.Type=D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC rd{}; rd.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER; rd.Width=sizeBytes; rd.Height=1;
+        rd.DepthOrArraySize=1; rd.MipLevels=1; rd.Format=DXGI_FORMAT_UNKNOWN; rd.SampleDesc={1,0};
+        rd.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR; rd.Flags=D3D12_RESOURCE_FLAG_NONE;
         Microsoft::WRL::ComPtr<ID3D12Resource> res;
-        if (FAILED(m_device.device()->CreateCommittedResource(
-            &hp, D3D12_HEAP_FLAG_SHARED, &rd,
-            D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&res)))) {
-            return false;
-        }
-
-        int srvIndex = m_device.createBufferSRV(res.Get(), numElements, strideBytes);
-        if (srvIndex < 0) return false;
-
-        HANDLE handle = nullptr;
-        if (FAILED(m_device.device()->CreateSharedHandle(res.Get(), nullptr, GENERIC_ALL, nullptr, &handle))) {
-            return false;
-        }
-
-        m_sharedParticleBuffer = res;
-        m_particleSrvIndex = srvIndex;
-        m_particleCount = numElements;
-        outSharedHandle = handle;
+        if(FAILED(m_device.device()->CreateCommittedResource(&hp,D3D12_HEAP_FLAG_SHARED,&rd,
+            D3D12_RESOURCE_STATE_COMMON,nullptr,IID_PPV_ARGS(&res)))) return false;
+        int srvIndex=m_device.createBufferSRV(res.Get(),numElements,strideBytes);
+        if(srvIndex<0) return false;
+        HANDLE handle=nullptr;
+        if(FAILED(m_device.device()->CreateSharedHandle(res.Get(),nullptr,GENERIC_ALL,nullptr,&handle))) return false;
+        m_sharedParticleBuffer=res;
+        m_particleSrvIndex=srvIndex;
+        m_particleCount=numElements;
+        outSharedHandle=handle;
         return true;
     }
 
-    void RendererD3D12::BuildFrameGraph() {
+    void RendererD3D12::BuildFrameGraph(){
+        prof::Range r("Renderer.BuildFrameGraph", prof::Color(0x90, 0x40, 0x30));
         m_fg = core::FrameGraph{};
-
         auto rsGfx = CreateRootSignatureGfx(m_device.device());
-
-        // 关键：传入仓库内的相对路径，由 Compile 自行解析到绝对路径
-        auto vs = Compile(L"engine\\gfx\\d3d12_shaders\\points.hlsl", "VSMain", "vs_5_1");
-        auto ps = Compile(L"engine\\gfx\\d3d12_shaders\\points.hlsl", "PSMain", "ps_5_1");
+        auto vs = Compile(L"engine\\gfx\\d3d12_shaders\\points.hlsl","VSMain","vs_5_1");
+        auto ps = Compile(L"engine\\gfx\\d3d12_shaders\\points.hlsl","PSMain","ps_5_1");
 
         Microsoft::WRL::ComPtr<ID3D12PipelineState> psoPoints;
-        if (rsGfx && vs && ps) {
+        if(rsGfx && vs && ps){
             DXGI_FORMAT rtFmt = m_device.currentBackbuffer()->GetDesc().Format;
             D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
             pso.pRootSignature = rsGfx.Get();
@@ -301,41 +295,37 @@ namespace gfx {
             pso.RasterizerState = DefaultRasterizerNoCull();
             pso.DepthStencilState.DepthEnable = FALSE;
             pso.DepthStencilState.StencilEnable = FALSE;
-            pso.InputLayout = { nullptr, 0 };
+            pso.InputLayout = { nullptr,0 };
             pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
             pso.NumRenderTargets = 1;
             pso.RTVFormats[0] = rtFmt;
             pso.SampleDesc.Count = 1;
-            if (FAILED(m_device.device()->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&psoPoints)))) {
+            if(FAILED(m_device.device()->CreateGraphicsPipelineState(&pso,IID_PPV_ARGS(&psoPoints)))){
                 psoPoints.Reset();
-                OutputDebugStringA("[PSO] CreateGraphicsPipelineState failed for points pipeline.\n");
+                OutputDebugStringA("[PSO] Failed points pipeline.\n");
             }
         }
-        else {
-            OutputDebugStringA("[PSO] Points shaders or root signature missing, points pass will be skipped.\n");
-        }
 
-        core::PassDesc clear{}; clear.name = "clear";
-        clear.execute = [this]() {
+        core::PassDesc clear{}; clear.name="clear";
+        clear.execute = [this](){
             m_device.beginFrame();
-            std::memcpy(m_clearColor, m_visual.clearColor, sizeof(m_clearColor));
+            std::memcpy(m_clearColor,m_visual.clearColor,sizeof(m_clearColor));
             m_device.clearCurrentRTV(m_clearColor);
             m_device.writeTimestamp();
-            };
+        };
         m_fg.addPass(clear);
 
-        if (rsGfx && psoPoints) {
-            core::PassDesc points{}; points.name = "points";
-            points.execute = [this, rsGfx, psoPoints]() {
+        if(rsGfx && psoPoints){
+            core::PassDesc points{}; points.name="points";
+            points.execute = [this, rsGfx, psoPoints](){
                 auto* cl = m_device.cmdList();
-
                 auto rtvHandle = m_device.currentRTV();
-                cl->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+                cl->OMSetRenderTargets(1,&rtvHandle,FALSE,nullptr);
 
-                D3D12_VIEWPORT vp{ 0.0f, 0.0f, float(m_device.width()), float(m_device.height()), 0.0f, 1.0f };
-                D3D12_RECT sc{ 0,0,(LONG)m_device.width(), (LONG)m_device.height() };
-                cl->RSSetViewports(1, &vp);
-                cl->RSSetScissorRects(1, &sc);
+                D3D12_VIEWPORT vp{0.f,0.f,(float)m_device.width(),(float)m_device.height(),0.f,1.f};
+                D3D12_RECT sc{0,0,(LONG)m_device.width(),(LONG)m_device.height()};
+                cl->RSSetViewports(1,&vp);
+                cl->RSSetScissorRects(1,&sc);
 
                 ID3D12DescriptorHeap* heaps[] = { m_device.srvHeap() };
                 cl->SetDescriptorHeaps(1, heaps);
@@ -343,83 +333,115 @@ namespace gfx {
                 cl->SetPipelineState(psoPoints.Get());
                 cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-                if (m_sharedParticleBuffer) {
+                if(m_sharedParticleBuffer){
                     D3D12_RESOURCE_BARRIER b{};
                     b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
                     b.Transition.pResource = m_sharedParticleBuffer.Get();
                     b.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
-                    b.Transition.StateAfter = D3D12_RESOURCE_STATE_GENERIC_READ;
+                    b.Transition.StateAfter  = D3D12_RESOURCE_STATE_GENERIC_READ;
                     b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-                    cl->ResourceBarrier(1, &b);
+                    cl->ResourceBarrier(1,&b);
                 }
 
                 PerFrameCB cb{};
-                float3 eye = m_camera.eye;
-                float3 at = m_camera.at;
-                float3 up = m_camera.up;
-                Mat4 V = lookAtRH(eye, at, up);
-                float aspect = (m_device.height() > 0) ? (float)m_device.width() / (float)m_device.height() : 1.0f;
-                Mat4 P = perspectiveFovRH_ZO(Deg2Rad(m_camera.fovYDeg), aspect, m_camera.nearZ, m_camera.farZ);
-                Mat4 VP = mul(P, V);
-
-                std::memcpy(cb.viewProj, VP.m, sizeof(cb.viewProj));
-                cb.screenSize[0] = (float)m_device.width();
-                cb.screenSize[1] = (float)m_device.height();
+                float3 eye=m_camera.eye, at=m_camera.at, up=m_camera.up;
+                Mat4 V=lookAtRH(eye,at,up);
+                float aspect = (m_device.height()>0)? (float)m_device.width()/(float)m_device.height():1.0f;
+                Mat4 P=perspectiveFovRH_ZO(Deg2Rad(m_camera.fovYDeg),aspect,m_camera.nearZ,m_camera.farZ);
+                Mat4 VP=mul(P,V);
+                std::memcpy(cb.viewProj,VP.m,sizeof(cb.viewProj));
+                cb.screenSize[0]=(float)m_device.width();
+                cb.screenSize[1]=(float)m_device.height();
                 cb.particleRadiusPx = m_visual.particleRadiusPx;
-                cb.thicknessScale = m_visual.thicknessScale;
-                cl->SetGraphicsRoot32BitConstants(0, sizeof(PerFrameCB) / 4, &cb, 0);
+                cb.thicknessScale   = m_visual.thicknessScale;
+                cb.groups = m_groups;
+                cb.particlesPerGroup = m_particlesPerGroup;
+                cl->SetGraphicsRoot32BitConstants(0,sizeof(PerFrameCB)/4,&cb,0);
 
-                if (m_particleSrvIndex >= 0 && m_particleCount > 0) {
-                    auto gpuH = m_device.srvGpuHandleAt((uint32_t)m_particleSrvIndex);
-                    cl->SetGraphicsRootDescriptorTable(1, gpuH);
-                    UINT instanceCount = m_particleCount;
-                    cl->DrawInstanced(6, instanceCount, 0, 0);
+                if(m_particleSrvIndex>=0 && m_particleCount>0){
+                    auto gpuPos = m_device.srvGpuHandleAt((uint32_t)m_particleSrvIndex);
+                    cl->SetGraphicsRootDescriptorTable(1, gpuPos);
                 }
+                if(m_paletteSrvIndex>=0){
+                    auto gpuPal = m_device.srvGpuHandleAt((uint32_t)m_paletteSrvIndex);
+                    cl->SetGraphicsRootDescriptorTable(2, gpuPal);
+                }
+                UINT instanceCount = m_particleCount;
+                if(instanceCount>0) cl->DrawInstanced(6, instanceCount, 0, 0);
 
-                if (m_sharedParticleBuffer) {
+                if(m_sharedParticleBuffer){
                     D3D12_RESOURCE_BARRIER b{};
                     b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
                     b.Transition.pResource = m_sharedParticleBuffer.Get();
                     b.Transition.StateBefore = D3D12_RESOURCE_STATE_GENERIC_READ;
-                    b.Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
+                    b.Transition.StateAfter  = D3D12_RESOURCE_STATE_COMMON;
                     b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-                    cl->ResourceBarrier(1, &b);
+                    cl->ResourceBarrier(1,&b);
                 }
 
                 m_device.writeTimestamp();
-                };
+            };
             m_fg.addPass(points);
         }
 
-        core::PassDesc present{}; present.name = "present";
-        present.execute = [this]() { m_device.present(); };
+        core::PassDesc present{}; present.name="present";
+        present.execute = [this](){ m_device.present(); };
         m_fg.addPass(present);
 
         m_fg.compile();
     }
 
-    void RendererD3D12::RenderFrame(core::Profiler& profiler) {
+    void RendererD3D12::RenderFrame(core::Profiler& profiler){
+        prof::Range r("Renderer.RenderFrame", prof::Color(0x40, 0x90, 0x50));
         std::vector<double> gpuMs;
-        m_fg.execute([&](const std::string& name, double ms) { profiler.addRow(name, ms); });
-        if (m_device.readbackPassTimesMs(gpuMs)) {
-            for (size_t i = 0; i < gpuMs.size(); ++i) profiler.addRow(std::string("gpu_") + std::to_string(i), gpuMs[i]);
+        m_fg.execute([&](const std::string& name,double ms){ profiler.addRow(name, ms); });
+        if(m_device.readbackPassTimesMs(gpuMs)){
+            for(size_t i=0;i<gpuMs.size();++i) profiler.addRow(std::string("gpu_")+std::to_string(i), gpuMs[i]);
         }
     }
 
-    bool RendererD3D12::ImportSharedBufferAsSRV(HANDLE sharedHandle, uint32_t numElements, uint32_t strideBytes, int& outSrvIndex) {
-        ID3D12Resource* res = nullptr;
-        if (!m_device.openSharedResource(sharedHandle, __uuidof(ID3D12Resource), reinterpret_cast<void**>(&res))) return false;
+    bool RendererD3D12::ImportSharedBufferAsSRV(HANDLE sharedHandle,uint32_t numElements,uint32_t strideBytes,int& outSrvIndex){
+        ID3D12Resource* res=nullptr;
+        if(!m_device.openSharedResource(sharedHandle,__uuidof(ID3D12Resource),(void**)&res)) return false;
         m_sharedParticleBuffer.Attach(res);
         m_particleSrvIndex = m_device.createBufferSRV(m_sharedParticleBuffer.Get(), numElements, strideBytes);
-        if (m_particleSrvIndex < 0) return false;
+        if(m_particleSrvIndex<0) return false;
         m_particleCount = numElements;
         outSrvIndex = m_particleSrvIndex;
         return true;
     }
 
-    void RendererD3D12::WaitForGPU() {
-        // 等待当前帧渲染队列完成（包含 Present 限流/vsync）
+    void RendererD3D12::WaitForGPU(){ 
+        prof::Range r("Renderer.WaitForGPU", prof::Color(0xAA, 0x20, 0x20));
         m_device.waitForGPU();
+    }
+
+    bool RendererD3D12::UpdateGroupPalette(const float* rgbTriples,uint32_t groupCount){
+        if(!rgbTriples || groupCount==0){
+            m_groups=0; m_paletteSrvIndex=-1; m_paletteBuffer.Reset(); return true;
+        }
+        size_t bytes = sizeof(float) * 3 * groupCount;
+        // 直接使用上传堆，避免初始化阶段显式提交命令的问题
+        D3D12_HEAP_PROPERTIES hpUp{}; hpUp.Type = D3D12_HEAP_TYPE_UPLOAD;
+        D3D12_RESOURCE_DESC rd{}; rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        rd.Width = bytes; rd.Height = 1; rd.DepthOrArraySize = 1;
+        rd.MipLevels = 1; rd.Format = DXGI_FORMAT_UNKNOWN;
+        rd.SampleDesc = { 1,0 }; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        rd.Flags = D3D12_RESOURCE_FLAG_NONE;
+        
+        Microsoft::WRL::ComPtr<ID3D12Resource> buf;
+        if (FAILED(m_device.device()->CreateCommittedResource(&hpUp, D3D12_HEAP_FLAG_NONE, &rd,
+        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&buf)))) return false;
+
+        void* mapped = nullptr; D3D12_RANGE range{ 0,0 };
+        if (FAILED(buf->Map(0, &range, &mapped))) return false;
+        std::memcpy(mapped, rgbTriples, bytes);
+        buf->Unmap(0, nullptr);
+
+        m_paletteBuffer = buf;
+        m_paletteSrvIndex = m_device.createBufferSRV(m_paletteBuffer.Get(), groupCount, sizeof(float) * 3);
+        return (m_paletteSrvIndex >= 0);
+        return (m_paletteSrvIndex >= 0);
     }
 
 } // namespace gfx

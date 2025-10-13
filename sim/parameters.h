@@ -22,7 +22,7 @@ namespace sim {
 
     struct PbfTuning {
         int   scorr_enable = 1;
-        float scorr_k = 0.012f;      // 原 0.003f -> 略增强排斥，抑制穿插/回弹
+        float scorr_k = 0.003f;      // 原 0.003f -> 略增强排斥，抑制穿插/回弹
         float scorr_n = 4.0f;
         float scorr_dq_h = 0.3f;
         float wq_min = 1e-12f;
@@ -36,7 +36,7 @@ namespace sim {
         int   enable_lambda_clamp = 1;
         float lambda_max_abs = 50.0f;
         int   enable_disp_clamp = 1;
-        float disp_clamp_max_h = 0.10f; // 放宽单步位移夹取，提高收敛
+        float disp_clamp_max_h = 0.05f; // 放宽单步位移夹取，提高收敛
 
         int   enable_relax = 1;
         float relax_omega = 0.75f;   // 略加强阻尼，防迭代过冲

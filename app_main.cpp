@@ -13,6 +13,7 @@
 #include "engine/core/profiler.h"
 #include "engine/gfx/renderer.h"
 #include "engine/core/console.h"
+#include "engine/core/prof_nvtx.h"
 #include "sim/simulator.h"
 #include "sim/parameters.h"
 #include "sim/stats.h"
@@ -411,6 +412,9 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     g_cam = &g_Camera;
 
     core::Profiler profiler;
+    if (cc.sim.demoMode == console::RuntimeConsole::Simulation::DemoMode::CubeMix) {
+        console::PrepareCubeMix(cc); // 分解粒子与域拟合 + 颜色
+    }
 
     // 3) 仿真初始化
     sim::Simulator simulator;
@@ -421,6 +425,12 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         MessageBoxW(hwnd, L"Simulator initialize failed.", L"PBF-X", MB_ICONERROR);
         return 1;
     }
+    auto& c = console::Instance();
+    // 根据配置设置 NVTX
+    prof::SetNvtxEnabled(c.perf.enable_nvtx);
+    // 可选：单次标记启动阶段
+    prof::Mark("App.Startup", prof::Color(0xFF, 0x80, 0x20));
+
 
     // 4) D3D12-CUDA 共享粒子缓冲
     {
@@ -438,13 +448,40 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         CloseHandle(shared);
     }
 
-    // 5) 初始布点
-    const float spacing = simParams.kernel.h *
-        ((cc.sim.lattice_spacing_factor_h > 0.f) ? cc.sim.lattice_spacing_factor_h : 1.0f);
-    const float3 origin = make_float3(simParams.grid.mins.x + 0.95f * spacing,
-        simParams.grid.mins.y + 0.5f * spacing,
-        simParams.grid.mins.z + 0.5f * spacing);
-    simulator.seedBoxLatticeAuto(simParams.numParticles, origin, spacing);
+    // 5) 初始布点 - 根据模式选择
+    if (cc.sim.demoMode == console::RuntimeConsole::Simulation::DemoMode::CubeMix) {
+        // CubeMix 模式：生成立方体中心并为每个中心播种一个立方体
+        std::vector<float3> centers;
+        console::GenerateCubeMixCenters(cc, centers);
+        const uint32_t groups = cc.sim.cube_group_count;
+        const uint32_t edge = cc.sim.cube_edge_particles;
+        const float spacing = simParams.kernel.h *
+        ((cc.sim.cube_lattice_spacing_factor_h > 0.f) ? cc.sim.cube_lattice_spacing_factor_h : 1.0f);
+            // 使用专用一次性播种接口（避免多次覆盖）
+            simulator.seedCubeMix(groups,
+                centers.data(),
+                edge,
+                spacing,
+                (cc.sim.cube_apply_initial_jitter && cc.sim.initial_jitter_enable),
+                cc.sim.initial_jitter_scale_h * simParams.kernel.h,
+                cc.sim.initial_jitter_seed);
+        // 上传调色板与分组元数据（供 VS/PS 使用）
+        renderer.UpdateGroupPalette(&cc.sim.cube_group_colors[0][0], groups);
+        renderer.SetParticleGrouping(groups, cc.sim.cube_particles_per_group);
+    }
+    else {
+        // Faucet 模式：原有逻辑
+        const float spacing = simParams.kernel.h *
+            ((cc.sim.lattice_spacing_factor_h > 0.f) ? cc.sim.lattice_spacing_factor_h : 1.0f);
+        const float3 origin = make_float3(simParams.grid.mins.x + 0.95f * spacing,
+            simParams.grid.mins.y + 0.5f * spacing,
+            simParams.grid.mins.z + 0.5f * spacing);
+        simulator.seedBoxLatticeAuto(simParams.numParticles, origin, spacing);
+        // 明确关闭分组（防止残留）
+        renderer.UpdateGroupPalette(nullptr, 0);
+        renderer.SetParticleGrouping(0, 0);
+    }
+
     {
         const uint32_t active = simulator.activeParticleCount();
         simParams.numParticles = active;

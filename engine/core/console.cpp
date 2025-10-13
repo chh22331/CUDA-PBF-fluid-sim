@@ -1,6 +1,8 @@
 ﻿#include "console.h"
-#include <algorithm>
 #include <cmath>
+#include <random>
+#include <algorithm>
+#include <cstring>
 
 namespace {
 
@@ -118,10 +120,279 @@ void BuildEmitParams(const RuntimeConsole& c, sim::EmitParams& out) {
     out.recycleY = c.sim.gridMins.y + eps;
 }
 
+void GenerateCubeMixCenters(const RuntimeConsole& c, std::vector<float3>& outCenters) {
+    outCenters.clear();
+
+    if (c.sim.demoMode != RuntimeConsole::Simulation::DemoMode::CubeMix)
+        return;
+
+    const auto& s = c.sim;
+
+    // 每层的团数（与 PrepareCubeMix 逻辑一致）
+    std::vector<uint32_t> layerCounts;
+    layerCounts.resize(s.cube_layers, 0);
+    {
+        uint32_t remaining = s.cube_group_count;
+        for (uint32_t L = 0; L < s.cube_layers; ++L) {
+            uint32_t toAssign = remaining / (s.cube_layers - L);
+            if (toAssign == 0) toAssign = 1;
+            layerCounts[L] = toAssign;
+            remaining -= toAssign;
+        }
+    }
+
+    const float h = (((1e-6f) > (s.smoothingRadius)) ? (1e-6f) : (s.smoothingRadius));
+
+    outCenters.reserve(s.cube_group_count);
+
+    uint32_t gCursor = 0;
+    for (uint32_t layer = 0; layer < s.cube_layers && gCursor < s.cube_group_count; ++layer) {
+        uint32_t groupsInLayer = layerCounts[layer];
+        uint32_t nx = (uint32_t)std::ceil(std::sqrt(double(groupsInLayer)));
+        uint32_t nz = (uint32_t)std::ceil(double(groupsInLayer) / std::max<uint32_t>(1u, nx));
+        float layerY = s.cube_base_height + layer * s.cube_layer_spacing_world;
+
+        // 层扰动
+        if (s.cube_layer_jitter_enable) {
+            std::mt19937 lrng(s.cube_layer_jitter_seed ^ layer);
+            std::uniform_real_distribution<float> U(-1.f, 1.f);
+            float amp = s.cube_layer_jitter_scale_h * h;
+            float dy = U(lrng) * amp;
+            layerY += dy;
+        }
+
+        for (uint32_t k = 0; k < groupsInLayer && gCursor < s.cube_group_count; ++k) {
+            uint32_t ix = k % nx;
+            uint32_t iz = k / nx;
+            float cx = ix * s.cube_group_spacing_world;
+            float cz = iz * s.cube_group_spacing_world;
+            float cy = layerY;
+
+            outCenters.push_back(make_float3(cx, cy, cz));
+            ++gCursor;
+        }
+    }
+}
+
 void BuildRenderInitParams(const RuntimeConsole& c, gfx::RenderInitParams& out) {
     out.width  = c.app.width;
     out.height = c.app.height;
     out.vsync  = c.app.vsync;
+}
+
+// 简单三次根近似四舍五入
+static inline uint32_t round_cuberoot(uint64_t v) {
+    if (v == 0) return 0;
+    double r = std::cbrt(double(v));
+    return (uint32_t)std::max<int64_t>(1, (int64_t)llround(r));
+}
+
+// 生成亮色并与邻接团颜色保持距离
+static bool GenDistinctColor(std::mt19937& rng,
+    float minComp,
+    float minDist,
+    const std::vector<int>& adjacency, // indices 已有颜色的邻接节点
+    const std::vector<std::array<float, 3>>& colors,
+    int groupIndex,
+    std::array<float, 3>& outColor,
+    int retryMax)
+{
+    std::uniform_real_distribution<float> U(minComp, 1.0f);
+    for (int attempt = 0; attempt < retryMax; ++attempt) {
+        std::array<float, 3> c{ U(rng), U(rng), U(rng) };
+        // 简单归一亮度（可选）
+        float len = std::sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
+        if (len > 1e-6f) {
+            float s = 1.0f / len;
+            c[0] *= s; c[1] *= s; c[2] *= s;
+        }
+        bool ok = true;
+        if (!adjacency.empty()) {
+            for (int nb : adjacency) {
+                if (nb < 0 || nb >= (int)colors.size()) continue;
+                const auto& o = colors[nb];
+                float dx = c[0] - o[0], dy = c[1] - o[1], dz = c[2] - o[2];
+                float d2 = dx * dx + dy * dy + dz * dz;
+                if (d2 < minDist * minDist) { ok = false; break; }
+            }
+        }
+        if (ok) { outColor = c; return true; }
+    }
+    // 失败退化：使用随机色不再强制距离
+    outColor = { U(rng), U(rng), U(rng) };
+    return false;
+}
+
+// 自动分解 & 域拟合 & 颜色生成
+void PrepareCubeMix(RuntimeConsole& c) {
+    if (c.sim.demoMode != RuntimeConsole::Simulation::DemoMode::CubeMix)
+        return;
+
+    auto& s = c.sim;
+
+    // —— 自动分解 —— //
+    if (s.cube_auto_partition) {
+        uint64_t target = (uint64_t)std::max<uint32_t>(1u, s.numParticles);
+        // 初始估计：边长 L 和组数 G
+        uint32_t L = round_cuberoot(target);
+        if (L == 0) L = 1;
+        uint64_t per = (uint64_t)L * (uint64_t)L * (uint64_t)L;
+        uint32_t G = (uint32_t)std::max<uint64_t>(1ull, target / per);
+        if (G == 0) G = 1;
+        // 调整 L 使 G*L^3 尽量接近 target
+        while ((uint64_t)G * (uint64_t)L * (uint64_t)L * (uint64_t)L > target && L > 1) {
+            --L;
+        }
+        while ((uint64_t)G * (uint64_t)(L + 1) * (uint64_t)(L + 1) * (uint64_t)(L + 1) <= target) {
+            ++L;
+        }
+        // 若总数仍不足，可尝试增大 G
+        per = (uint64_t)L * (uint64_t)L * (uint64_t)L;
+        while ((uint64_t)(G + 1) * per <= target && (G + 1) <= s.cube_group_count_max) {
+            ++G;
+        }
+
+        s.cube_edge_particles = L;
+        s.cube_group_count = std::min<uint32_t>(G, s.cube_group_count_max);
+        s.cube_particles_per_group = L * L * L;
+        s.numParticles = s.cube_group_count * s.cube_particles_per_group;
+    }
+    else {
+        s.cube_particles_per_group = s.cube_edge_particles * s.cube_edge_particles * s.cube_edge_particles;
+        s.numParticles = s.cube_group_count * s.cube_particles_per_group;
+    }
+
+    if (s.cube_layers < 1) s.cube_layers = 1;
+    if (s.cube_layers > s.cube_group_count) s.cube_layers = s.cube_group_count;
+
+    // —— 布局 —— //
+    // 每层的团数（最后一层可能少）
+    std::vector<uint32_t> layerCounts;
+    layerCounts.resize(s.cube_layers, 0);
+    {
+        uint32_t remaining = s.cube_group_count;
+        for (uint32_t L = 0; L < s.cube_layers; ++L) {
+            uint32_t toAssign = remaining / (s.cube_layers - L); // 平均分配
+            if (toAssign == 0) toAssign = 1;
+            layerCounts[L] = toAssign;
+            remaining -= toAssign;
+        }
+    }
+
+    const float h = (((1e-6f) > (s.smoothingRadius)) ? (1e-6f) : (s.smoothingRadius));
+    const float spacing = h * s.cube_lattice_spacing_factor_h;
+    const float cubeSideWorld = spacing * s.cube_edge_particles;
+
+    // 临时记录每团的网格坐标（ix, iz, layer）用于相邻判断
+    struct GroupLayout { int layer; int ix; int iz; };
+    std::vector<GroupLayout> layouts;
+    layouts.reserve(s.cube_group_count);
+
+    // 计算整体包围盒（不含 margin）
+    float minX = 1e30f, maxX = -1e30f;
+    float minY = 1e30f, maxY = -1e30f;
+    float minZ = 1e30f, maxZ = -1e30f;
+
+    uint32_t gCursor = 0;
+    for (uint32_t layer = 0; layer < s.cube_layers; ++layer) {
+        uint32_t groupsInLayer = layerCounts[layer];
+        // 近似正方分布
+        uint32_t nx = (uint32_t)std::ceil(std::sqrt(double(groupsInLayer)));
+        uint32_t nz = (uint32_t)std::ceil(double(groupsInLayer) / std::max<uint32_t>(1u, nx));
+        float layerY = s.cube_base_height + layer * s.cube_layer_spacing_world;
+
+        // 层扰动（可选）
+        if (s.cube_layer_jitter_enable) {
+            std::mt19937 lrng(s.cube_layer_jitter_seed ^ layer);
+            std::uniform_real_distribution<float> U(-1.f, 1.f);
+            float amp = s.cube_layer_jitter_scale_h * h;
+            float dy = U(lrng) * amp;
+            layerY += dy;
+        }
+
+        for (uint32_t k = 0; k < groupsInLayer && gCursor < s.cube_group_count; ++k) {
+            uint32_t ix = k % nx;
+            uint32_t iz = k / nx;
+            float cx = ix * s.cube_group_spacing_world;
+            float cz = iz * s.cube_group_spacing_world;
+            float cy = layerY;
+
+            // 更新包围盒
+            minX = (((minX) < (cx - cubeSideWorld * 0.5f)) ? (minX) : (cx - cubeSideWorld * 0.5f));
+            maxX = (((maxX) > (cx + cubeSideWorld * 0.5f)) ? (maxX) : (cx + cubeSideWorld * 0.5f));
+            minY = (((minY) < (cy - cubeSideWorld * 0.5f)) ? (minY) : (cy - cubeSideWorld * 0.5f));
+            maxY = (((maxY) > (cy + cubeSideWorld * 0.5f)) ? (maxY) : (cy + cubeSideWorld * 0.5f));
+            minZ = (((minZ) < (cz - cubeSideWorld * 0.5f)) ? (minZ) : (cz - cubeSideWorld * 0.5f));
+            maxZ = (((maxZ) > (cz + cubeSideWorld * 0.5f)) ? (maxZ) : (cz + cubeSideWorld * 0.5f));
+
+            layouts.push_back({ (int)layer, (int)ix, (int)iz });
+            ++gCursor;
+        }
+    }
+
+    if (layouts.empty()) {
+        // 兜底：至少一个
+        layouts.push_back({ 0,0,0 });
+        minX = minY = minZ = 0.f;
+        maxX = maxY = maxZ = cubeSideWorld;
+    }
+
+    // —— 域拟合 —— //
+    if (s.cube_auto_fit_domain) {
+        float3 size = make_float3(maxX - minX, maxY - minY, maxZ - minZ);
+        float3 mins = make_float3(minX, (((0.f) < (minY - cubeSideWorld * 0.5f)) ? (0.f) : (minY - cubeSideWorld * 0.5f)), minZ);
+        float3 maxs = make_float3(minX + size.x, minY + size.y, minZ + size.z);
+
+        // 放大 margin
+        float3 center = make_float3((mins.x + maxs.x) * 0.5f,
+            (mins.y + maxs.y) * 0.5f,
+            (mins.z + maxs.z) * 0.5f);
+        float scale = (((1.0f) > (s.cube_domain_margin_scale)) ? (1.0f) : (s.cube_domain_margin_scale));
+        float3 half = make_float3((maxs.x - mins.x) * 0.5f * scale,
+            (maxs.y - mins.y) * 0.5f * scale,
+            (maxs.z - mins.z) * 0.5f * scale);
+        s.gridMins = make_float3(center.x - half.x, (((0.f) > (center.y - half.y)) ? (0.f) : (center.y - half.y)), center.z - half.z);
+        s.gridMaxs = make_float3(center.x + half.x, center.y + half.y, center.z + half.z);
+    }
+
+    // —— 颜色生成 —— //
+    if (s.cube_color_enable) {
+        std::mt19937 rng(s.cube_color_seed);
+        std::vector<std::array<float, 3>> colors;
+        colors.resize(s.cube_group_count);
+
+        // 预构建邻接：同层内曼哈顿距离=1
+        std::vector<std::vector<int>> adjacency(s.cube_group_count);
+        for (int i = 0; i < (int)s.cube_group_count; ++i) {
+            for (int j = 0; j < (int)s.cube_group_count; ++j) {
+                if (i == j) continue;
+                if (layouts[i].layer != layouts[j].layer) continue;
+                int dx = std::abs(layouts[i].ix - layouts[j].ix);
+                int dz = std::abs(layouts[i].iz - layouts[j].iz);
+                if (dx + dz == 1) {
+                    adjacency[i].push_back(j);
+                }
+            }
+        }
+
+        for (uint32_t g = 0; g < s.cube_group_count; ++g) {
+            std::array<float, 3> col{};
+            GenDistinctColor(rng,
+                s.cube_color_min_component,
+                s.cube_color_avoid_adjacent_similarity ? s.cube_color_min_distance : 0.f,
+                adjacency[g],
+                colors,
+                (int)g,
+                col,
+                s.cube_color_retry_max);
+            s.cube_group_colors[g][0] = col[0];
+            s.cube_group_colors[g][1] = col[1];
+            s.cube_group_colors[g][2] = col[2];
+        }
+    }
+
+    // CubeMix 模式禁用连续喷口
+    s.faucetFillEnable = false;
 }
 
 void ApplyRendererRuntime(const RuntimeConsole& c, gfx::RendererD3D12& r) {

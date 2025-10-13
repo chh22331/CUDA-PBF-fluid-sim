@@ -91,15 +91,12 @@ namespace sim {
         bool posPredExternal = false;
 
         void allocate(uint32_t cap) {
+            if (cap == 0) cap = 1;
             if (cap == capacity) return;
-
-            // 释放除 d_pos_pred（当为外部绑定时保留）之外的所有资源
             release();
-
             capacity = cap;
             CUDA_CHECK(cudaMalloc((void**)&d_pos, sizeof(float4) * capacity));
             CUDA_CHECK(cudaMalloc((void**)&d_vel, sizeof(float4) * capacity));
-
             if (!posPredExternal) {
                 CUDA_CHECK(cudaMalloc((void**)&d_pos_pred, sizeof(float4) * capacity));
             }
@@ -109,7 +106,6 @@ namespace sim {
             CUDA_CHECK(cudaMalloc((void**)&d_cellKeys_sorted, sizeof(uint32_t) * capacity));
             CUDA_CHECK(cudaMalloc((void**)&d_indices, sizeof(uint32_t) * capacity));
             CUDA_CHECK(cudaMalloc((void**)&d_indices_sorted, sizeof(uint32_t) * capacity));
-            // grid 尺寸根据参数设置，由外部创建/重配 cellStart/End
         }
 
         void allocGridRanges(uint32_t numCells) {

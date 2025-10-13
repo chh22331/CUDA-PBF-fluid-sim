@@ -39,6 +39,15 @@ namespace sim {
         // 新增：上一帧 GPU 仿真耗时（ms）。由事件双缓冲在 step() 内更新（上一帧完成则可读）
         double lastGpuFrameMs() const { return static_cast<double>(m_lastFrameMs); }
 
+		// 新增：立方体混合播种（groupCenters 指向 groupCount 个中心，edgeParticles 为每边粒子数，spacing 为粒子间距）
+        void seedCubeMix(uint32_t groupCount,
+            const float3* groupCenters,
+            uint32_t edgeParticles,
+            float spacing,
+            bool applyJitter,
+            float jitterAmp,
+            uint32_t jitterSeed);
+
     private:
         bool buildGrid(const SimParams& p);
         bool ensureSortTemp(std::size_t bytes);
@@ -57,7 +66,7 @@ namespace sim {
 
         // 新增：捕获后缓存 Graph 节点，避免每帧扫描
         bool cacheGraphNodes();
-
+        
     private:
         SimParams m_params{};
         DeviceBuffers m_bufs{};

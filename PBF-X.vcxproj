@@ -81,10 +81,6 @@
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <CudaCompile Include="cuda sim\cell_compact.cu" />
-    <CudaCompile Include="cuda sim\pbf_delta_apply.cu" />
-    <CudaCompile Include="cuda sim\pbf_lambda.cu" />
-    <CudaCompile Include="cuda sim\xsph.cu" />
     <CudaCompile Include="kernel.cu" />
     <CudaCompile Include="sim\boundary.cu" />
     <CudaCompile Include="sim\cell_compact.cu" />
@@ -114,6 +110,7 @@
     <ClInclude Include="engine\core\console.h" />
     <ClInclude Include="engine\core\frame_graph.h" />
     <ClInclude Include="engine\core\memory_pool.h" />
+    <ClInclude Include="engine\core\prof_nvtx.h" />
     <ClInclude Include="engine\core\profiler.h" />
     <ClInclude Include="engine\gfx\d3d12_device.h" />
     <ClInclude Include="engine\gfx\renderer.h" />
@@ -130,11 +127,15 @@
     <Text Include="CMakeLists.txt" />
   </ItemGroup>
   <ItemGroup>
-    <!-- 仅当文件存在时才编译，避免缺失导致的 FXC 失败 -->
-    <FxCompile Include="engine\gfx\d3d12_shaders\normals.hlsl" Condition="Exists('engine\gfx\d3d12_shaders\normals.hlsl')" />
-    <FxCompile Include="engine\gfx\d3d12_shaders\points.hlsl" />
-    <FxCompile Include="engine\gfx\d3d12_shaders\visualize.hlsl" Condition="Exists('engine\gfx\d3d12_shaders\visualize.hlsl')" />
-    <!-- thickness 使用像素着色器配置（FXC，SM5.0），入口为 main（包装到 PSMain） -->
+    <!-- points.hlsl 顶点着色器 -->
+    <FxCompile Include="engine\gfx\d3d12_shaders\points.hlsl">
+      <EntryPointName>VSMain</EntryPointName>
+      <ShaderType>Vertex</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">6.6</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">6.6</ShaderModel>
+      <ObjectFileOutput>$(OutDir)points_vs.cso</ObjectFileOutput>
+    </FxCompile>
+    <!-- thickness 像素着色器维持原有配置 (SM5.0) -->
     <FxCompile Include="engine\gfx\d3d12_shaders\thickness.hlsl">
       <ShaderType>Pixel</ShaderType>
       <ShaderModel>5.0</ShaderModel>
