@@ -73,7 +73,7 @@ public:
 
     // Open shared resource (interop)
     bool openSharedResource(HANDLE h, REFIID riid, void** outPtr);
-
+    void waitForGPU();
 private:
     bool createDeviceAndSwapchain(HWND hwnd, const DeviceInitParams& p);
     bool createRTVHeapAndBuffers(uint32_t bufferCount, DXGI_FORMAT format);
@@ -81,8 +81,7 @@ private:
     bool createFence(uint32_t bufferCount);
     bool createTimestampObjects(uint32_t maxTimestampsPerFrame);
     void destroySwapchainResources();
-    void waitForGPU();
-
+    
 private:
     DeviceInitParams m_params{};
 

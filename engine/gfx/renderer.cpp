@@ -417,4 +417,9 @@ namespace gfx {
         return true;
     }
 
+    void RendererD3D12::WaitForGPU() {
+        // 等待当前帧渲染队列完成（包含 Present 限流/vsync）
+        m_device.waitForGPU();
+    }
+
 } // namespace gfx

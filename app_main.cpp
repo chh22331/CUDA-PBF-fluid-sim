@@ -412,42 +412,33 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 
     core::Profiler profiler;
 
-    // 3) 仿真初始化（从控制台构造 SimParams）
+    // 3) 仿真初始化
     sim::Simulator simulator;
     sim::SimParams simParams{};
     console::BuildSimParams(cc, simParams);
-    // 删除：外部不再覆写粒子质量，完全由 console::BuildSimParams 下发
     SanitizeRuntime(cc, simParams);
     if (!simulator.initialize(simParams)) {
         MessageBoxW(hwnd, L"Simulator initialize failed.", L"PBF-X", MB_ICONERROR);
         return 1;
     }
 
-    // 4) 建立 D3D12-CUDA 共享粒子缓冲（将 pos_pred 直接映射为渲染端 SRV）
+    // 4) D3D12-CUDA 共享粒子缓冲
     {
         HANDLE shared = nullptr;
-        // 与 Simulator::initialize 的 capacity 策略一致
         const uint32_t capacity = (simParams.maxParticles > 0) ? simParams.maxParticles : simParams.numParticles;
-
-        // 在 D3D12 端创建共享缓冲，并注册为 SRV(t0)
         if (!renderer.CreateSharedParticleBuffer(capacity, sizeof(float4), shared)) {
             MessageBoxW(hwnd, L"CreateSharedParticleBuffer failed.", L"PBF-X", MB_ICONERROR);
             return 1;
         }
-
-        // 在 CUDA 端将共享缓冲映射为 pos_pred（模拟会持续写入该缓冲，渲染端可见）
         if (!simulator.importPosPredFromD3D12(shared, size_t(capacity) * sizeof(float4))) {
             CloseHandle(shared);
             MessageBoxW(hwnd, L"importPosPredFromD3D12 failed.", L"PBF-X", MB_ICONERROR);
             return 1;
         }
-
-        // 句柄一旦导入 CUDA 即可关闭本进程句柄
         CloseHandle(shared);
     }
 
-    // 5) 初始布点：写入共享缓冲，渲染端可见
-    // 与质量策略 UniformLattice 一致：spacing = factor * h
+    // 5) 初始布点
     const float spacing = simParams.kernel.h *
         ((cc.sim.lattice_spacing_factor_h > 0.f) ? cc.sim.lattice_spacing_factor_h : 1.0f);
     const float3 origin = make_float3(simParams.grid.mins.x + 0.95f * spacing,
@@ -459,12 +450,24 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         simParams.numParticles = active;
         renderer.SetParticleCount(active);
     }
+
     uint64_t frameIndex = 0;
     MSG msg{};
     bool running = true;
 
-    // 热加载轮询节流（每 N 帧检查一次）
-    const uint32_t hotReloadEveryNFrames = 30;
+    // 热加载/诊断节流
+    const uint32_t hotReloadEveryNFrames =
+        (cc.app.hot_reload && cc.app.hot_reload_every_n > 0)
+        ? (uint32_t)cc.app.hot_reload_every_n
+        : UINT32_MAX;
+    const uint32_t diagEveryNFrames =
+        (cc.debug.diag_every_n > 0)
+        ? (uint32_t)cc.debug.diag_every_n
+        : UINT32_MAX;
+
+    // 新：用于相机 dt（上一帧结束 → 本帧开始）
+    using Clock = std::chrono::steady_clock;
+    static auto s_prevFrameEnd = Clock::now();
 
     while (running) {
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -472,14 +475,16 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
             TranslateMessage(&msg); DispatchMessage(&msg);
         }
 
-        // 热加载：检测配置更新并按白名单增量应用
-        if ((frameIndex % hotReloadEveryNFrames) == 0) {
+        // 帧开始时间（用于 frame_ms）
+        auto frameStart = Clock::now();
+
+        // 热加载
+        if (hotReloadEveryNFrames != UINT32_MAX &&
+            (frameIndex % hotReloadEveryNFrames) == 0) {
             std::string err;
             if (config::TryHotReload(cfgState, cc, &err)) {
-                // 将变更同步到运行时
                 console::BuildSimParams(cc, simParams);
                 SanitizeRuntime(cc, simParams);
-                // 删除：不再覆写 particleMass
                 console::FitCameraToDomain(cc);
                 console::ApplyRendererRuntime(cc, renderer);
                 if (cc.debug.printHotReload) {
@@ -487,21 +492,19 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                         cfgState.activeProfile.c_str(), simParams.solverIters, simParams.maxNeighbors, simParams.sortEveryN, cc.viewer.point_size_px);
                 }
             }
-            else if (!err.empty()) {
-                //std::fprintf(stderr, "HotReload warning: %s\n", err.c_str());
-            }
         }
 
         profiler.beginFrame(frameIndex);
 
-        // 运行期常规元数据（固定每帧都写，使 CSV 列稳定）
+        // 元数据
         profiler.addCounter("num_particles", static_cast<int64_t>(simParams.numParticles));
         profiler.addCounter("solver_iters", simParams.solverIters);
         profiler.addCounter("max_neighbors", simParams.maxNeighbors);
         profiler.addCounter("sort_every_n", simParams.sortEveryN);
         profiler.addText("profile", cfgState.activeProfile);
 
-        if ((frameIndex % hotReloadEveryNFrames) == 0) {
+        if (diagEveryNFrames != UINT32_MAX &&
+            (frameIndex % diagEveryNFrames) == 0) {
             sim::SimStats sGrid{};
             if (simulator.computeStats(sGrid, /*sampleStride=*/8)) {
                 // 用整型缩放便于 CSV
@@ -603,16 +606,13 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         using Clock = std::chrono::steady_clock;
         static auto tPrev = Clock::now();
         auto tNow = Clock::now();
-        float dtSec = std::chrono::duration<float>(tNow - tPrev).count();
-        tPrev = tNow;
-        // 防抖：极端卡顿时限制单帧步长，避免速度爆冲
-        dtSec = std::clamp(dtSec, 0.0f, 0.05f);
-
-        // 摄像机更新与同步
+        // 相机更新：用“上一帧结束→本帧开始”的 dt
+        float dtSec = std::chrono::duration<float>(frameStart - s_prevFrameEnd).count();
+        dtSec = std::clamp(dtSec, 0.0f, 0.2f);
         UpdateFreeFlyCamera(g_Camera, dtSec);
         SyncCameraToRenderer(cc, renderer, g_Camera);
 
-        // Debug 控制：轮询键盘
+        // Debug 控制
         if (g_DebugEnabled) {
             if (KeyPressedOnce(cc.debug.keyTogglePause)) {
                 g_DebugPaused = !g_DebugPaused;
@@ -628,7 +628,6 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                 }
             }
             if (KeyPressedOnce(cc.debug.keyStep)) {
-                // 若处于暂停则请求单步；若正在运行则忽略
                 if (g_DebugPaused) {
                     g_DebugStepRequested = true;
                     if (cc.debug.printDebugKeys) {
@@ -638,47 +637,53 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
             }
         }
 
-        // 模拟（支持 Debug 暂停/单步）
-        double simMs = 0.0;
+        // —— 模拟 —— //
         bool doStep = true;
         if (g_DebugEnabled) {
             doStep = !g_DebugPaused || g_DebugStepRequested;
         }
         if (doStep) {
-            core::CpuTimer simt; simt.begin();
             simulator.step(simParams);
-            simMs = simt.endMs();
-            // 单步后重新进入暂停
             if (g_DebugEnabled && g_DebugStepRequested) {
                 g_DebugStepRequested = false;
                 g_DebugPaused = true;
             }
         }
-        profiler.addRow("sim_ms", simMs);
 
-        // 同步当前活动粒子数到渲染器（关键）
+        // 记录上一帧 GPU 仿真耗时（ms）：事件查询成功时更新
+        const double simMsGpu = simulator.lastGpuFrameMs();
+        profiler.addRow("sim_ms_gpu", simMsGpu);
+
+        // 同步当前活动粒子数到渲染器
         {
             const uint32_t active = simulator.activeParticleCount();
             simParams.numParticles = active;
             renderer.SetParticleCount(active);
         }
 
-        // 计算/平滑 FPS（使用真实帧间隔 dtSec）
+        // —— 渲染 —— //
+        auto renderStart = Clock::now();
+        renderer.RenderFrame(profiler);
+        // 为获取“真实渲染耗时/显示帧率”，等待 GPU 渲染队列完成
+        renderer.WaitForGPU();
+        auto renderEnd = Clock::now();
+        const double renderMs = std::chrono::duration<double, std::milli>(renderEnd - renderStart).count();
+        profiler.addRow("render_ms", renderMs);
+
+        // —— 整帧耗时与 FPS —— //
+        auto frameEnd = Clock::now();
+        s_prevFrameEnd = frameEnd; // 下帧 dt 的参考
+        const double frameMs = std::chrono::duration<double, std::milli>(frameEnd - frameStart).count();
+        const double fpsInst = (frameMs > 1e-6) ? (1000.0 / frameMs) : 0.0;
+
         static double s_fpsEma = 0.0;
-        double fpsInst = (dtSec > 1e-6f) ? (1.0 / dtSec) : 0.0;
         s_fpsEma = (s_fpsEma <= 0.0) ? fpsInst : (0.9 * s_fpsEma + 0.1 * fpsInst);
 
-        // 渲染
-        renderer.RenderFrame(profiler);
-
-        // 同步标题栏 HUD（使用当前活动粒子数与平滑 FPS）
-        UpdateWindowTitleHUD(hwnd, simParams.numParticles, s_fpsEma);
-
-        // 帧计时与 CSV
-        core::CpuTimer ft; ft.begin();
-        double frameMs = ft.endMs();
         profiler.addRow("frame_ms", frameMs);
-        profiler.addRow("fps", (frameMs > 0.0) ? (1000.0 / frameMs) : 0.0);
+        profiler.addRow("fps", fpsInst);
+
+        // 更新窗口标题
+        UpdateWindowTitleHUD(hwnd, simParams.numParticles, s_fpsEma);
 
         // 周期打印模拟统计（可开关）
         if (cc.debug.printPeriodicStats) {

@@ -35,6 +35,10 @@ namespace sim {
 
         // 新增：采样质心（每 stride 取 1 个粒子，低成本）
         bool computeCenterOfMass(float3& outCom, uint32_t sampleStride) const;
+
+        // 新增：上一帧 GPU 仿真耗时（ms）。由事件双缓冲在 step() 内更新（上一帧完成则可读）
+        double lastGpuFrameMs() const { return static_cast<double>(m_lastFrameMs); }
+
     private:
         bool buildGrid(const SimParams& p);
         bool ensureSortTemp(std::size_t bytes);

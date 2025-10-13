@@ -56,7 +56,7 @@ namespace gfx {
 
         // 新增：每帧更新实际要绘制的粒子数量（不得超过创建 SRV 时的 numElements）
         void SetParticleCount(uint32_t n) { m_particleCount = n; }
-
+        void WaitForGPU();
     private:
         void addClearPresentPasses();
         void createThicknessResources();

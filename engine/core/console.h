@@ -15,6 +15,9 @@ namespace console {
             uint32_t height = 720;
             bool     vsync = false;
             std::string csv_path = "stats.csv";
+            // 新增：热重载总开关与频率（帧）
+            bool hot_reload = false;
+            int  hot_reload_every_n = 0; // 0/负值表示禁用
         } app;
 
         struct Renderer {
@@ -75,13 +78,16 @@ namespace console {
             bool printDiagnostics = false;     // [Diag] 诊断与网格占用直方等
             bool printHints = false;           // [Hint] 启发式建议
             bool printErrors = true;           // 错误/致命提示（默认开）
+
+            // 新增：诊断/统计的大频率节流（帧）；0/负值表示禁用
+            int  diag_every_n = 0;
         } debug;
 
         // 仿真配置（集中所有物理与发射/域参数）
         struct Simulation {
             // 粒子与发射器
-            uint32_t numParticles = 1;
-            uint32_t maxParticles = 300000;
+            uint32_t numParticles = 350000;
+            uint32_t maxParticles = 400000;
             uint32_t emitPerStep = 50;
             bool     faucetFillEnable = true;
             bool     recycleToNozzle = false;
@@ -116,7 +122,7 @@ namespace console {
             sim::PbfTuning pbf{};
 
             // XSPH 系数
-            float    xsph_c = 0.1f;
+            float    xsph_c = 0.02f;
 
             // 邻域核参数
             float    smoothingRadius = 2.0f;
@@ -149,7 +155,7 @@ namespace console {
             // 新增：启用哈希/压缩网格（按 cell-key 排序 + 压缩段表）
             bool  use_hashed_grid = true;
             // 新增：压缩段表重建频率（帧）：>=1
-            int   sort_compact_every_n = 4;
+            int   sort_compact_every_n = 8;
             // 新增：邻域查段方式（true=对压缩 key 做二分；false=使用辅表哈希，后续扩展）
             bool  compact_binary_search = true;
             // 新增：打印网格统计（非空 cell 数、均值/最大 occupancy 等）
