@@ -40,12 +40,30 @@ RuntimeConsole& Instance() {
     return g_console;
 }
 
+static bool ShouldAutoMapMixed(const RuntimeConsole::Simulation& s) {
+    // 满足条件：开启 useMixedPrecision 且 precision 保持默认 FP32 且允许 autoMap
+    const auto& pc = s.precision;
+    if (!s.useMixedPrecision) return false;
+    if (!pc.autoMapFromLegacyMixedFlag) return false;
+    // 用户若已经修改（出现任何非 FP32 或阶段覆盖）则不自动映射
+    bool allDefault =
+        pc.positionStore == NumericType::FP32 &&
+        pc.velocityStore == NumericType::FP32 &&
+        pc.predictedPosStore == NumericType::FP32 &&
+        pc.lambdaStore == NumericType::FP32 &&
+        pc.densityStore == NumericType::FP32 &&
+        pc.auxStore == NumericType::FP32 &&
+        pc.renderTransfer == NumericType::FP32 &&
+        pc.coreCompute == NumericType::FP32 &&
+        !pc.useStageOverrides &&
+        pc.fp16StageMask == 0;
+    return allDefault;
+}
+
 void BuildSimParams(const RuntimeConsole& c, sim::SimParams& out) {
-    // 运行规模
+    // 原有赋值保持
     out.numParticles = c.sim.numParticles;
     out.maxParticles = c.sim.maxParticles;
-
-    // 动力学与数值控制
     out.dt = c.sim.dt;
     out.cfl = c.sim.cfl;
     out.gravity = c.sim.gravity;
@@ -56,22 +74,16 @@ void BuildSimParams(const RuntimeConsole& c, sim::SimParams& out) {
     out.sortEveryN = (((1) > (c.sim.sortEveryN)) ? (1) : (c.sim.sortEveryN));
     out.boundaryRestitution = c.sim.boundaryRestitution;
     out.pbf = c.sim.pbf;
-
-    // XSPH 系数从 console 透传
     out.xsph_c = c.sim.xsph_c;
 
-    // h 推导选择
     float h = (c.sim.smoothingRadius > 0.f) ? c.sim.smoothingRadius : 0.02f;
     if (c.sim.deriveHFromRadius) {
         const float r = (((1e-8f) > (c.sim.particleRadiusWorld)) ? (1e-8f) : (c.sim.particleRadiusWorld));
         const float h_from_r = c.sim.h_over_r * r;
         if (h_from_r > 0.0f) h = h_from_r;
     }
-
-    // 核系数
     out.kernel = sim::MakeKernelCoeffs(h);
 
-    // 质量定义
     float mass = c.sim.particleMass;
     switch (c.sim.massMode) {
     case RuntimeConsole::Simulation::MassMode::UniformLattice: {
@@ -93,7 +105,6 @@ void BuildSimParams(const RuntimeConsole& c, sim::SimParams& out) {
     }
     out.particleMass = mass;
 
-    // 网格参数
     float cell = c.sim.cellSize;
     if (cell <= 0.0f) {
         float m = (c.perf.grid_cell_size_multiplier > 0.0f) ? c.perf.grid_cell_size_multiplier : 1.0f;
@@ -102,7 +113,106 @@ void BuildSimParams(const RuntimeConsole& c, sim::SimParams& out) {
     out.grid.mins = c.sim.gridMins;
     out.grid.maxs = c.sim.gridMaxs;
     out.grid.cellSize = cell;
-    out.grid.dim = make_grid_dim(out.grid.mins, out.grid.maxs, cell);
+    auto clamp_ge1 = [](int v) { return (((1) > (v)) ? (1) : (v)); };
+    float3 size = make_float3(out.grid.maxs.x - out.grid.mins.x,
+        out.grid.maxs.y - out.grid.mins.y,
+        out.grid.maxs.z - out.grid.mins.z);
+    int dx = clamp_ge1((int)std::ceil(size.x / cell));
+    int dy = clamp_ge1((int)std::ceil(size.y / cell));
+    int dz = clamp_ge1((int)std::ceil(size.z / cell));
+    out.grid.dim = make_int3(dx, dy, dz);
+
+    // ========== 新增：混合精度映射 ==========
+    out.precision = {}; // 先用默认值
+    const auto& src = c.sim.precision;
+
+    if (ShouldAutoMapMixed(c.sim)) {
+        // 默认策略：仅位置/速度/预测位置使用 FP16_Packed；核心计算仍 FP32
+        out.precision.positionStore = sim::NumericType::FP16_Packed;
+        out.precision.velocityStore = sim::NumericType::FP16_Packed;
+        out.precision.predictedPosStore = sim::NumericType::FP16_Packed;
+        out.precision.lambdaStore = sim::NumericType::FP32;
+        out.precision.densityStore = sim::NumericType::FP32;
+        out.precision.auxStore = sim::NumericType::FP32;
+        out.precision.renderTransfer = sim::NumericType::FP32;
+        out.precision.coreCompute = sim::NumericType::FP32;
+        out.precision.forceFp32Accumulate = true;
+    }
+    else {
+        // 用户已提供配置：逐字段复制
+        auto mapNt = [](console::NumericType t) -> sim::NumericType {
+            return static_cast<sim::NumericType>(static_cast<uint8_t>(t));
+            };
+        out.precision.positionStore = mapNt(src.positionStore);
+        out.precision.velocityStore = mapNt(src.velocityStore);
+        out.precision.predictedPosStore = mapNt(src.predictedPosStore);
+        out.precision.lambdaStore = mapNt(src.lambdaStore);
+        out.precision.densityStore = mapNt(src.densityStore);
+        out.precision.auxStore = mapNt(src.auxStore);
+        out.precision.renderTransfer = mapNt(src.renderTransfer);
+        out.precision.coreCompute = mapNt(src.coreCompute);
+        out.precision.forceFp32Accumulate = src.forceFp32Accumulate;
+        out.precision.enableHalfIntrinsics = src.enableHalfIntrinsics;
+        out.precision.useStageOverrides = src.useStageOverrides;
+        out.precision.emissionCompute = mapNt(src.emissionCompute);
+        out.precision.gridBuildCompute = mapNt(src.gridBuildCompute);
+        out.precision.neighborCompute = mapNt(src.neighborCompute);
+        out.precision.densityCompute = mapNt(src.densityCompute);
+        out.precision.lambdaCompute = mapNt(src.lambdaCompute);
+        out.precision.integrateCompute = mapNt(src.integrateCompute);
+        out.precision.velocityCompute = mapNt(src.velocityCompute);
+        out.precision.boundaryCompute = mapNt(src.boundaryCompute);
+        out.precision.xsphCompute = mapNt(src.xsphCompute);
+        out.precision.fp16StageMask = src.fp16StageMask;
+        out.precision.adaptivePrecision = src.adaptivePrecision;
+        out.precision.densityErrorTolerance = src.densityErrorTolerance;
+        out.precision.lambdaVarianceTolerance = src.lambdaVarianceTolerance;
+        out.precision.adaptCheckEveryN = src.adaptCheckEveryN;
+        // 若用户使用 FP16 (非 Packed)，M1 自动升级到 FP16_Packed（仅镜像阶段）
+        if (out.precision.positionStore == sim::NumericType::FP16)
+            out.precision.positionStore = sim::NumericType::FP16_Packed;
+        if (out.precision.velocityStore == sim::NumericType::FP16)
+            out.precision.velocityStore = sim::NumericType::FP16_Packed;
+        if (out.precision.predictedPosStore == sim::NumericType::FP16)
+            out.precision.predictedPosStore = sim::NumericType::FP16_Packed;
+    }
+    // 现有 out.precision 基础字段已写入，此处补充阶段覆盖与 fp16StageMask 逻辑
+        const auto& pc = c.sim.precision;
+    auto mapNt = [](console::NumericType t)->sim::NumericType {
+        return static_cast<sim::NumericType>(static_cast<uint8_t>(t));
+        };
+
+    if (pc.useStageOverrides) {
+        out.precision.emissionCompute = mapNt(pc.emissionCompute);
+        out.precision.gridBuildCompute = mapNt(pc.gridBuildCompute);
+        out.precision.neighborCompute = mapNt(pc.neighborCompute);
+        out.precision.densityCompute = mapNt(pc.densityCompute);
+        out.precision.lambdaCompute = mapNt(pc.lambdaCompute);
+        out.precision.integrateCompute = mapNt(pc.integrateCompute);
+        out.precision.velocityCompute = mapNt(pc.velocityCompute);
+        out.precision.boundaryCompute = mapNt(pc.boundaryCompute);
+        out.precision.xsphCompute = mapNt(pc.xsphCompute);
+    }
+    else {
+        // 统一用 coreCompute，若 fp16StageMask 指定位启用 FP16（Packed 未必保证，仍依赖存储类型）
+        sim::NumericType coreT = mapNt(pc.coreCompute);
+        auto wantFp16 = [&](uint32_t bit) {
+            return (pc.fp16StageMask & bit) != 0;
+            };
+        auto choose = [&](uint32_t bit)->sim::NumericType {
+            return wantFp16(bit) ? sim::NumericType::FP16 : coreT;
+            };
+        using B = console::ComputeStageBits;
+        out.precision.emissionCompute = choose(B::Stage_Emission);
+        out.precision.gridBuildCompute = choose(B::Stage_GridBuild);
+        out.precision.neighborCompute = choose(B::Stage_NeighborGather);
+        out.precision.densityCompute = choose(B::Stage_Density);
+        out.precision.lambdaCompute = choose(B::Stage_LambdaSolve);
+        out.precision.integrateCompute = choose(B::Stage_Integration);
+        out.precision.velocityCompute = choose(B::Stage_VelocityUpdate);
+        out.precision.boundaryCompute = choose(B::Stage_Boundary);
+        out.precision.xsphCompute = choose(B::Stage_XSPH);
+    }
 }
 
 void BuildDeviceParams(const RuntimeConsole& c, sim::DeviceParams& out) {

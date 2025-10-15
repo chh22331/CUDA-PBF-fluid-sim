@@ -377,6 +377,9 @@ static std::string MakeConfigAbsolutePath() {
 }
 
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
+#ifdef ENABLE_NVTX
+    nvtx3::scoped_range sr_main{ "Program.Main" };
+#endif
     // 0) 统一控制台与配置加载
     auto& cc = console::Instance();
     config::State cfgState{};

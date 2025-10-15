@@ -46,7 +46,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>WIN32;WIN64;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;WIN64;ENABLE_NVTX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
@@ -58,6 +58,7 @@
       <TargetMachinePlatform>64</TargetMachinePlatform>
       <AdditionalOptions>--std=c++20 %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
+    <FxCompile />
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -65,7 +66,7 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>WIN32;WIN64;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;WIN64;ENABLE_NVTX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
@@ -79,18 +80,26 @@
       <TargetMachinePlatform>64</TargetMachinePlatform>
       <AdditionalOptions>--std=c++20 %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
+    <FxCompile />
   </ItemDefinitionGroup>
   <ItemGroup>
     <CudaCompile Include="kernel.cu" />
+    <CudaCompile Include="sim\adaptive_precision.cu" />
     <CudaCompile Include="sim\boundary.cu" />
     <CudaCompile Include="sim\cell_compact.cu" />
     <CudaCompile Include="sim\cell_ranges.cu" />
+    <CudaCompile Include="sim\device_buffers_kernels.cu" />
     <CudaCompile Include="sim\eimtter.cu" />
     <CudaCompile Include="sim\emit_params.cu" />
     <CudaCompile Include="sim\hash_keys.cu" />
     <CudaCompile Include="sim\integrate.cu" />
+    <CudaCompile Include="sim\integrate_velocity_mp.cu" />
+    <CudaCompile Include="sim\neighborhood_mp.cu" />
     <CudaCompile Include="sim\pbf_delta_apply.cu" />
     <CudaCompile Include="sim\pbf_lambda.cu" />
+    <CudaCompile Include="sim\precision_traits.cu" />
+    <CudaCompile Include="sim\solver_lambda_delta_xsph_compact_mp.cu" />
+    <CudaCompile Include="sim\solver_lambda_delta_xsph_mp.cu" />
     <CudaCompile Include="sim\sort_pairs.cu" />
     <CudaCompile Include="sim\stats.cu" />
     <CudaCompile Include="sim\stats_bruteforce.cu" />
@@ -120,6 +129,8 @@
     <ClInclude Include="sim\device_buffers.cuh" />
     <ClInclude Include="sim\emit_params.h" />
     <ClInclude Include="sim\parameters.h" />
+    <ClInclude Include="sim\precision_stage.h" />
+    <ClInclude Include="sim\precision_traits.cuh" />
     <ClInclude Include="sim\simulator.h" />
     <ClInclude Include="sim\stats.h" />
   </ItemGroup>
@@ -141,6 +152,9 @@
       <ShaderModel>5.0</ShaderModel>
       <EntryPointName>main</EntryPointName>
     </FxCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="diff" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

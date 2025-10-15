@@ -7,7 +7,70 @@
 #include "../../sim/emit_params.h"
 
 namespace console {
+    // ================== 数值精度枚举与配置（增量：不影响现有 FP32 逻辑） ================== //
+    // 存储 / 计算可选类型；后续可在构建 SimParams 时映射到具体 kernel/缓冲分配
+    enum class NumericType : uint8_t {
+        FP32 = 0,        // 默认：float
+        FP16 = 1,        // __half (标量或 SoA)
+        FP16_Packed = 2, // 打包布局（如 __half4 / AoSoA），提高带宽利用
+        Quantized16 = 3  // 预留：定点/自定义 16-bit（暂未实现）
+    };
 
+    // 计算阶段标识（位掩码，可用于统一快速切换），仅作为运行时配置描述，不影响现有逻辑
+    enum ComputeStageBits : uint32_t {
+        Stage_Emission = 1u << 0,
+        Stage_GridBuild = 1u << 1,
+        Stage_NeighborGather = 1u << 2,
+        Stage_Density = 1u << 3,
+        Stage_LambdaSolve = 1u << 4,
+        Stage_Integration = 1u << 5,
+        Stage_VelocityUpdate = 1u << 6,
+        Stage_Boundary = 1u << 7,
+        Stage_XSPH = 1u << 8,
+        Stage_AdaptiveH = 1u << 9,
+        Stage_Diagnostics = 1u << 10
+    };
+
+    // 统一数值精度配置（作为 Simulation 的子成员），仅定义开关，无副作用
+    struct PrecisionConfig {
+        // ---------------- 存储精度（粒子主数据与辅助缓冲） ----------------
+        NumericType positionStore = NumericType::FP16;
+        NumericType velocityStore = NumericType::FP32;
+        NumericType predictedPosStore = NumericType::FP32; // PBF 预测位置（若使用）
+        NumericType lambdaStore = NumericType::FP32; // PBF λ（约束求解敏感，初期保持 FP32）
+        NumericType densityStore = NumericType::FP16;
+        NumericType auxStore = NumericType::FP16; // 临时/梯度/累加器等
+        NumericType renderTransfer = NumericType::FP16; // 提交渲染的转换目标（保留 float3 默认）
+
+        // ---------------- 核心计算精度（全局默认） ----------------
+        NumericType coreCompute = NumericType::FP16; // 主环（邻居/密度/λ/积分）
+        bool        forceFp32Accumulate = false;             // 归约/累加是否强制 FP32（数值稳定）
+        bool        enableHalfIntrinsics = true;           // 是否启用半精 intrinsic (__hadd2 等)，需架构支持
+
+        // ---------------- 分阶段覆盖（若 useStageOverrides = true 生效） ----------------
+        bool        useStageOverrides = true;
+        NumericType emissionCompute = NumericType::FP16;
+        NumericType gridBuildCompute = NumericType::FP32;
+        NumericType neighborCompute = NumericType::FP32;
+        NumericType densityCompute = NumericType::FP32;
+        NumericType lambdaCompute = NumericType::FP32;
+        NumericType integrateCompute = NumericType::FP32;
+        NumericType velocityCompute = NumericType::FP32;
+        NumericType boundaryCompute = NumericType::FP32;
+        NumericType xsphCompute = NumericType::FP32;
+
+        // ---------------- 快捷位掩码控制（当未使用分阶段覆盖时可以批量标记 FP16 计算阶段） ----------------
+        uint32_t    fp16StageMask = 0; // 使用 ComputeStageBits，=0 保持全部 FP32
+
+        // ---------------- 自适应精度（预留：根据误差或稳定性动态升降） ----------------
+        bool        adaptivePrecision = false;
+        float       densityErrorTolerance = 0.01f; // ρ 误差阈值用于判定是否需要提升精度
+        float       lambdaVarianceTolerance = 0.05f; // λ 方差阈值
+        int         adaptCheckEveryN = 30;    // 多少帧评估一次；<=0 表示禁用评估
+
+        // ---------------- 与旧字段兼容的默认映射策略（无需使用时保持 false） ----------------
+        bool        autoMapFromLegacyMixedFlag = false;  // 若 Simulation::useMixedPrecision = true 且用户未手动更改，则可在 BuildSimParams 中做默认映射
+    };
     // 统一的运行时控制台（集中所有可调参数）
     struct RuntimeConsole {
         struct App {
@@ -42,7 +105,7 @@ namespace console {
 
         // Debug/控制（新增）
         struct Debug {
-            bool enabled = true;        // 开启 Debug 模式
+            bool enabled = false;        // 开启 Debug 模式
             bool pauseOnStart = true;   // 启动即暂停在第 1 帧
             // 采用 Windows VK 与 ASCII 兼容编码（无需包含 windows.h）
             int  keyStep = 32;          // 空格：推进一帧
@@ -60,7 +123,7 @@ namespace console {
             bool enableAdvancedCollapseDiag = false;
             int  advancedCollapseSampleStride = 16; // >=1，子采样步长
 
-            // —— 数值稳定性专项日志（新增） ——
+            // —— 数值稳定性专项日志（新增） —__
             bool logStabilityBasic = false;    // 开：输出基础稳定性指标（速度/密度/CFL 等）
             int  logEveryN = 60;               // 每多少帧打印一次（>=1）
             int  logSampleStride = 8;          // 统计核采样步长（>=1）
@@ -74,7 +137,7 @@ namespace console {
             // 注：logXSphEffect 暂不实现精确估算（需修改核/双缓对比），保留占位以便后续扩展
             bool logXSphEffect = false;        // 占位：XSPH 平滑实际效果估算（未来扩展）
 
-            // —— 新增：统一约束零散日志的分类开关 ——
+            // —— 新增：统一约束零散日志的分类开关 —__
             bool printDiagnostics = false;     // [Diag] 诊断与网格占用直方等
             bool printHints = false;           // [Hint] 启发式建议
             bool printErrors = true;           // 错误/致命提示（默认开）
@@ -104,7 +167,7 @@ namespace console {
             // 初始格点随机扰动开关（seedBoxLattice / seedBoxLatticeAuto 后应用）
             bool     initial_jitter_enable = true;
             // 扰动幅度 = initial_jitter_scale_h * h （若 h 不可用则退化为 spacing）
-            float    initial_jitter_scale_h = 0.001f;
+            float    initial_jitter_scale_h = 0.01f;
             uint32_t initial_jitter_seed = 0xC0FFEEu;
             // 发射粒子附加扰动（在喷口圆盘内 Poisson / 随机分布基础上再微扰）
             bool     emit_jitter_enable = false;
@@ -189,9 +252,9 @@ namespace console {
             bool     cube_color_enable = true;
             uint32_t cube_color_seed = 0xBADC0DEu;
             // RGB 最低亮度（近似：max(r,g,b) 或简单使用每分量下限）
-            float    cube_color_min_component = 0.25f;
+            float    cube_color_min_component = 0.15f;
             // 颜色最小欧氏距离阈值（避免相邻过相似）
-            float    cube_color_min_distance = 0.35f;
+            float    cube_color_min_distance = 0.25f;
             // 是否启用“相邻立方体避免相似”逻辑（基于网格邻接判断）
             bool     cube_color_avoid_adjacent_similarity = true;
 
@@ -217,6 +280,7 @@ namespace console {
 
             // 预留：分组粒子数（每团 edge^3），自动分解时写入，便于外部初始化阶段引用
             uint32_t cube_particles_per_group = 0;
+            PrecisionConfig precision{};
         } sim;
 
         struct Performance {
@@ -236,6 +300,10 @@ namespace console {
             bool  log_grid_compact_stats = false;
             // 新增：NVTX 总开关（运行时控制
             bool  enable_nvtx = true;
+            // 新增：参数更新最小间隔（帧），避免频繁 GraphCapture；<=0 表示禁用节流
+            int   graph_param_update_min_interval = 30;
+            // 新增：帧级 GPU 计时采样频率（帧）。<=0 禁用 cudaEventRecord
+            int   frame_timing_every_n = 30;
         } perf;
     };
 

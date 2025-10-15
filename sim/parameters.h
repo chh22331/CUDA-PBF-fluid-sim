@@ -4,6 +4,56 @@
 
 namespace sim {
 
+    // ========== 新增：与 console 同步的数值类型枚举（基础结构 M1）==========
+    enum class NumericType : uint8_t {
+        FP32 = 0,
+        FP16 = 1,
+        FP16_Packed = 2,
+        Quantized16 = 3,
+        InvalidSentinel = 255
+    };
+
+    // ========== 新增：精度配置（运行期由 BuildSimParams 填充）==========
+    struct SimPrecision {
+        // 存储
+        NumericType positionStore      = NumericType::FP32;
+        NumericType velocityStore      = NumericType::FP32;
+        NumericType predictedPosStore  = NumericType::FP32;
+        NumericType lambdaStore        = NumericType::FP32;
+        NumericType densityStore       = NumericType::FP32;
+        NumericType auxStore           = NumericType::FP32;
+        NumericType renderTransfer     = NumericType::FP32;
+
+        // 计算
+        NumericType coreCompute        = NumericType::FP32;
+        bool        forceFp32Accumulate = true;
+        bool        enableHalfIntrinsics = false;
+
+        // 分阶段覆盖（暂留，后续 M2 可使用）
+        bool        useStageOverrides  = false;
+        NumericType emissionCompute    = NumericType::FP32;
+        NumericType gridBuildCompute   = NumericType::FP32;
+        NumericType neighborCompute    = NumericType::FP32;
+        NumericType densityCompute     = NumericType::FP32;
+        NumericType lambdaCompute      = NumericType::FP32;
+        NumericType integrateCompute   = NumericType::FP32;
+        NumericType velocityCompute    = NumericType::FP32;
+        NumericType boundaryCompute    = NumericType::FP32;
+        NumericType xsphCompute        = NumericType::FP32;
+
+        uint32_t    fp16StageMask      = 0;
+
+        // 自适应（预留）
+        bool        adaptivePrecision = false;
+        float       densityErrorTolerance = 0.01f;
+        float       lambdaVarianceTolerance = 0.05f;
+        int         adaptCheckEveryN = 30;
+
+        NumericType _adaptive_pos_prev = NumericType::InvalidSentinel;
+        NumericType _adaptive_vel_prev = NumericType::InvalidSentinel;
+        NumericType _adaptive_pos_pred_prev = NumericType::InvalidSentinel;
+    };
+
     struct KernelCoeffs {
         float h;
         float inv_h;
@@ -22,27 +72,25 @@ namespace sim {
 
     struct PbfTuning {
         int   scorr_enable = 1;
-        float scorr_k = 0.003f;      // 原 0.003f -> 略增强排斥，抑制穿插/回弹
+        float scorr_k = 0.003f;
         float scorr_n = 4.0f;
         float scorr_dq_h = 0.3f;
         float wq_min = 1e-12f;
-        float scorr_min = -0.25f;    // 放宽负向上限，近接时更有力
+        float scorr_min = -0.25f;
 
         float grad_r_eps = 1e-6f;
         float lambda_denom_eps = 1e-4f;
-
-        float compliance = 0.0f;     // 关闭 XPBD 软度，先确保可静止
+        float compliance = 0.0f;
 
         int   enable_lambda_clamp = 1;
         float lambda_max_abs = 50.0f;
         int   enable_disp_clamp = 1;
-        float disp_clamp_max_h = 0.05f; // 放宽单步位移夹取，提高收敛
+        float disp_clamp_max_h = 0.05f;
 
         int   enable_relax = 1;
-        float relax_omega = 0.75f;   // 略加强阻尼，防迭代过冲
+        float relax_omega = 0.75f;
 
-        // 建议先关门控，或降低门槛以保证靠近边界仍有阻尼
-        int   xsph_gate_enable = 0;  // 先禁用门控验证
+        int   xsph_gate_enable = 0;
         int   xsph_n_min = 0;
         int   xsph_n_max = 8;
     };
@@ -63,11 +111,13 @@ namespace sim {
 
         float    particleMass;
         PbfTuning pbf{};
-
-        float    xsph_c = 0.05f;     // 默认开启一定阻尼
+        float    xsph_c = 0.05f;
 
         KernelCoeffs kernel{};
         GridBounds  grid{};
+
+        // ========== 新增：映射后的精度配置（供设备侧使用）==========
+        SimPrecision precision{};
     };
 
     struct DeviceParams {
@@ -82,6 +132,7 @@ namespace sim {
         float        particleMass;
         PbfTuning    pbf;
         float        xsph_c;
+        // 可选：以后扩展加入 precision 快速判定
     };
 
     inline KernelCoeffs MakeKernelCoeffs(float h) {
