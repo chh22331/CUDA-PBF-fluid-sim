@@ -92,7 +92,7 @@ namespace console {
             float3 up  = make_float3(0.0f, 1.0f, 0.0f);
             float  fovYDeg = 45.0f;
             float  nearZ = 0.01f;
-            float  farZ  = 1000.0f;
+            float  farZ  = 50000.0f;
         } renderer;
 
         struct Viewer {
@@ -150,7 +150,7 @@ namespace console {
         struct Simulation {
             // 粒子与发射器
             uint32_t numParticles = 400000;
-            uint32_t maxParticles = 1000000;
+            uint32_t maxParticles = 2000000;
             uint32_t emitPerStep = 50;
             bool     faucetFillEnable = true;
             bool     recycleToNozzle = false;
@@ -175,7 +175,7 @@ namespace console {
             uint32_t emit_jitter_seed = 0xABCDEFu;
 
             // 基本动力学
-            float    dt = 0.01f;
+            float    dt = 0.0167f;
             float    cfl = 0.45f;
             float3   gravity = make_float3(0.0f, -9.8f, 0.0f);
             float    restDensity = 1.0f;
@@ -225,22 +225,22 @@ namespace console {
             // 是否根据 numParticles 自动分解为 cube_group_count * (cube_edge_particles^3)
             bool     cube_auto_partition = false;
             // 手动指定立方体数量（粒子团数量），仅在 cube_auto_partition=false 时使用
-            uint32_t cube_group_count = 64;
+            uint32_t cube_group_count = 128;
             // 单个立方体边长（按粒子数，边上粒子个数）；用于 cube_edge_particles^3
-            uint32_t cube_edge_particles = 21;
+            uint32_t cube_edge_particles = 20;
             // 最大允许粒子团数量（用于颜色数组与安全限制）
             static constexpr uint32_t cube_group_count_max = 512;
 
             // 立方体层数（垂直分层放置）。若 cube_group_count=32 且 cube_layers=2 -> 每层16个
-            uint32_t cube_layers = 4;
+            uint32_t cube_layers = 8;
 
             // 立方体中心之间的水平间距（世界单位，沿 X/Z）
-            float    cube_group_spacing_world = 60.0f;
+            float    cube_group_spacing_world = 80.0f;
             // 层之间的垂直间距（世界单位，立方体 Y 方向层距）
-            float    cube_layer_spacing_world = 100.0f;
+            float    cube_layer_spacing_world = 200.0f;
 
             // 立方体底层离地高度（世界坐标 Y）
-            float    cube_base_height = 50.0f;
+            float    cube_base_height = 100.0f;
 
             // 单个立方体内格点的粒子间距缩放（相对 smoothingRadius 或 h），用于调节初始紧实程度
             float    cube_lattice_spacing_factor_h = 1.05f;
@@ -281,6 +281,18 @@ namespace console {
             // 预留：分组粒子数（每团 edge^3），自动分解时写入，便于外部初始化阶段引用
             uint32_t cube_particles_per_group = 0;
             PrecisionConfig precision{};
+
+            // ======= 新增：针对高 dt 的稳定性增强开关 =======
+            // 半隐式积分：true 使用 v(t+dt)=v(t)+g*dt 然后 x(t+dt)=x(t)+v(t+dt)*dt
+            bool     integrate_semi_implicit = true;
+            // λ Warm-Start：保留上一帧 λ 并按衰减系数衰减；新发射粒子置 0
+            bool     lambda_warm_start_enable = true;
+            float    lambda_warm_start_decay = 0.5f; // 0~1，典型 0.3~0.7
+            // XPBD 合规：开启后使用 (C + α*λ_prev)/(Σgrad^2 + α)，α = compliance / dt^2
+            bool     xpbd_enable = true;
+            float    xpbd_compliance = 2e-5f; // 典型区间 1e-5 ~ 5e-5
+
+
         } sim;
 
         struct Performance {

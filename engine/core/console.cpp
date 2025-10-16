@@ -76,6 +76,14 @@ void BuildSimParams(const RuntimeConsole& c, sim::SimParams& out) {
     out.pbf = c.sim.pbf;
     out.xsph_c = c.sim.xsph_c;
 
+    // ====== 新增：覆盖 pbf 的动态稳定性开关 ======
+    out.pbf.xpbd_enable = c.sim.xpbd_enable ? 1 : 0;
+    out.pbf.compliance = (c.sim.xpbd_enable ? c.sim.xpbd_compliance : 0.0f);
+    out.pbf.lambda_warm_start_enable = c.sim.lambda_warm_start_enable ? 1 : 0;
+    out.pbf.lambda_warm_start_decay = c.sim.lambda_warm_start_decay;
+    out.pbf.semi_implicit_integration_enable = c.sim.integrate_semi_implicit ? 1 : 0;
+
+
     float h = (c.sim.smoothingRadius > 0.f) ? c.sim.smoothingRadius : 0.02f;
     if (c.sim.deriveHFromRadius) {
         const float r = (((1e-8f) > (c.sim.particleRadiusWorld)) ? (1e-8f) : (c.sim.particleRadiusWorld));

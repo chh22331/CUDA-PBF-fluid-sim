@@ -80,7 +80,10 @@ namespace sim {
 
         float grad_r_eps = 1e-6f;
         float lambda_denom_eps = 1e-4f;
-        float compliance = 0.0f;
+
+        // ====== XPBD 合规参数 ======
+        float compliance = 0.0f;        // α = compliance / dt^2; 当 xpbd_enable=0 或 compliance=0 -> 退化为 PBF
+        int   xpbd_enable = 0;          // 新增：是否启用 XPBD 修正
 
         int   enable_lambda_clamp = 1;
         float lambda_max_abs = 50.0f;
@@ -93,6 +96,13 @@ namespace sim {
         int   xsph_gate_enable = 0;
         int   xsph_n_min = 0;
         int   xsph_n_max = 8;
+
+        // ====== λ Warm-Start 控制 ======
+        int   lambda_warm_start_enable = 0;
+        float lambda_warm_start_decay = 0.5f;  // 0~1
+
+        // ====== 半隐式积分开关（供积分核使用） ======
+        int   semi_implicit_integration_enable = 0;
     };
 
     struct SimParams {
