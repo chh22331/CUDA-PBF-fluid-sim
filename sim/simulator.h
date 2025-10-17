@@ -44,6 +44,14 @@ namespace sim {
             float jitterAmp,
             uint32_t jitterSeed);
         bool adaptivePrecisionCheck(const SimStats& stats);
+        inline const DeviceBuffers& buffersUnsafe() const { return m_bufs; }
+        inline DeviceBuffers& buffersUnsafe() { return m_bufs; }
+        inline uint64_t frameIndexUnsafe() const { return m_frameIndex; }
+        bool updateGraphPointersAfterSwap(const void* oldPos,
+            const void* oldPosPred,
+            const void* oldVel,
+            const void* oldDelta,
+            bool swappedVel);
 
     private:
         bool buildGrid(const SimParams& p);

@@ -144,6 +144,15 @@ namespace console {
 
             // 新增：诊断/统计的大频率节流（帧）；0/负值表示禁用
             int  diag_every_n = 0;
+
+            // ====== 新增：D2D 内存拷贝埋点开关 ======
+            bool traceD2DMemcpy = true;          // 开：追踪 cudaMemcpy(kind=DeviceToDevice)
+            int  traceD2DMemcpyEveryN = 30;       // 每 N 帧打印汇总；<=0 禁用汇总
+            int  traceD2DMemcpyMaxPrint = 32;     // 单条事件最多打印次数
+            bool traceD2DMemcpySummary = true;    // 是否输出汇总统计行
+            bool traceD2DMemcpyPrintPtrs = true; // 事件行是否打印指针地址
+            bool eliminateFrameCopies = true;  // 开：用指针交换替代每帧 pos_pred->pos 与 delta->vel 的 D2D 拷贝
+
         } debug;
 
         // 仿真配置（集中所有物理与发射/域参数）
@@ -305,7 +314,7 @@ namespace console {
             // 新增：启用哈希/压缩网格（按 cell-key 排序 + 压缩段表）
             bool  use_hashed_grid = true;
             // 新增：压缩段表重建频率（帧）：>=1
-            int   sort_compact_every_n = 8;
+            int   sort_compact_every_n = 4;
             // 新增：邻域查段方式（true=对压缩 key 做二分；false=使用辅表哈希，后续扩展）
             bool  compact_binary_search = true;
             // 新增：打印网格统计（非空 cell 数、均值/最大 occupancy 等）
