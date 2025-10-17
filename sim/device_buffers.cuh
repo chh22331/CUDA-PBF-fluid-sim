@@ -59,10 +59,8 @@ namespace sim {
         // 分配接口
         void allocate(uint32_t cap) { 
             allocateInternal(cap, false, false, false); 
-            if (console::Instance().debug.usePrevPosHalfSnapshot) {
-                if (d_prev_pos_h4) { cudaFree(d_prev_pos_h4); d_prev_pos_h4 = nullptr; }
-                cudaMalloc((void**)&d_prev_pos_h4, sizeof(sim::Half4) * capacity);
-            }
+            if (d_prev_pos_h4) { cudaFree(d_prev_pos_h4); d_prev_pos_h4 = nullptr; }
+            cudaMalloc((void**)&d_prev_pos_h4, sizeof(sim::Half4) * capacity);
         }
         void allocateWithPrecision(const sim::SimPrecision& prec, uint32_t cap) {
             bool posH = (prec.positionStore == sim::NumericType::FP16_Packed ||
@@ -72,10 +70,8 @@ namespace sim {
             bool predH = (prec.predictedPosStore == sim::NumericType::FP16_Packed ||
                 prec.predictedPosStore == sim::NumericType::FP16);
             allocateInternal(cap, posH, velH, predH);
-            if (console::Instance().debug.usePrevPosHalfSnapshot) {
-                if (d_prev_pos_h4) { cudaFree(d_prev_pos_h4); d_prev_pos_h4 = nullptr; }
-                cudaMalloc((void**)&d_prev_pos_h4, sizeof(sim::Half4) * capacity);
-            }
+            if (d_prev_pos_h4) { cudaFree(d_prev_pos_h4); d_prev_pos_h4 = nullptr; }
+            cudaMalloc((void**)&d_prev_pos_h4, sizeof(sim::Half4) * capacity);
         }
         void allocatePrevPosSnapshot(uint32_t cap) {
             if (cap == 0) return;

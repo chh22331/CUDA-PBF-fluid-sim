@@ -28,13 +28,13 @@
 
 // —— 内核包装的全局声明 —— 
 extern "C" void LaunchIntegratePred(float4* pos, const float4* vel, float4* pos_pred, float3 gravity, float dt, uint32_t N, cudaStream_t s);
-extern "C" void LaunchIntegratePredMP(const float4 * pos, const float4 * vel, float4 * pos_pred,
-    const sim::Half4 * pos_h4, const sim::Half4 * vel_h4,
+extern "C" void LaunchIntegratePredMP(const float4* pos, const float4* vel, float4* pos_pred,
+    const sim::Half4* pos_h4, const sim::Half4* vel_h4,
     float3 gravity, float dt, uint32_t N, cudaStream_t s);
 
 extern "C" void LaunchHashKeys(uint32_t* keys, uint32_t* indices, const float4* pos, sim::GridBounds grid, uint32_t N, cudaStream_t s);
-extern "C" void LaunchHashKeysMP(uint32_t * keys, uint32_t * indices, const float4 * pos_pred,
-    const sim::Half4 * pos_pred_h4, sim::GridBounds grid, uint32_t N, cudaStream_t s);
+extern "C" void LaunchHashKeysMP(uint32_t* keys, uint32_t* indices, const float4* pos_pred,
+    const sim::Half4* pos_pred_h4, sim::GridBounds grid, uint32_t N, cudaStream_t s);
 extern "C" void LaunchCellRanges(uint32_t* cellStart, uint32_t* cellEnd, const uint32_t* keysSorted, uint32_t N, uint32_t numCells, cudaStream_t s);
 extern "C" void LaunchCellRangesCompact(
     uint32_t* d_uniqueKeys,
@@ -67,10 +67,10 @@ extern "C" void LaunchLambdaCompact(
     cudaStream_t s);
 extern "C" void LaunchLambdaCompactMP(
     float* lambda,
-    const float4 * pos_pred_fp32, const sim::Half4 * pos_pred_h4,
-    const uint32_t * indicesSorted, const uint32_t * keysSorted,
-    const uint32_t * uniqueKeys, const uint32_t * offsets,
-    const uint32_t * compactCount,
+    const float4* pos_pred_fp32, const sim::Half4* pos_pred_h4,
+    const uint32_t* indicesSorted, const uint32_t* keysSorted,
+    const uint32_t* uniqueKeys, const uint32_t* offsets,
+    const uint32_t* compactCount,
     sim::DeviceParams dp, uint32_t N, cudaStream_t s);
 
 extern "C" void LaunchDeltaApply(
@@ -97,13 +97,13 @@ extern "C" void LaunchDeltaApplyCompact(
     uint32_t N,
     cudaStream_t s);
 extern "C" void LaunchDeltaApplyCompactMP(
-    float4 * pos_pred,
-    float4 * delta,
+    float4* pos_pred,
+    float4* delta,
     const float* lambda,
-    const float4 * pos_pred_fp32, const sim::Half4 * pos_pred_h4,
-    const uint32_t * indicesSorted, const uint32_t * keysSorted,
-    const uint32_t * uniqueKeys, const uint32_t * offsets,
-    const uint32_t * compactCount,
+    const float4* pos_pred_fp32, const sim::Half4* pos_pred_h4,
+    const uint32_t* indicesSorted, const uint32_t* keysSorted,
+    const uint32_t* uniqueKeys, const uint32_t* offsets,
+    const uint32_t* compactCount,
     sim::DeviceParams dp, uint32_t N, cudaStream_t s);
 extern "C" void LaunchXSPH(
     float4* vel_out,
@@ -129,57 +129,57 @@ extern "C" void LaunchXSPHCompact(
     uint32_t N,
     cudaStream_t s);
 extern "C" void LaunchXSPHCompactMP(
-    float4 * vel_out,
-    const float4 * vel_in_fp32, const sim::Half4* vel_in_h4,
-    const float4 * pos_pred_fp32, const sim::Half4* pos_pred_h4,
-    const uint32_t * indicesSorted, const uint32_t* keysSorted,
-    const uint32_t * uniqueKeys, const uint32_t* offsets,
-    const uint32_t * compactCount,
+    float4* vel_out,
+    const float4* vel_in_fp32, const sim::Half4* vel_in_h4,
+    const float4* pos_pred_fp32, const sim::Half4* pos_pred_h4,
+    const uint32_t* indicesSorted, const uint32_t* keysSorted,
+    const uint32_t* uniqueKeys, const uint32_t* offsets,
+    const uint32_t* compactCount,
     sim::DeviceParams dp, uint32_t N, cudaStream_t s);
 extern "C" void LaunchLambdaMP(
     float* lambda,
-    const float4 * pos_pred_fp32,
-    const sim::Half4 * pos_pred_h4,
-    const uint32_t * indicesSorted,
-    const uint32_t * keysSorted,
-    const uint32_t * cellStart,
-    const uint32_t * cellEnd,
+    const float4* pos_pred_fp32,
+    const sim::Half4* pos_pred_h4,
+    const uint32_t* indicesSorted,
+    const uint32_t* keysSorted,
+    const uint32_t* cellStart,
+    const uint32_t* cellEnd,
     sim::DeviceParams dp,
     uint32_t N,
     cudaStream_t s);
 extern "C" void LaunchDeltaApplyMP(
-    float4 * pos_pred,
-    float4 * delta,
+    float4* pos_pred,
+    float4* delta,
     const float* lambda,
-    const float4 * pos_pred_fp32,
-    const sim::Half4 * pos_pred_h4,
-    const uint32_t * indicesSorted,
-    const uint32_t * keysSorted,
-    const uint32_t * cellStart,
-    const uint32_t * cellEnd,
+    const float4* pos_pred_fp32,
+    const sim::Half4* pos_pred_h4,
+    const uint32_t* indicesSorted,
+    const uint32_t* keysSorted,
+    const uint32_t* cellStart,
+    const uint32_t* cellEnd,
     sim::DeviceParams dp,
     uint32_t N,
     cudaStream_t s);
 extern "C" void LaunchXSPHMP(
-    float4 * vel_out,
-    const float4 * vel_in_fp32,
-    const sim::Half4 * vel_in_h4,
-    const float4 * pos_pred_fp32,
-    const sim::Half4 * pos_pred_h4,
-    const uint32_t * indicesSorted,
-    const uint32_t * keysSorted,
-    const uint32_t * cellStart,
-    const uint32_t * cellEnd,
+    float4* vel_out,
+    const float4* vel_in_fp32,
+    const sim::Half4* vel_in_h4,
+    const float4* pos_pred_fp32,
+    const sim::Half4* pos_pred_h4,
+    const uint32_t* indicesSorted,
+    const uint32_t* keysSorted,
+    const uint32_t* cellStart,
+    const uint32_t* cellEnd,
     sim::DeviceParams dp,
     uint32_t N,
     cudaStream_t s);
 //新增：并行压缩段表所需 scratch 预分配函数（在 GraphCapture 前调用）
-extern "C" bool EnsureCellCompactScratch(uint32_t N, 
+extern "C" bool EnsureCellCompactScratch(uint32_t N,
     uint32_t threadsPerBlock /*=256*/);
 
 extern "C" void LaunchVelocity(float4* vel, const float4* pos, const float4* pos_pred, float inv_dt, uint32_t N, cudaStream_t s);
-extern "C" void LaunchVelocityMP(float4 * vel, const float4 * pos, const float4 * pos_pred,
-    const sim::Half4 * pos_h4, const sim::Half4 * pos_pred_h4,
+extern "C" void LaunchVelocityMP(float4* vel, const float4* pos, const float4* pos_pred,
+    const sim::Half4* pos_h4, const sim::Half4* pos_pred_h4,
     float inv_dt, uint32_t N, cudaStream_t s);
 extern "C" void LaunchBoundary(float4* pos_pred, float4* vel, sim::GridBounds grid, float restitution, uint32_t N, cudaStream_t s);
 extern "C" void LaunchSortPairsQuery(size_t* tempBytes, const uint32_t* d_keys_in, uint32_t* d_keys_out, const uint32_t* d_vals_in, uint32_t* d_vals_out, uint32_t N, cudaStream_t s);
@@ -214,124 +214,9 @@ extern "C" bool LaunchComputeStatsBruteforce(const float4* pos_pred,
     double* outAvgRhoRel,
     double* outAvgRho,
     cudaStream_t s);
-extern "C" void LaunchPackFloat4ToHalf4(const float4* src, sim::Half4* dst, uint32_t N, cudaStream_t s);
-extern "C" void LaunchVelocityFromHalfPrev(float4 * vel_out,
-    const sim::Half4 * prev_pos_h4,
-    const float4 * pos_pred_fp32,
-    float inv_dt,
-    uint32_t N,
-    cudaStream_t s);
-extern "C" void LaunchRestorePosFromHalfPrev(const sim::Half4* prev, float4* pos, uint32_t N, cudaStream_t s);
-
 
 // Poisson-disk 采样辅助
 namespace {
-    struct D2DMemcpyTraceStats {
-        uint64_t totalCount = 0;
-        uint64_t totalBytes = 0;
-        uint64_t posPredToPosCount = 0;
-        uint64_t velDeltaToVelCount = 0;
-        uint64_t otherCount = 0;
-        uint64_t firstFrame = UINT64_MAX;
-        uint64_t lastFrame = 0;
-        int      printedEvents = 0;
-    };
-    static D2DMemcpyTraceStats g_d2dTrace;
-
-    // 分类辅助
-    static const char* classifyPtr(const void* p,
-        const sim::DeviceBuffers& bufs) {
-        if (p == bufs.d_pos)       return "pos";
-        if (p == bufs.d_pos_pred)  return "pos_pred";
-        if (p == bufs.d_vel)       return "vel";
-        if (p == bufs.d_delta)     return "delta";
-        if (p == bufs.d_lambda)    return "lambda";
-        return "?";
-    }
-
-    static void traceD2DMemcpyEvent(const sim::DeviceBuffers& bufs,
-        const void* dst, const void* src, size_t bytes,
-        uint64_t frameIndex, const char* tag) {
-
-        auto& dbg = console::Instance().debug;
-        if (!dbg.traceD2DMemcpy) return;
-
-        g_d2dTrace.totalCount++;
-        g_d2dTrace.totalBytes += bytes;
-        if (g_d2dTrace.firstFrame == UINT64_MAX) g_d2dTrace.firstFrame = frameIndex;
-        g_d2dTrace.lastFrame = frameIndex;
-
-        const bool isPosPredToPos = (dst == bufs.d_pos && src == bufs.d_pos_pred);
-        const bool isVelDeltaToVel = (dst == bufs.d_vel && src == bufs.d_delta);
-
-        if (isPosPredToPos) g_d2dTrace.posPredToPosCount++;
-        else if (isVelDeltaToVel) g_d2dTrace.velDeltaToVelCount++;
-        else g_d2dTrace.otherCount++;
-
-        // 单条事件打印限制
-        if (g_d2dTrace.printedEvents < dbg.traceD2DMemcpyMaxPrint) {
-            const double mb = bytes / (1024.0 * 1024.0);
-            std::fprintf(stderr,
-                "[D2DTrace] Frame=%llu tag=%s size=%.3f MB kind=DeviceToDevice cat=%s%s%s\n",
-                (unsigned long long)frameIndex,
-                tag ? tag : "-",
-                mb,
-                (isPosPredToPos ? "PosPred->Pos"
-                    : (isVelDeltaToVel ? "Delta->Vel" : "Other")),
-                dbg.traceD2DMemcpyPrintPtrs ? " dst=" : "",
-                dbg.traceD2DMemcpyPrintPtrs ? classifyPtr(dst, bufs) : "",
-                dbg.traceD2DMemcpyPrintPtrs ? (std::string(" src=") + classifyPtr(src, bufs)).c_str() : ""
-            );
-            g_d2dTrace.printedEvents++;
-        }
-    }
-
-    static void traceD2DMemcpySummary(uint64_t frameIndex) {
-        auto& dbg = console::Instance().debug;
-        if (!dbg.traceD2DMemcpy || !dbg.traceD2DMemcpySummary) return;
-        if (dbg.traceD2DMemcpyEveryN <= 0) return;
-        if (frameIndex % (uint64_t)dbg.traceD2DMemcpyEveryN != 0ull) return;
-        if (g_d2dTrace.totalCount == 0) {
-            std::fprintf(stderr, "[D2DTrace][Summary] Frame=%llu | No DeviceToDevice copies yet.\n",
-                (unsigned long long)frameIndex);
-            return;
-        }
-        const double totalMB = g_d2dTrace.totalBytes / (1024.0 * 1024.0);
-        const double avgMB = totalMB / (double)g_d2dTrace.totalCount;
-        std::fprintf(stderr,
-            "[D2DTrace][Summary] Frame=%llu win=[%llu,%llu] copies=%llu (%.2f MB total, avg=%.3f MB) | PosPred->Pos=%llu | Delta->Vel=%llu | Other=%llu\n",
-            (unsigned long long)frameIndex,
-            (unsigned long long)g_d2dTrace.firstFrame,
-            (unsigned long long)g_d2dTrace.lastFrame,
-            (unsigned long long)g_d2dTrace.totalCount,
-            totalMB, avgMB,
-            (unsigned long long)g_d2dTrace.posPredToPosCount,
-            (unsigned long long)g_d2dTrace.velDeltaToVelCount,
-            (unsigned long long)g_d2dTrace.otherCount);
-    }
-
-    // 包装同步与异步 D2D 拷贝（仅在本文件使用）
-    static inline cudaError_t TraceCudaMemcpyD2D(sim::Simulator* sim,
-        void* dst, const void* src, size_t bytes,
-        cudaMemcpyKind kind, const char* tag) {
-        cudaError_t err = cudaSuccess;
-        if (kind == cudaMemcpyDeviceToDevice) {
-            traceD2DMemcpyEvent(sim->buffersUnsafe(), dst, src, bytes, sim->frameIndexUnsafe(), tag);
-        }
-        err = cudaMemcpy(dst, src, bytes, kind);
-        return err;
-    }
-
-    static inline cudaError_t TraceCudaMemcpyAsyncD2D(sim::Simulator* sim,
-        void* dst, const void* src, size_t bytes,
-        cudaMemcpyKind kind, cudaStream_t stream, const char* tag) {
-        cudaError_t err = cudaSuccess;
-        if (kind == cudaMemcpyDeviceToDevice) {
-            traceD2DMemcpyEvent(sim->buffersUnsafe(), dst, src, bytes, sim->frameIndexUnsafe(), tag);
-        }
-        err = cudaMemcpyAsync(dst, src, bytes, kind, stream);
-        return err;
-    }
     static inline float2 f2_add(float2 a, float2 b) { return make_float2(a.x + b.x, a.y + b.y); }
     static inline float  f2_len2(float2 a) { return a.x * a.x + a.y * a.y; }
     static inline float2 sample_annulus(float rMin, std::mt19937& rng) {
@@ -435,7 +320,7 @@ namespace sim {
             float mx = fmaxf(fabsf(x), fabsf(y));
             if (mx < 1e-9f) return true;
             return fabsf(x - y) <= rel * mx;
-        };
+            };
         return nearRel(a.h, b.h) && nearRel(a.inv_h, b.inv_h) && nearRel(a.h2, b.h2)
             && nearRel(a.poly6, b.poly6) && nearRel(a.spiky, b.spiky) && nearRel(a.visc, b.visc);
     }
@@ -490,33 +375,8 @@ namespace sim {
             CUDA_CHECK(cudaMemcpy(m_bufs.d_indices, h_idx.data(), sizeof(uint32_t) * capacity, cudaMemcpyHostToDevice));
         }
         if (p.numParticles > 0) {
-            // 消除初始化阶段的 D2D memcpy：使用一次“零步积分”将 pos 复制到 pos_pred。
-            // dt=0 且 gravity=0 时 IntegratePred 仅写 pos_pred=pos（速度项被乘以 0）。
-            // 这样不触发 TraceCudaMemcpyD2D 统计，同时保持后续逻辑一致。
-            float3 gZero = make_float3(0.f, 0.f, 0.f);
-            float  dtZero = 0.f;
-            bool useMPInit = (needHalf &&
-                ((p.precision.positionStore == sim::NumericType::FP16_Packed) ||
-                    (p.precision.velocityStore == sim::NumericType::FP16_Packed) ||
-                    (p.precision.predictedPosStore == sim::NumericType::FP16_Packed)));
-            if (useMPInit) {
-                ::LaunchIntegratePredMP(
-                    m_bufs.d_pos,
-                    m_bufs.d_vel,
-                    m_bufs.d_pos_pred,
-                    m_bufs.d_pos_h4,
-                    m_bufs.d_vel_h4,
-                    gZero, dtZero, p.numParticles, m_stream);
-            }
-            else {
-                ::LaunchIntegratePred(
-                    m_bufs.d_pos,
-                    m_bufs.d_vel,
-                    m_bufs.d_pos_pred,
-                    gZero, dtZero, p.numParticles, m_stream);
-            }
-            // 无弹性反射（restitution=0）保持与原始初始化一致
-            ::LaunchBoundary(m_bufs.d_pos_pred, m_bufs.d_vel, p.grid, 0.0f, p.numParticles, m_stream);
+            CUDA_CHECK(cudaMemcpy(m_bufs.d_pos_pred, m_bufs.d_pos,
+                sizeof(float4) * p.numParticles, cudaMemcpyDeviceToDevice));
             if (needHalf) {
                 m_bufs.packAllToHalf(p.numParticles, m_stream);
             }
@@ -557,14 +417,6 @@ namespace sim {
             m_precisionLogged = true;
         }
 
-        // 方案2：分配上一帧半精快照缓冲（按开关）
-        if (console::Instance().debug.usePrevPosHalfSnapshot) {
-            m_bufs.allocatePrevPosSnapshot(capacity);
-        }
-        if (p.numParticles > 0 && console::Instance().debug.usePrevPosHalfSnapshot) {
-            // 初次快照：确保第1帧恢复使用
-            LaunchPackFloat4ToHalf4(m_bufs.d_pos_pred, m_bufs.d_prev_pos_h4, p.numParticles, m_stream);
-        }
         m_canPingPongPos = true;
         m_graphDirty = true;
         m_captured = {};
@@ -775,6 +627,8 @@ namespace sim {
                 p.numParticles, m_stream);
             ensureSortTemp(tempBytes);
         }
+
+        // 新增：若使用 hashed/紧凑网格，提前确保并行段构建的 scratch（避免 GraphCapture 内 cudaMalloc）
         if (m_useHashedGrid) {
             if (!EnsureCellCompactScratch(p.numParticles, 256)) {
                 if (console::Instance().debug.printErrors) {
@@ -783,37 +637,29 @@ namespace sim {
                 return false;
             }
         }
-        // 清理旧图
+
         if (m_graphExecFull) { cudaGraphExecDestroy(m_graphExecFull);  m_graphExecFull = nullptr; }
         if (m_graphFull) { cudaGraphDestroy(m_graphFull);          m_graphFull = nullptr; }
         if (m_graphExecCheap) { cudaGraphExecDestroy(m_graphExecCheap); m_graphExecCheap = nullptr; }
         if (m_graphCheap) { cudaGraphDestroy(m_graphCheap);         m_graphCheap = nullptr; }
-
-        // Full 图：统一顺序 Snapshot -> Restore -> Integrate ...
         CUDA_CHECK(cudaStreamBeginCapture(m_stream, cudaStreamCaptureModeGlobal));
-        kSnapshotPrevPos(m_stream, p);
-        kRestorePosFromSnapshot(m_stream, p);
         kIntegratePred(m_stream, p);
         kHashKeys(m_stream, p);
         kSort(m_stream, p);
-        if (m_useHashedGrid) kCellRangesCompact(m_stream, p); else kCellRanges(m_stream, p);
+        if (m_useHashedGrid) kCellRangesCompact(m_stream, p);
+        else                 kCellRanges(m_stream, p);
         for (int i = 0; i < p.solverIters; ++i) kSolveIter(m_stream, p);
         kVelocityAndPost(m_stream, p);
         CUDA_CHECK(cudaStreamEndCapture(m_stream, &m_graphFull));
         CUDA_CHECK(cudaGraphInstantiate(&m_graphExecFull, m_graphFull, nullptr, nullptr, 0));
         CUDA_CHECK(cudaGraphUpload(m_graphExecFull, m_stream));
-
-        // Cheap 图：同样 Snapshot -> Restore -> Integrate
         CUDA_CHECK(cudaStreamBeginCapture(m_stream, cudaStreamCaptureModeGlobal));
-        kSnapshotPrevPos(m_stream, p);
-        kRestorePosFromSnapshot(m_stream, p);
         kIntegratePred(m_stream, p);
         for (int i = 0; i < p.solverIters; ++i) kSolveIter(m_stream, p);
         kVelocityAndPost(m_stream, p);
         CUDA_CHECK(cudaStreamEndCapture(m_stream, &m_graphCheap));
         CUDA_CHECK(cudaGraphInstantiate(&m_graphExecCheap, m_graphCheap, nullptr, nullptr, 0));
         CUDA_CHECK(cudaGraphUpload(m_graphExecCheap, m_stream));
-
         cacheGraphNodes();
         int3 dim;
         dim.x = int(ceilf((p.grid.maxs.x - p.grid.mins.x) / p.grid.cellSize));
@@ -845,8 +691,7 @@ namespace sim {
         if (!m_graphExecFull || !m_graphExecCheap) return false;
         const auto& c = console::Instance();
         const int minInterval = c.perf.graph_param_update_min_interval;
-        if (minInterval > 0 && m_lastParamUpdateFrame >= 0 &&
-            (m_frameIndex - m_lastParamUpdateFrame) < minInterval) {
+        if (minInterval > 0 && m_lastParamUpdateFrame >= 0 && (m_frameIndex - m_lastParamUpdateFrame) < minInterval) {
             m_paramDirty = false;
             return true;
         }
@@ -864,11 +709,7 @@ namespace sim {
 
         cudaGraph_t newFull = nullptr;
         cudaGraph_t newCheap = nullptr;
-
-        // Full 更新：Snapshot->Restore->Integrate...
         CUDA_CHECK(cudaStreamBeginCapture(m_stream, cudaStreamCaptureModeGlobal));
-        kSnapshotPrevPos(m_stream, p);
-        kRestorePosFromSnapshot(m_stream, p);
         kIntegratePred(m_stream, p);
         kHashKeys(m_stream, p);
         kSort(m_stream, p);
@@ -877,10 +718,7 @@ namespace sim {
         kVelocityAndPost(m_stream, p);
         CUDA_CHECK(cudaStreamEndCapture(m_stream, &newFull));
 
-        // Cheap 更新：Snapshot->Restore->Integrate...
         CUDA_CHECK(cudaStreamBeginCapture(m_stream, cudaStreamCaptureModeGlobal));
-        kSnapshotPrevPos(m_stream, p);
-        kRestorePosFromSnapshot(m_stream, p);
         kIntegratePred(m_stream, p);
         for (int i = 0; i < p.solverIters; ++i) kSolveIter(m_stream, p);
         kVelocityAndPost(m_stream, p);
@@ -900,10 +738,12 @@ namespace sim {
 
         if (needRebuild) {
             m_graphDirty = true;
-            return captureGraphIfNeeded(p);
+            return captureGraphIfNeeded(p); // captureGraphIfNeeded 内部已调用 cacheGraphNodes()
         }
 
+        // ===== 新增：成功更新后刷新节点缓存，避免使用失效 node 句柄 =====
         cacheGraphNodes();
+
         m_captured.dt = p.dt;
         m_captured.gravity = p.gravity;
         m_captured.restDensity = p.restDensity;
@@ -1047,10 +887,10 @@ namespace sim {
                     }
 
                     CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_pos + begin, h_pos,
-                        sizeof(float4)* emit, cudaMemcpyHostToDevice, m_stream));
+                        sizeof(float4) * emit, cudaMemcpyHostToDevice, m_stream));
                     // 保持速度写
                     CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_vel + begin, h_vel,
-                        sizeof(float4)* emit, cudaMemcpyHostToDevice, m_stream));
+                        sizeof(float4) * emit, cudaMemcpyHostToDevice, m_stream));
 
                     m_params.numParticles = end;
                 }
@@ -1211,8 +1051,6 @@ namespace sim {
             }
         }
         else {
-            kSnapshotPrevPos(m_stream, m_params);
-            kRestorePosFromSnapshot(m_stream, m_params);
             kIntegratePred(m_stream, m_params);
             if (needFullThisFrame) {
                 kHashKeys(m_stream, m_params);
@@ -1248,7 +1086,8 @@ namespace sim {
                 const double avgOcc = double(m_params.numParticles) / double(M);
                 std::fprintf(stderr, "[GridSparse] Frame=%d | N=%u | M=%u | avgOcc=%.2f\n",
                     m_frameIndex, m_params.numParticles, M, avgOcc);
-            } else {
+            }
+            else {
                 std::fprintf(stderr, "[GridSparse] Frame=%d | N=%u | M=0\n", m_frameIndex, m_params.numParticles);
             }
         }
@@ -1315,7 +1154,7 @@ namespace sim {
                     const double mp = (double)m_params.particleMass;
                     const double invM = (M > 0) ? (1.0 / (double)M) : 0.0;
                     KE = 0.5 * mp * sumv2 * invM;
-                    if (s_prevKE > 0.0) KE_decay = KE /(((1e-18) > (s_prevKE)) ? (1e-18) : (s_prevKE));
+                    if (s_prevKE > 0.0) KE_decay = KE / (((1e-18) > (s_prevKE)) ? (1e-18) : (s_prevKE));
                     s_prevKE = KE;
                 }
 
@@ -1358,26 +1197,16 @@ namespace sim {
             }
         }
         ++m_frameIndex;
-        traceD2DMemcpySummary(m_frameIndex);
         // ========== 自适应精度检查（不阻塞核心路径） ========== //
         if (console::Instance().sim.precision.adaptivePrecision) {
             // 构造一个轻量 stats（使用已缓存 m_params 与上一帧速度均值等）
             SimStats s{};
             s.N = m_params.numParticles;
-            s.avgRhoRel = (m_params.restDensity > 0.f) ? 1.0:// 占位；真实误差由 computeStats 调用时可覆盖。
-            // 若需要更准确的误差，请在调用 computeStats 后再传入（可改为用户层驱动）。
-            adaptivePrecisionCheck(s);
+            s.avgRhoRel = (m_params.restDensity > 0.f) ? 1.0 :// 占位；真实误差由 computeStats 调用时可覆盖。
+                // 若需要更准确的误差，请在调用 computeStats 后再传入（可改为用户层驱动）。
+                adaptivePrecisionCheck(s);
         }
         return true;
-    }
-
-    // 新增：帧首快照（必须在 Integrate 前执行）
-    void Simulator::kSnapshotPrevPos(cudaStream_t s, const SimParams & p) {
-        const auto& dbg = console::Instance().debug;
-        if (!dbg.usePrevPosHalfSnapshot) return;
-        if (!m_bufs.d_prev_pos_h4 || p.numParticles == 0) return;
-        // 将上一帧最终 pos_pred 打包到半精快照
-        LaunchPackFloat4ToHalf4(m_bufs.d_pos_pred, m_bufs.d_prev_pos_h4, p.numParticles, s);
     }
 
     void Simulator::kIntegratePred(cudaStream_t s, const SimParams& p) {
@@ -1388,14 +1217,10 @@ namespace sim {
                 m_bufs.d_pos_h4, m_bufs.d_vel_h4,
                 p.gravity, p.dt, p.numParticles, s);
         }
-        else {
+            else {
             ::LaunchIntegratePred(m_bufs.d_pos, m_bufs.d_vel, m_bufs.d_pos_pred, p.gravity, p.dt, p.numParticles, s);
         }
         ::LaunchBoundary(m_bufs.d_pos_pred, m_bufs.d_vel, p.grid, 0.0f, p.numParticles, s);
-        if (console::Instance().debug.usePrevPosHalfSnapshot &&
-            m_bufs.d_pos_pred && m_bufs.d_pos_pred_h4 && p.numParticles > 0) {
-            LaunchPackFloat4ToHalf4(m_bufs.d_pos_pred, m_bufs.d_pos_pred_h4, p.numParticles, s);
-        }
     }
 
     void Simulator::kHashKeys(cudaStream_t s, const SimParams& p) {
@@ -1470,8 +1295,9 @@ namespace sim {
                     m_bufs.d_cellUniqueKeys, m_bufs.d_cellOffsets, m_bufs.d_compactCount,
                     dp, p.numParticles, s);
             }
-        } else {
-            bool useMP = UseHalfForPosition(p, Stage::LambdaSolve, m_bufs);            
+        }
+        else {
+            bool useMP = UseHalfForPosition(p, Stage::LambdaSolve, m_bufs);
             if (useMP) {
                 ::LaunchLambdaMP(
                     m_bufs.d_lambda,
@@ -1502,37 +1328,24 @@ namespace sim {
         ::LaunchBoundary(m_bufs.d_pos_pred, m_bufs.d_vel, p.grid, 0.0f, p.numParticles, s);
     }
 
-    void Simulator::kVelocityAndPost(cudaStream_t s, const SimParams& p) {
+    void sim::Simulator::kVelocityAndPost(cudaStream_t s, const SimParams& p) {
         prof::Range rPost("Phase.VelocityPost", prof::Color(0xC0, 0x40, 0xA0));
-        const bool useSnapshot = console::Instance().debug.usePrevPosHalfSnapshot &&
-            +m_bufs.hasPrevSnapshot() && p.numParticles > 0;
-        if (useSnapshot) {
-            // 从半精上一帧位置快照计算速度
-            LaunchVelocityFromHalfPrev(m_bufs.d_vel,
-                m_bufs.d_prev_pos_h4,
-                m_bufs.d_pos_pred,
-                1.0f / p.dt,
-                p.numParticles,
-                s);
+        bool useMP = UseHalfForPosition(p, Stage::VelocityUpdate, m_bufs);
+        if (useMP) {
+            ::LaunchVelocityMP(m_bufs.d_vel, m_bufs.d_pos, m_bufs.d_pos_pred,
+                m_bufs.d_pos_h4, m_bufs.d_pos_pred_h4,
+                1.0f / p.dt, p.numParticles, s);
         }
         else {
-            bool useMP = UseHalfForPosition(p, Stage::VelocityUpdate, m_bufs);
-            if (useMP) {
-                ::LaunchVelocityMP(m_bufs.d_vel, m_bufs.d_pos, m_bufs.d_pos_pred,
-                    m_bufs.d_pos_h4, m_bufs.d_pos_pred_h4,
-                    1.0f / p.dt, p.numParticles, s);
-            }
-            else {
-                ::LaunchVelocity(m_bufs.d_vel, m_bufs.d_pos, m_bufs.d_pos_pred, 1.0f / p.dt, p.numParticles, s);
-            }
+            ::LaunchVelocity(m_bufs.d_vel, m_bufs.d_pos, m_bufs.d_pos_pred, 1.0f / p.dt, p.numParticles, s);
         }
         bool xsphApplied = false;
         if (p.xsph_c > 0.0f && p.numParticles > 0) {
             sim::DeviceParams dp = sim::MakeDeviceParams(p);
             if (m_useHashedGrid) {
-                bool useMP2 = UseHalfForPosition(p, Stage::XSPH, m_bufs) &&
+                bool useMP = UseHalfForPosition(p, Stage::XSPH, m_bufs) &&
                     UseHalfForVelocity(p, Stage::XSPH, m_bufs);
-                if (useMP2) {
+                if (useMP) {
                     ::LaunchXSPHCompactMP(
                         m_bufs.d_delta,
                         m_bufs.d_vel, m_bufs.d_vel_h4,
@@ -1549,9 +1362,9 @@ namespace sim {
                 }
             }
             else {
-                bool useMP2 = UseHalfForPosition(p, Stage::XSPH, m_bufs) &&
+                bool useMP = UseHalfForPosition(p, Stage::XSPH, m_bufs) &&
                     UseHalfForVelocity(p, Stage::XSPH, m_bufs);
-                if (useMP2) {
+                if (useMP) {
                     ::LaunchXSPHMP(
                         m_bufs.d_delta,
                         m_bufs.d_vel, m_bufs.d_vel_h4,
@@ -1572,87 +1385,25 @@ namespace sim {
 
         float4* effectiveVel = xsphApplied ? m_bufs.d_delta : m_bufs.d_vel;
         ::LaunchBoundary(m_bufs.d_pos_pred, effectiveVel, p.grid, p.boundaryRestitution, p.numParticles, s);
-        // 快照模式下 pos 不再更新，回收内核传当前 pos_pred 作为参考
-        if (useSnapshot) {
-            ::LaunchRecycleToNozzleConst(m_bufs.d_pos_pred, m_bufs.d_pos_pred, effectiveVel,
-                p.grid, p.dt, p.numParticles, 0, s);
+        ::LaunchRecycleToNozzleConst(m_bufs.d_pos, m_bufs.d_pos_pred, effectiveVel, p.grid, p.dt, p.numParticles, 0, s);
+
+        if (p.numParticles > 0) {
+            CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_pos, m_bufs.d_pos_pred,
+                sizeof(float4) * p.numParticles, cudaMemcpyDeviceToDevice, s));
         }
-        else {
-            ::LaunchRecycleToNozzleConst(m_bufs.d_pos, m_bufs.d_pos_pred, effectiveVel,
-                p.grid, p.dt, p.numParticles, 0, s);
+        if (xsphApplied && p.numParticles > 0) {
+            CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_vel, m_bufs.d_delta,
+                sizeof(float4) * p.numParticles, cudaMemcpyDeviceToDevice, s));
         }
-        const bool eliminateCopies = console::Instance().debug.eliminateFrameCopies;
 
-        if (!useSnapshot) {
-            if (!eliminateCopies) {
-                if (p.numParticles > 0) {
-                    CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_pos, m_bufs.d_pos_pred,
-                        sizeof(float4) * p.numParticles,
-                        cudaMemcpyDeviceToDevice, s));
-                }
-                if (xsphApplied && p.numParticles > 0) {
-                    CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_vel, m_bufs.d_delta,
-                        sizeof(float4) * p.numParticles,
-                        cudaMemcpyDeviceToDevice, s));
-                }
-            }
-            else {
-                // 旧逻辑: 若存在外部共享缓冲 (m_extPosPred) 强制拷贝
-                // 新逻辑 (方案B): 即使存在外部共享缓冲也允许指针交换，避免大规模 D2D memcpy。
-                // 原因: 外部共享缓冲的地址稳定；交换只改变本地指针语义，渲染端仍读取同一 GPU 物理地址，
-                // 该地址在交换后指向“当前帧最终位置”(pos_pred)，满足零拷贝要求。
-                if (p.numParticles > 0) {
-                    void* oldPos = m_bufs.d_pos;
-                    void* oldPosPred = m_bufs.d_pos_pred;
-                    void* oldVel = xsphApplied ? m_bufs.d_vel : nullptr;
-                    void* oldDelta = xsphApplied ? m_bufs.d_delta : nullptr;
-
-                    // 若有半精镜像，也要同步交换以保持语义一致
-                    void* oldPosH4 = m_bufs.d_pos_h4;
-                    void* oldPosPredH4 = m_bufs.d_pos_pred_h4;
-
-                    std::swap(m_bufs.d_pos, m_bufs.d_pos_pred);
-                    if (m_bufs.d_pos_h4 && m_bufs.d_pos_pred_h4) {
-                        std::swap(m_bufs.d_pos_h4, m_bufs.d_pos_pred_h4);
-                    }
-                    if (xsphApplied) {
-                        std::swap(m_bufs.d_vel, m_bufs.d_delta);
-                    }
-
-                    bool patched = updateGraphPointersAfterSwap(
-                        oldPos, oldPosPred,
-                        oldVel, oldDelta,
-                        xsphApplied);
-
-                    if (!patched) {
-                        // 回退: 标记重建，下帧重建图后重新缓存节点并继续尝试交换
-                        m_graphDirty = true;
-                    }
-
-                    if (console::Instance().debug.traceD2DMemcpy) {
-                        std::fprintf(stderr,
-                            "[ElideCopies+Patch] Frame=%llu | swap pos/pos_pred%s | xsph=%d | patched=%d | extPosPred=%d\n",
-                            (unsigned long long)m_frameIndex,
-                            (xsphApplied ? " & vel/delta" : ""),
-                            xsphApplied ? 1 : 0,
-                            patched ? 1 : 0,
-                            (m_extPosPred != nullptr) ? 1 : 0);
-                    }
-                }
-            }
-            if (console::Instance().debug.usePrevPosHalfSnapshot &&
-                m_bufs.d_prev_pos_h4 && p.numParticles > 0) {
-                LaunchPackFloat4ToHalf4(m_bufs.d_pos_pred, m_bufs.d_prev_pos_h4, p.numParticles, s);
-            }
-            // 半精镜像处理（保持原逻辑）
-            if (m_bufs.anyHalf() && m_params.numParticles > 0 && !m_precisionLogged) {
-                m_bufs.packAllToHalf(m_params.numParticles, m_stream);
-                UpdateDevicePrecisionView(m_bufs, m_params.precision);
-                std::fprintf(stderr,
-                    "[Precision] First emission half-pack done | N=%u | d_pos_h4=%p\n",
-                    m_params.numParticles, (void*)m_bufs.d_pos_h4);
-                m_precisionLogged = true;
-            }
+        // 新增：同步半精镜像（仅存储，不改变现有计算流程）
+        if (m_bufs.anyHalf() && m_params.numParticles > 0 && !m_precisionLogged) {
+            m_bufs.packAllToHalf(m_params.numParticles, m_stream);
+            UpdateDevicePrecisionView(m_bufs, m_params.precision);
+            std::fprintf(stderr,
+                "[Precision] First emission half-pack done | N=%u | d_pos_h4=%p\n",
+                m_params.numParticles, (void*)m_bufs.d_pos_h4);
+            m_precisionLogged = true;
         }
     }
 
@@ -2036,144 +1787,6 @@ namespace sim {
         CUDA_CHECK(cudaMemcpy(m_bufs.d_vel, h_vel.data(), sizeof(float4) * total, cudaMemcpyHostToDevice));
         if (m_bufs.anyHalf()) {
             m_bufs.packAllToHalf(total, 0);
-        }
-    }
-    bool Simulator::updateGraphPointersAfterSwap(const void* oldPos,
-        const void* oldPosPred,
-        const void* oldVel,
-        const void* oldDelta,
-        bool swappedVel)
-    {
-        // 若未启用图或无图实例则无需处理
-        if (!console::Instance().perf.use_cuda_graphs) return true;
-        if (!m_graphExecFull || !m_graphExecCheap) return true;
-
-        // 若没有指针发生变化则直接返回
-        if (!(oldPos || oldPosPred || oldVel || oldDelta)) return true;
-
-        // 确保节点缓存
-        if (!m_cachedNodesReady || !m_cachedPosNodes || !m_cachedVelNodes) {
-            cacheGraphNodes();
-        }
-
-        // 构造映射表（仅加入真正变化的项）
-        struct MapPair { const void* oldPtr; const void* newPtr; };
-        std::vector<MapPair> mapping;
-        auto pushIfChanged = [&](const void* oldP, const void* newP) {
-            if (oldP && newP && oldP != newP) mapping.push_back({ oldP, newP });
-            };
-        pushIfChanged(oldPos, m_bufs.d_pos);
-        pushIfChanged(oldPosPred, m_bufs.d_pos_pred);
-        if (swappedVel) {
-            pushIfChanged(oldVel, m_bufs.d_vel);
-            pushIfChanged(oldDelta, m_bufs.d_delta);
-        }
-        // 半精镜像（若存在且已 swap）
-        pushIfChanged(oldPos ? m_bufs.d_pos_pred_h4 : nullptr, m_bufs.d_pos_h4); // 下面会更精确处理
-        // 由于上面一行无法可靠判断，改为直接检测半精：
-        if (m_bufs.d_pos_h4 && m_bufs.d_pos_pred_h4) {
-            // 推断是否交换：若 oldPos 与现 d_pos 对应，就用 oldPos_h4/pos_pred_h4
-            // 我们无法直接得知 old 半精地址，这里在调用处已经 swap，所以此处再做安全加法：
-            // 如果用户需要更精确，可扩展传入 oldHalf*，当前先跳过（不加入无意义映射）
-        }
-
-        if (mapping.empty()) {
-            return true;
-        }
-
-        auto patchNodeSet = [&](cudaGraphExec_t exec,
-            const std::vector<cudaGraphNode_t>& nodes) -> bool
-            {
-                for (auto n : nodes) {
-                    if (!n) continue;
-                    cudaKernelNodeParams kp{};
-                    cudaError_t ge = cudaGraphKernelNodeGetParams(n, &kp);
-                    if (ge != cudaSuccess) {
-                        // 句柄已失效，尝试整体 recache 一次后再继续
-                        cacheGraphNodes();
-                        ge = cudaGraphKernelNodeGetParams(n, &kp);
-                        if (ge != cudaSuccess) {
-                            if (console::Instance().debug.printWarnings) {
-                                std::fprintf(stderr,
-                                    "[GraphPtrPatch][Warn] GetParams failed node=%p err=%s\n",
-                                    (void*)n, cudaGetErrorString(ge));
-                            }
-                            return false;
-                        }
-                    }
-                    if (!kp.kernelParams) continue;
-
-                    bool modified = false;
-                    // 扫描参数槽（保守限制 64）
-                    for (int i = 0; i < 64; ++i) {
-                        void* argSlot = kp.kernelParams[i];
-                        if (!argSlot) break;
-                        if (!hostPtrReadable(argSlot)) break;
-                        void* val = *(void**)argSlot;
-                        if (!val) continue;
-                        for (auto& m : mapping) {
-                            if (val == m.oldPtr) {
-                                *(void**)argSlot = const_cast<void*>(m.newPtr);
-                                modified = true;
-                            }
-                        }
-                    }
-                    if (modified) {
-                        cudaError_t se = cudaGraphExecKernelNodeSetParams(exec, n, &kp);
-                        if (se == cudaErrorInvalidResourceHandle) {
-                            // 尝试 recache 一次再重试
-                            cacheGraphNodes();
-                            se = cudaGraphExecKernelNodeSetParams(exec, n, &kp);
-                        }
-                        if (se != cudaSuccess) {
-                            if (console::Instance().debug.printWarnings) {
-                                std::fprintf(stderr,
-                                    "[GraphPtrPatch][Error] SetParams failed node=%p err=%s\n",
-                                    (void*)n, cudaGetErrorString(se));
-                            }
-                            return false;
-                        }
-                    }
-                }
-                return true;
-            };
-
-        bool ok1 = patchNodeSet(m_graphExecFull, m_posNodesFull);
-        bool ok2 = patchNodeSet(m_graphExecCheap, m_posNodesCheap);
-        bool ok3 = true;
-        if (swappedVel) {
-            ok3 = patchNodeSet(m_graphExecFull, m_velNodesFull) &&
-                patchNodeSet(m_graphExecCheap, m_velNodesCheap);
-        }
-
-        if (!(ok1 && ok2 && ok3)) {
-            if (console::Instance().debug.printWarnings) {
-                std::fprintf(stderr, "[GraphPtrPatch] Fallback -> require rebuild.\n");
-            }
-            return false;
-        }
-
-        // 刷新缓存的“基础参数”快照（避免后续依赖旧指针）
-        cacheGraphNodes();
-
-        if (console::Instance().debug.traceD2DMemcpy) {
-            std::fprintf(stderr,
-                "[GraphPtrPatch] Success | swappedPos=1 swappedVel=%d | mappings=%zu\n",
-                swappedVel ? 1 : 0, mapping.size());
-        }
-        return true;
-    }
-    void Simulator::kRestorePosFromSnapshot(cudaStream_t s, const SimParams& p) {
-        const auto& dbg = console::Instance().debug;
-        if (!dbg.usePrevPosHalfSnapshot) return;
-        if (!m_bufs.d_prev_pos_h4 || p.numParticles == 0) return;
-
-        // 1. 从上一帧半精快照恢复全精 pos
-        LaunchRestorePosFromHalfPrev(m_bufs.d_prev_pos_h4, m_bufs.d_pos, p.numParticles, s);
-
-        // 2. 补充：保持半精镜像与刚恢复的 pos 一致，避免后续 MP 内核读到陈旧 half 数据
-        if (m_bufs.d_pos_h4) {
-            LaunchPackFloat4ToHalf4(m_bufs.d_pos, m_bufs.d_pos_h4, p.numParticles, s);
         }
     }
 } // namespace sim

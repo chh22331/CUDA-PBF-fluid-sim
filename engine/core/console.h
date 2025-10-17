@@ -34,22 +34,22 @@ namespace console {
     // 统一数值精度配置（作为 Simulation 的子成员），仅定义开关，无副作用
     struct PrecisionConfig {
         // ---------------- 存储精度（粒子主数据与辅助缓冲） ----------------
-        NumericType positionStore = NumericType::FP32;
+        NumericType positionStore = NumericType::FP16;
         NumericType velocityStore = NumericType::FP32;
         NumericType predictedPosStore = NumericType::FP32; // PBF 预测位置（若使用）
         NumericType lambdaStore = NumericType::FP32; // PBF λ（约束求解敏感，初期保持 FP32）
-        NumericType densityStore = NumericType::FP32;
-        NumericType auxStore = NumericType::FP32; // 临时/梯度/累加器等
-        NumericType renderTransfer = NumericType::FP32; // 提交渲染的转换目标（保留 float3 默认）
+        NumericType densityStore = NumericType::FP16;
+        NumericType auxStore = NumericType::FP16; // 临时/梯度/累加器等
+        NumericType renderTransfer = NumericType::FP16; // 提交渲染的转换目标（保留 float3 默认）
 
         // ---------------- 核心计算精度（全局默认） ----------------
-        NumericType coreCompute = NumericType::FP32; // 主环（邻居/密度/λ/积分）
+        NumericType coreCompute = NumericType::FP16; // 主环（邻居/密度/λ/积分）
         bool        forceFp32Accumulate = false;             // 归约/累加是否强制 FP32（数值稳定）
         bool        enableHalfIntrinsics = true;           // 是否启用半精 intrinsic (__hadd2 等)，需架构支持
 
         // ---------------- 分阶段覆盖（若 useStageOverrides = true 生效） ----------------
         bool        useStageOverrides = true;
-        NumericType emissionCompute = NumericType::FP32;
+        NumericType emissionCompute = NumericType::FP16;
         NumericType gridBuildCompute = NumericType::FP32;
         NumericType neighborCompute = NumericType::FP32;
         NumericType densityCompute = NumericType::FP32;
@@ -88,11 +88,11 @@ namespace console {
             float particleRadiusPx = 1.0f;
             float thicknessScale = 1.0f;
             float3 eye = make_float3(0.5f, 0.5f, 2.0f);
-            float3 at  = make_float3(0.5f, 0.5f, 0.5f);
-            float3 up  = make_float3(0.0f, 1.0f, 0.0f);
+            float3 at = make_float3(0.5f, 0.5f, 0.5f);
+            float3 up = make_float3(0.0f, 1.0f, 0.0f);
             float  fovYDeg = 45.0f;
             float  nearZ = 0.01f;
-            float  farZ  = 50000.0f;
+            float  farZ = 50000.0f;
         } renderer;
 
         struct Viewer {
@@ -144,18 +144,6 @@ namespace console {
 
             // 新增：诊断/统计的大频率节流（帧）；0/负值表示禁用
             int  diag_every_n = 0;
-
-            // ====== 新增：D2D 内存拷贝埋点开关 ======
-            bool traceD2DMemcpy = true;          // 开：追踪 cudaMemcpy(kind=DeviceToDevice)
-            int  traceD2DMemcpyEveryN = 30;       // 每 N 帧打印汇总；<=0 禁用汇总
-            int  traceD2DMemcpyMaxPrint = 32;     // 单条事件最多打印次数
-            bool traceD2DMemcpySummary = true;    // 是否输出汇总统计行
-            bool traceD2DMemcpyPrintPtrs = true; // 事件行是否打印指针地址
-            bool eliminateFrameCopies = true;  // 指针交换旧方案（在未使用快照时生效）
-            // 新增：使用半精上一帧位置快照替代 pos_pred->pos 全量拷贝（优先级高于 eliminateFrameCopies）
-            // 原理：帧首将上一帧最终 pos_pred 打包到 d_prev_pos_h4，速度更新用 half 解码做差分。
-            // 优势：彻底移除 pos_pred->pos 与 delta->vel 两类大块 D2D memcpy；渲染持续使用当前 pos_pred。
-            bool usePrevPosHalfSnapshot = false;
         } debug;
 
         // 仿真配置（集中所有物理与发射/域参数）
@@ -166,9 +154,9 @@ namespace console {
             uint32_t emitPerStep = 50;
             bool     faucetFillEnable = true;
             bool     recycleToNozzle = false;
-            float3   nozzlePos   = make_float3(100.0f, 199.0f, 100.0f);
-            float3   nozzleDir   = make_float3(0.0f, -1.0f, 0.0f);
-            float    nozzleRadius= 20.0f;
+            float3   nozzlePos = make_float3(100.0f, 199.0f, 100.0f);
+            float3   nozzleDir = make_float3(0.0f, -1.0f, 0.0f);
+            float    nozzleRadius = 20.0f;
             float    nozzleSpeed = 50.0f;
             float    recycleYOffset = 1e-3f;
 
@@ -208,7 +196,7 @@ namespace console {
             sim::PbfTuning pbf{};
 
             // XSPH 系数
-            float    xsph_c = 0.05;
+            float    xsph_c = 0.05f;
 
             // 邻域核参数
             float    smoothingRadius = 2.0f;

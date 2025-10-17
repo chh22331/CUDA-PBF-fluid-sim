@@ -44,14 +44,6 @@ namespace sim {
             float jitterAmp,
             uint32_t jitterSeed);
         bool adaptivePrecisionCheck(const SimStats& stats);
-        inline const DeviceBuffers& buffersUnsafe() const { return m_bufs; }
-        inline DeviceBuffers& buffersUnsafe() { return m_bufs; }
-        inline uint64_t frameIndexUnsafe() const { return m_frameIndex; }
-        bool updateGraphPointersAfterSwap(const void* oldPos,
-            const void* oldPosPred,
-            const void* oldVel,
-            const void* oldDelta,
-            bool swappedVel);
 
     private:
         bool buildGrid(const SimParams& p);
@@ -62,14 +54,12 @@ namespace sim {
         bool updateGraphsParams(const SimParams& p);
         bool updateGridIfNeeded(const SimParams& p);
         void kIntegratePred(cudaStream_t s, const SimParams& p);
-        void kSnapshotPrevPos(cudaStream_t s, const SimParams& p);
         void kHashKeys(cudaStream_t s, const SimParams& p);
         void kSort(cudaStream_t s, const SimParams& p);
         void kCellRanges(cudaStream_t s, const SimParams& p);
         void kCellRangesCompact(cudaStream_t s, const SimParams& p);
         void kSolveIter(cudaStream_t s, const SimParams& p);
         void kVelocityAndPost(cudaStream_t s, const SimParams& p);
-        void kRestorePosFromSnapshot(cudaStream_t s, const SimParams& p); // 新增
         bool cacheGraphNodes();
 
     private:
@@ -80,8 +70,8 @@ namespace sim {
         uint32_t m_numCompactCells = 0;
         cudaStream_t m_stream = nullptr;
         cudaEvent_t  m_evStart[2] = { nullptr, nullptr };
-        cudaEvent_t  m_evEnd[2]   = { nullptr, nullptr };
-        int          m_evCursor   = 0;
+        cudaEvent_t  m_evEnd[2] = { nullptr, nullptr };
+        int          m_evCursor = 0;
         float        m_lastFrameMs = -1.0f;
         int   m_frameTimingEveryN = 1;
         bool  m_frameTimingEnabled = true;
@@ -117,7 +107,7 @@ namespace sim {
         } m_captured{};
         cudaExternalMemory_t m_extPosPred = nullptr;
 
-        cudaGraphNode_t       m_nodeRecycleFull  = nullptr;
+        cudaGraphNode_t       m_nodeRecycleFull = nullptr;
         cudaGraphNode_t       m_nodeRecycleCheap = nullptr;
         cudaKernelNodeParams  m_kpRecycleBaseFull{};
         cudaKernelNodeParams  m_kpRecycleBaseCheap{};
