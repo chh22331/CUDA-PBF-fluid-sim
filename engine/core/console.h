@@ -34,22 +34,22 @@ namespace console {
     // 统一数值精度配置（作为 Simulation 的子成员），仅定义开关，无副作用
     struct PrecisionConfig {
         // ---------------- 存储精度（粒子主数据与辅助缓冲） ----------------
-        NumericType positionStore = NumericType::FP16;
+        NumericType positionStore = NumericType::FP32;
         NumericType velocityStore = NumericType::FP32;
         NumericType predictedPosStore = NumericType::FP32; // PBF 预测位置（若使用）
         NumericType lambdaStore = NumericType::FP32; // PBF λ（约束求解敏感，初期保持 FP32）
-        NumericType densityStore = NumericType::FP16;
-        NumericType auxStore = NumericType::FP16; // 临时/梯度/累加器等
-        NumericType renderTransfer = NumericType::FP16; // 提交渲染的转换目标（保留 float3 默认）
+        NumericType densityStore = NumericType::FP32;
+        NumericType auxStore = NumericType::FP32; // 临时/梯度/累加器等
+        NumericType renderTransfer = NumericType::FP32; // 提交渲染的转换目标（保留 float3 默认）
 
         // ---------------- 核心计算精度（全局默认） ----------------
-        NumericType coreCompute = NumericType::FP16; // 主环（邻居/密度/λ/积分）
+        NumericType coreCompute = NumericType::FP32; // 主环（邻居/密度/λ/积分）
         bool        forceFp32Accumulate = false;             // 归约/累加是否强制 FP32（数值稳定）
         bool        enableHalfIntrinsics = true;           // 是否启用半精 intrinsic (__hadd2 等)，需架构支持
 
         // ---------------- 分阶段覆盖（若 useStageOverrides = true 生效） ----------------
         bool        useStageOverrides = true;
-        NumericType emissionCompute = NumericType::FP16;
+        NumericType emissionCompute = NumericType::FP32;
         NumericType gridBuildCompute = NumericType::FP32;
         NumericType neighborCompute = NumericType::FP32;
         NumericType densityCompute = NumericType::FP32;
@@ -151,8 +151,11 @@ namespace console {
             int  traceD2DMemcpyMaxPrint = 32;     // 单条事件最多打印次数
             bool traceD2DMemcpySummary = true;    // 是否输出汇总统计行
             bool traceD2DMemcpyPrintPtrs = true; // 事件行是否打印指针地址
-            bool eliminateFrameCopies = true;  // 开：用指针交换替代每帧 pos_pred->pos 与 delta->vel 的 D2D 拷贝
-
+            bool eliminateFrameCopies = true;  // 指针交换旧方案（在未使用快照时生效）
+            // 新增：使用半精上一帧位置快照替代 pos_pred->pos 全量拷贝（优先级高于 eliminateFrameCopies）
+            // 原理：帧首将上一帧最终 pos_pred 打包到 d_prev_pos_h4，速度更新用 half 解码做差分。
+            // 优势：彻底移除 pos_pred->pos 与 delta->vel 两类大块 D2D memcpy；渲染持续使用当前 pos_pred。
+            bool usePrevPosHalfSnapshot = false;
         } debug;
 
         // 仿真配置（集中所有物理与发射/域参数）
@@ -205,7 +208,7 @@ namespace console {
             sim::PbfTuning pbf{};
 
             // XSPH 系数
-            float    xsph_c = 0.05f;
+            float    xsph_c = 0.05;
 
             // 邻域核参数
             float    smoothingRadius = 2.0f;
@@ -314,7 +317,7 @@ namespace console {
             // 新增：启用哈希/压缩网格（按 cell-key 排序 + 压缩段表）
             bool  use_hashed_grid = true;
             // 新增：压缩段表重建频率（帧）：>=1
-            int   sort_compact_every_n = 4;
+            int   sort_compact_every_n = 8;
             // 新增：邻域查段方式（true=对压缩 key 做二分；false=使用辅表哈希，后续扩展）
             bool  compact_binary_search = true;
             // 新增：打印网格统计（非空 cell 数、均值/最大 occupancy 等）

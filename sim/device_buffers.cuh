@@ -3,6 +3,7 @@
 #include <cuda_fp16.h>
 #include <cstdint>
 #include "parameters.h"
+#include "../engine/core/console.h"
 
 namespace sim {
 
@@ -24,6 +25,7 @@ namespace sim {
         Half4* d_pos_h4 = nullptr;
         Half4* d_vel_h4 = nullptr;
         Half4* d_pos_pred_h4 = nullptr;
+        Half4* d_prev_pos_h4 = nullptr;
 
         // 网格 / 排序
         uint32_t* d_cellKeys = nullptr;
@@ -52,9 +54,16 @@ namespace sim {
         bool usePosPredHalf = false;
 
         bool anyHalf() const { return usePosHalf || useVelHalf || usePosPredHalf; }
+        bool hasPrevSnapshot() const { return d_prev_pos_h4 != nullptr; }
 
         // 分配接口
-        void allocate(uint32_t cap) { allocateInternal(cap, false, false, false); }
+        void allocate(uint32_t cap) { 
+            allocateInternal(cap, false, false, false); 
+            if (console::Instance().debug.usePrevPosHalfSnapshot) {
+                if (d_prev_pos_h4) { cudaFree(d_prev_pos_h4); d_prev_pos_h4 = nullptr; }
+                cudaMalloc((void**)&d_prev_pos_h4, sizeof(sim::Half4) * capacity);
+            }
+        }
         void allocateWithPrecision(const sim::SimPrecision& prec, uint32_t cap) {
             bool posH = (prec.positionStore == sim::NumericType::FP16_Packed ||
                 prec.positionStore == sim::NumericType::FP16);
@@ -63,8 +72,20 @@ namespace sim {
             bool predH = (prec.predictedPosStore == sim::NumericType::FP16_Packed ||
                 prec.predictedPosStore == sim::NumericType::FP16);
             allocateInternal(cap, posH, velH, predH);
+            if (console::Instance().debug.usePrevPosHalfSnapshot) {
+                if (d_prev_pos_h4) { cudaFree(d_prev_pos_h4); d_prev_pos_h4 = nullptr; }
+                cudaMalloc((void**)&d_prev_pos_h4, sizeof(sim::Half4) * capacity);
+            }
         }
-
+        void allocatePrevPosSnapshot(uint32_t cap) {
+            if (cap == 0) return;
+            if (!d_prev_pos_h4) {
+                cudaMalloc((void**)&d_prev_pos_h4, sizeof(sim::Half4) * cap);
+            }
+        }
+        void freePrevPosSnapshot() {
+            if (d_prev_pos_h4) { cudaFree(d_prev_pos_h4); d_prev_pos_h4 = nullptr; }
+        }
         void allocateInternal(uint32_t cap, bool posH, bool velH, bool predH);
 
         void ensureCompactCapacity(uint32_t N);

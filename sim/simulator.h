@@ -62,12 +62,14 @@ namespace sim {
         bool updateGraphsParams(const SimParams& p);
         bool updateGridIfNeeded(const SimParams& p);
         void kIntegratePred(cudaStream_t s, const SimParams& p);
+        void kSnapshotPrevPos(cudaStream_t s, const SimParams& p);
         void kHashKeys(cudaStream_t s, const SimParams& p);
         void kSort(cudaStream_t s, const SimParams& p);
         void kCellRanges(cudaStream_t s, const SimParams& p);
         void kCellRangesCompact(cudaStream_t s, const SimParams& p);
         void kSolveIter(cudaStream_t s, const SimParams& p);
         void kVelocityAndPost(cudaStream_t s, const SimParams& p);
+        void kRestorePosFromSnapshot(cudaStream_t s, const SimParams& p); // 新增
         bool cacheGraphNodes();
 
     private:

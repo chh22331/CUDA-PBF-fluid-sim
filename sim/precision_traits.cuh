@@ -17,6 +17,13 @@ struct DevicePrecisionView {
     // 预留：后续可加入 lambda/density half 指针
 };
 
+// 添加半精转换辅助，避免重复定义
+#ifndef SIM_HALF_CONVERT_DEFINED
+#define SIM_HALF_CONVERT_DEFINED
+__host__ __device__ inline __half float_to_half(float v) { return __float2half(v); }
+__host__ __device__ inline float  half_to_float(__half h) { return __half2float(h); }
+#endif
+
 // 常量
 __device__ __constant__ DevicePrecisionView g_precisionView;
 

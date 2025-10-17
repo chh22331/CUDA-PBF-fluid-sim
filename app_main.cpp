@@ -340,8 +340,8 @@ static void TickAndPrintSimStats(sim::Simulator& simulator, const sim::SimParams
     using Clock = std::chrono::steady_clock;
     using namespace std::chrono_literals;
     static auto last = Clock::now();
-    static const auto interval = 2s;     // 每 2 秒打印一次
-    static const uint32_t sampleStride = 4; // 采样步长，降低开销
+    static const auto interval = 2.0s;     // 每 2 秒打印一次
+    static const uint32_t sampleStride = 2; // 采样步长，降低开销
 
     auto now = Clock::now();
     if (now - last < interval) return;
