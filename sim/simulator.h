@@ -1,9 +1,19 @@
-#pragma once
+﻿#pragma once
 #include <cuda_runtime.h>
 #include "parameters.h"
 #include "device_buffers.cuh"
-#include "stats.h"
+#include "grid_buffers.cuh"
+#include "emit_params.h"
+#include "emitter.h"
+#include "logging.h"
+#include "stats.h" // 修复：需要 SimStats 定义
 #include <vector>
+#include "param_change_tracker.h" // new tracker
+#include "phase_pipeline.h"
+#include "kernel_dispatcher.h"
+#include "simulation_context.h"
+#include "grid_strategy.h"
+#include "post_ops.h"
 
 namespace sim {
     struct OnlineVarHost {
@@ -44,12 +54,13 @@ namespace sim {
             float jitterAmp,
             uint32_t jitterSeed);
         bool adaptivePrecisionCheck(const SimStats& stats);
+        bool tryPingPongAndUpdatePtrs(bool useGraphs);
 
     private:
         bool buildGrid(const SimParams& p);
         bool ensureSortTemp(std::size_t bytes);
-        bool structuralGraphChange(const SimParams& p) const;
-        bool paramOnlyGraphChange(const SimParams& p) const;
+        bool structuralGraphChange(const SimParams& p) const; // legacy to be replaced by tracker
+        bool paramOnlyGraphChange(const SimParams& p) const;  // legacy to be replaced
         bool captureGraphIfNeeded(const SimParams& p);
         bool updateGraphsParams(const SimParams& p);
         bool updateGridIfNeeded(const SimParams& p);
@@ -61,10 +72,14 @@ namespace sim {
         void kSolveIter(cudaStream_t s, const SimParams& p);
         void kVelocityAndPost(cudaStream_t s, const SimParams& p);
         bool cacheGraphNodes();
+        bool patchGraphKernelPointers(bool fullGraph);
+        bool attemptGraphPingPongAndPatch(bool useGraphs, bool needFull);
+
 
     private:
         SimParams m_params{};
-        DeviceBuffers m_bufs{};
+        DeviceBuffers m_bufs{};        // 粒子主/半精缓冲
+        GridBuffers  m_grid{};         // 网格/排序/压缩缓冲（拆分）
         uint32_t m_numCells = 0;
         bool     m_useHashedGrid = false;
         uint32_t m_numCompactCells = 0;
@@ -75,6 +90,8 @@ namespace sim {
         float        m_lastFrameMs = -1.0f;
         int   m_frameTimingEveryN = 1;
         bool  m_frameTimingEnabled = true;
+        friend class GraphBuilder;
+        cudaEvent_t m_evGraphEnd = nullptr;
 
         cudaGraph_t     m_graphFull = nullptr;
         cudaGraphExec_t m_graphExecFull = nullptr;
@@ -85,6 +102,9 @@ namespace sim {
         bool m_canPingPongPos = true;
         bool m_precisionLogged = false;
         bool m_graphPointersChecked = false;
+        bool m_lastFrameXsphApplied = false;   // 新增：记录上一帧是否使用 XSPH
+        bool m_graphNodesPatchedOnce = false;  // 新增：至少执行过一次 patch
+
 
         std::vector<cudaGraphNode_t> m_posNodesFull, m_posNodesCheap;
         std::vector<cudaKernelNodeParams> m_posNodeParamsBaseFull, m_posNodeParamsBaseCheap;
@@ -123,5 +143,13 @@ namespace sim {
         int  m_adaptDowngradeHold = 0;
         OnlineVarHost m_adaptDensityErrorHistory;
         OnlineVarHost m_adaptLambdaVarHistory;
+
+        // === New components under refactor ===
+        ParamChangeTracker m_paramTracker; // unified change detection
+        KernelDispatcher   m_kernelDispatcher; // kernel selection
+        PhasePipeline      m_pipeline; // full/cheap sequences
+        SimulationContext  m_ctx; // shared runtime view
+        std::unique_ptr<IGridStrategy> m_gridStrategy; // hashed or dense
+        PostOpsPipeline m_postPipeline; // new post ops
     };
 } // namespace sim

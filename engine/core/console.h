@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <cstdint>
 #include <string>
 #include <cuda_runtime.h> // for float3/make_float3, int3/make_int3
@@ -316,6 +316,12 @@ namespace console {
             int   graph_param_update_min_interval = 30;
             // 新增：帧级 GPU 计时采样频率（帧）。<=0 禁用 cudaEventRecord
             int   frame_timing_every_n = 30;
+            // ===== 新增：Graph 指针热更新开关 =====
+            // false: 使用原始末尾 cudaMemcpyAsync 拷贝 (pos_pred->pos, delta->vel)
+            // true : 使用 ping-pong + cudaGraphExecKernelNodeSetParams (零拷贝模式)
+            bool  graph_hot_update_enable = true;
+            // 可选：扫描 kernel 参数槽位上限，限制 patch 遍历成本（默认 64）
+            int   graph_hot_update_scan_limit = 64;
         } perf;
     };
 

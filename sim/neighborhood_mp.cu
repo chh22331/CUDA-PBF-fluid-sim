@@ -1,4 +1,4 @@
-#include "precision_traits.cuh"
+﻿#include "precision_traits.cuh"
 #include "device_buffers.cuh"
 #include "parameters.h"
 

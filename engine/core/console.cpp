@@ -3,6 +3,8 @@
 #include <random>
 #include <algorithm>
 #include <cstring>
+#include "../../sim/numeric_utils.h"
+#include "../../sim/logging.h" // 新增：统一日志接口
 
 namespace {
 

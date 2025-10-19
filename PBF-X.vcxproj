@@ -93,6 +93,8 @@
     <CudaCompile Include="sim\emit_params.cu" />
     <CudaCompile Include="sim\hash_keys.cu" />
     <CudaCompile Include="sim\integrate.cu" />
+    <CudaCompile Include="sim\integrate_pred_semi_implicit.cu" />
+    <CudaCompile Include="sim\integrate_velocity_half.cu" />
     <CudaCompile Include="sim\integrate_velocity_mp.cu" />
     <CudaCompile Include="sim\neighborhood_mp.cu" />
     <CudaCompile Include="sim\pack_prev_pos_snapshot.cu" />
@@ -114,7 +116,13 @@
     <ClCompile Include="engine\core\console.cpp" />
     <ClCompile Include="engine\gfx\d3d12_device.cpp" />
     <ClCompile Include="engine\gfx\renderer.cpp" />
+    <ClCompile Include="sim\emitter.cpp" />
+    <ClCompile Include="sim\graph_builder.cpp" />
+    <ClCompile Include="sim\kernel_dispatcher.cpp" />
     <ClCompile Include="sim\kernel_fallback.cpp" />
+    <ClCompile Include="sim\phases.cpp" />
+    <ClCompile Include="sim\poisson_disk.cpp" />
+    <ClCompile Include="sim\post_ops.cpp" />
     <ClCompile Include="sim\simulator.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -130,10 +138,29 @@
     <ClInclude Include="sim\cuda_grid_utils.cuh" />
     <ClInclude Include="sim\cuda_vec_math.cuh" />
     <ClInclude Include="sim\device_buffers.cuh" />
+    <ClInclude Include="sim\emitter.h" />
     <ClInclude Include="sim\emit_params.h" />
+    <ClInclude Include="sim\graph_builder.h" />
+    <ClInclude Include="sim\grid_buffers.cuh" />
+    <ClInclude Include="sim\grid_strategy.h" />
+    <ClInclude Include="sim\grid_strategy_dense.h" />
+    <ClInclude Include="sim\grid_strategy_hashed.h" />
+    <ClInclude Include="sim\grid_system.h" />
+    <ClInclude Include="sim\grid_utils.h" />
+    <ClInclude Include="sim\host_memory_utils.h" />
+    <ClInclude Include="sim\kernels.h" />
+    <ClInclude Include="sim\kernel_dispatcher.h" />
+    <ClInclude Include="sim\logging.h" />
+    <ClInclude Include="sim\math_utils.h" />
+    <ClInclude Include="sim\numeric_utils.h" />
     <ClInclude Include="sim\parameters.h" />
+    <ClInclude Include="sim\param_change_tracker.h" />
+    <ClInclude Include="sim\phase_pipeline.h" />
+    <ClInclude Include="sim\poisson_disk.h" />
+    <ClInclude Include="sim\post_ops.h" />
     <ClInclude Include="sim\precision_stage.h" />
     <ClInclude Include="sim\precision_traits.cuh" />
+    <ClInclude Include="sim\simulation_context.h" />
     <ClInclude Include="sim\simulator.h" />
     <ClInclude Include="sim\stats.h" />
   </ItemGroup>

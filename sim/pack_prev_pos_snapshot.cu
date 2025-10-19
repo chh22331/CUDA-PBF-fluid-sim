@@ -1,4 +1,4 @@
-#include <cuda_runtime.h>
+﻿#include <cuda_runtime.h>
 #include <cuda_fp16.h>
 #include "precision_traits.cuh"
 extern "C" __global__ void K_PackFloat4ToHalf4(const float4 * src, sim::Half4 * dst, uint32_t N) {
