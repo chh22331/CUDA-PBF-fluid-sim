@@ -6,9 +6,9 @@
 #include "emit_params.h"
 #include "emitter.h"
 #include "logging.h"
-#include "stats.h" // 修复：需要 SimStats 定义
+#include "stats.h"
 #include <vector>
-#include "param_change_tracker.h" // new tracker
+#include "param_change_tracker.h"
 #include "phase_pipeline.h"
 #include "kernel_dispatcher.h"
 #include "simulation_context.h"
@@ -16,19 +16,7 @@
 #include "post_ops.h"
 
 namespace sim {
-    struct OnlineVarHost {
-        double mean = 0.0;
-        double m2 = 0.0;
-        uint64_t n = 0;
-        void add(double x) {
-            ++n;
-            double d = x - mean;
-            mean += d / double(n);
-            double d2 = x - mean;
-            m2 += d * d2;
-        }
-        double variance() const { return (n > 1) ? (m2 / double(n - 1)) : 0.0; }
-    };
+    struct OnlineVarHost { double mean=0.0; double m2=0.0; uint64_t n=0; void add(double x){ ++n; double d=x-mean; mean+=d/double(n); double d2=x-mean; m2+=d*d2; } double variance() const { return (n>1)?(m2/double(n-1)):0.0; } };
 
     class Simulator {
     public:
@@ -36,7 +24,7 @@ namespace sim {
         void shutdown();
         bool step(const SimParams& p);
 
-        const float4* devicePositions() const { return m_bufs.d_pos_pred; }
+        const float4* devicePositions() const { return m_bufs.d_pos_curr; }
 
         void seedBoxLattice(uint32_t nx, uint32_t ny, uint32_t nz, float3 origin, float spacing);
         void seedBoxLatticeAuto(uint32_t total, float3 origin, float spacing);
@@ -46,21 +34,14 @@ namespace sim {
         bool computeStatsBruteforce(SimStats& out, uint32_t sampleStride, uint32_t maxISamples) const;
         bool computeCenterOfMass(float3& outCom, uint32_t sampleStride) const;
         double lastGpuFrameMs() const { return static_cast<double>(m_lastFrameMs); }
-        void seedCubeMix(uint32_t groupCount,
-            const float3* groupCenters,
-            uint32_t edgeParticles,
-            float spacing,
-            bool applyJitter,
-            float jitterAmp,
-            uint32_t jitterSeed);
+        void seedCubeMix(uint32_t groupCount, const float3* groupCenters, uint32_t edgeParticles, float spacing, bool applyJitter, float jitterAmp, uint32_t jitterSeed);
         bool adaptivePrecisionCheck(const SimStats& stats);
-        bool tryPingPongAndUpdatePtrs(bool useGraphs);
 
     private:
         bool buildGrid(const SimParams& p);
         bool ensureSortTemp(std::size_t bytes);
-        bool structuralGraphChange(const SimParams& p) const; // legacy to be replaced by tracker
-        bool paramOnlyGraphChange(const SimParams& p) const;  // legacy to be replaced
+        bool structuralGraphChange(const SimParams& p) const;
+        bool paramOnlyGraphChange(const SimParams& p) const;
         bool captureGraphIfNeeded(const SimParams& p);
         bool updateGraphsParams(const SimParams& p);
         bool updateGridIfNeeded(const SimParams& p);
@@ -72,14 +53,12 @@ namespace sim {
         void kSolveIter(cudaStream_t s, const SimParams& p);
         void kVelocityAndPost(cudaStream_t s, const SimParams& p);
         bool cacheGraphNodes();
-        bool patchGraphKernelPointers(bool fullGraph);
-        bool attemptGraphPingPongAndPatch(bool useGraphs, bool needFull);
-
+        void patchGraphPositionPointers(bool fullGraph, float4* oldCurr, float4* oldNext); // new
 
     private:
         SimParams m_params{};
-        DeviceBuffers m_bufs{};        // 粒子主/半精缓冲
-        GridBuffers  m_grid{};         // 网格/排序/压缩缓冲（拆分）
+        DeviceBuffers m_bufs{};
+        GridBuffers  m_grid{};
         uint32_t m_numCells = 0;
         bool     m_useHashedGrid = false;
         uint32_t m_numCompactCells = 0;
@@ -102,29 +81,16 @@ namespace sim {
         bool m_canPingPongPos = true;
         bool m_precisionLogged = false;
         bool m_graphPointersChecked = false;
-        bool m_lastFrameXsphApplied = false;   // 新增：记录上一帧是否使用 XSPH
-        bool m_graphNodesPatchedOnce = false;  // 新增：至少执行过一次 patch
-
+        bool m_graphNodesPatchedOnce = false;
 
         std::vector<cudaGraphNode_t> m_posNodesFull, m_posNodesCheap;
-        std::vector<cudaKernelNodeParams> m_posNodeParamsBaseFull, m_posNodeParamsBaseCheap;
+        std::vector<cudaKernelNodeParams> m_posNodeParamsBaseFull, m_posNodeParamsBaseCheap; // base snapshot (optional)
         bool m_cachedPosNodes = false;
 
         int  m_frameIndex = 0;
         int  m_lastFullFrame = -1;
         int  m_lastParamUpdateFrame = -1;
-        struct GraphCapturedParams {
-            uint32_t numParticles = 0;
-            uint32_t numCells = 0;
-            int      solverIters = 0;
-            int      maxNeighbors = 0;
-            int      sortEveryN = 1;
-            GridBounds  grid{};
-            KernelCoeffs kernel{};
-            float    dt = 0.0f;
-            float3   gravity = make_float3(0.f, 0.f, 0.f);
-            float    restDensity = 0.0f;
-        } m_captured{};
+        struct GraphCapturedParams { uint32_t numParticles=0; uint32_t numCells=0; int solverIters=0; int maxNeighbors=0; int sortEveryN=1; GridBounds grid{}; KernelCoeffs kernel{}; float dt=0.0f; float3 gravity=make_float3(0.f,0.f,0.f); float restDensity=0.0f; } m_captured{};
         cudaExternalMemory_t m_extPosPred = nullptr;
 
         cudaGraphNode_t       m_nodeRecycleFull = nullptr;
@@ -137,19 +103,13 @@ namespace sim {
         std::vector<cudaKernelNodeParams> m_velNodeParamsBaseFull, m_velNodeParamsBaseCheap;
         bool m_cachedVelNodes = false;
 
-        // 自适应精度状态
-        bool m_adaptHalfDisabled = false;
+        // Adaptive precision tracking state
+        OnlineVarHost m_adaptDensityErrorHistory{};
+        OnlineVarHost m_adaptLambdaVarHistory{};
         int  m_adaptUpgradeHold = 0;
         int  m_adaptDowngradeHold = 0;
-        OnlineVarHost m_adaptDensityErrorHistory;
-        OnlineVarHost m_adaptLambdaVarHistory;
+        bool m_adaptHalfDisabled = false;
 
-        // === New components under refactor ===
-        ParamChangeTracker m_paramTracker; // unified change detection
-        KernelDispatcher   m_kernelDispatcher; // kernel selection
-        PhasePipeline      m_pipeline; // full/cheap sequences
-        SimulationContext  m_ctx; // shared runtime view
-        std::unique_ptr<IGridStrategy> m_gridStrategy; // hashed or dense
-        PostOpsPipeline m_postPipeline; // new post ops
+        ParamChangeTracker m_paramTracker; KernelDispatcher m_kernelDispatcher; PhasePipeline m_pipeline; SimulationContext  m_ctx; std::unique_ptr<IGridStrategy> m_gridStrategy; PostOpsPipeline m_postPipeline;
     };
 } // namespace sim
