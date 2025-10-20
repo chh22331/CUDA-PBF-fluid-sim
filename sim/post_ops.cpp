@@ -5,6 +5,7 @@
 #include "stats.h"
 #include <cstdio>
 #include "../engine/core/prof_nvtx.h" // NVTX tagging
+#include "../engine/core/console.h" // 引入运行时开关
 
 // extern kernels
 extern "C" void LaunchBoundary(float4*, float4*, sim::GridBounds, float, uint32_t, cudaStream_t);
@@ -42,15 +43,25 @@ void RecycleOp::run(SimulationContext& ctx, const SimParams& p, cudaStream_t s) 
 
     static uint64_t s_lastCopyFrame = UINT64_MAX;
     // externalPingPong 模式完全零拷贝：不执行回退复制
-    bool needCopy = (p.numParticles > 0) && !ctx.pingPongPos && !ctx.bufs->posPredExternal && !ctx.bufs->externalPingPong;
+    bool hasExternalPingPong = ctx.bufs->externalPingPong; // 双外部位置缓冲
+
+    // 运行时开关：允许用户显式关闭 ping-pong 强制使用 memcpy
+    const bool runtimeEnablePingPong = console::Instance().perf.use_pos_pingpong;
+
+    bool allowPingPongMode = runtimeEnablePingPong && ctx.pingPongPos && !ctx.bufs->posPredExternal;
+    // 若存在 externalPingPong（双缓冲外部共享），仍可视为零拷贝
+    allowPingPongMode = allowPingPongMode || hasExternalPingPong;
+
+    bool needCopy = (p.numParticles > 0) && !allowPingPongMode;
     if (needCopy) {
         if (s_lastCopyFrame == g_simFrameIndex) return;
         s_lastCopyFrame = g_simFrameIndex;
         size_t bytes = sizeof(float4) * p.numParticles;
         const char* reason = ClassifyRecycleFallback(ctx); // 复用已有分类函数
         std::fprintf(stderr,
-            "[RecycleFallback][Frame=%llu] reason=%s d_pos=%p d_pos_pred=%p bytes=%zu (%.3f MB)\n",
+            "[RecycleFallback][Frame=%llu] runtimePingPong=%d reason=%s d_pos=%p d_pos_pred=%p bytes=%zu (%.3f MB)\n",
             (unsigned long long)g_simFrameIndex,
+            runtimeEnablePingPong ? 1 : 0,
             reason,
             (void*)ctx.bufs->d_pos,
             (void*)ctx.bufs->d_pos_pred,

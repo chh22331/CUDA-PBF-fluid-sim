@@ -404,7 +404,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     if (!renderer.Initialize(hwnd, rp)) return 1;
 
     // 注入相机/可视化运行时参数（清屏色/粒子半径等）
-    console::FitCameraToDomain(cc);
+    //console::FitCameraToDomain(cc);
     console::ApplyRendererRuntime(cc, renderer);
     // Debug 初始化：默认开启，启动即暂停
     g_DebugEnabled = cc.debug.enabled;
@@ -546,7 +546,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
             if (config::TryHotReload(cfgState, cc, &err)) {
                 console::BuildSimParams(cc, simParams);
                 SanitizeRuntime(cc, simParams);
-                console::FitCameraToDomain(cc);
+                //console::FitCameraToDomain(cc);
                 console::ApplyRendererRuntime(cc, renderer);
                 if (cc.debug.printHotReload) {
                     std::printf("[HotReload] Applied whitelisted fields. profile=%s, K=%d, maxNeighbors=%d, sortEveryN=%d, point_size=%.2f\n",
