@@ -57,6 +57,7 @@
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
       <AdditionalOptions>--std=c++20 %(AdditionalOptions)</AdditionalOptions>
+      <GenerateRelocatableDeviceCode>true</GenerateRelocatableDeviceCode>
     </CudaCompile>
     <FxCompile />
   </ItemDefinitionGroup>
@@ -79,6 +80,7 @@
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
       <AdditionalOptions>--std=c++20 %(AdditionalOptions)</AdditionalOptions>
+      <GenerateRelocatableDeviceCode>true</GenerateRelocatableDeviceCode>
     </CudaCompile>
     <FxCompile />
   </ItemDefinitionGroup>
@@ -89,6 +91,7 @@
     <CudaCompile Include="sim\cell_compact.cu" />
     <CudaCompile Include="sim\cell_ranges.cu" />
     <CudaCompile Include="sim\device_buffers_kernels.cu" />
+    <CudaCompile Include="sim\device_globals.cu" />
     <CudaCompile Include="sim\eimtter.cu" />
     <CudaCompile Include="sim\emit_params.cu" />
     <CudaCompile Include="sim\hash_keys.cu" />
@@ -138,6 +141,10 @@
     <ClInclude Include="sim\cuda_grid_utils.cuh" />
     <ClInclude Include="sim\cuda_vec_math.cuh" />
     <ClInclude Include="sim\device_buffers.cuh" />
+    <ClInclude Include="sim\device_globals.cuh">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</ExcludedFromBuild>
+    </ClInclude>
     <ClInclude Include="sim\emitter.h" />
     <ClInclude Include="sim\emit_params.h" />
     <ClInclude Include="sim\graph_builder.h" />
