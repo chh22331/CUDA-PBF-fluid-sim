@@ -105,7 +105,7 @@ namespace console {
 
         // Debug/控制（新增）
         struct Debug {
-            bool enabled = false;        // 开启 Debug 模式
+            bool enabled = true;        // 开启 Debug 模式
             bool pauseOnStart = true;   // 启动即暂停在第 1 帧
             // 采用 Windows VK 与 ASCII 兼容编码（无需包含 windows.h）
             int  keyStep = 32;          // 空格：推进一帧
@@ -240,7 +240,7 @@ namespace console {
             float    cube_layer_spacing_world = 200.0f;
 
             // 立方体底层离地高度（世界坐标 Y）
-            float    cube_base_height = 100.0f;
+            float    cube_base_height = 50.0f;
 
             // 单个立方体内格点的粒子间距缩放（相对 smoothingRadius 或 h），用于调节初始紧实程度
             float    cube_lattice_spacing_factor_h = 1.05f;
@@ -300,7 +300,7 @@ namespace console {
             int   neighbor_cap = 0;
             int   launch_bounds_tbs = 256;
             int   min_blocks_per_sm = 2;
-            bool  use_cuda_graphs = true;
+            bool  use_cuda_graphs = false;
 
             // 新增：启用哈希/压缩网格（按 cell-key 排序 + 压缩段表）
             bool  use_hashed_grid = true;
@@ -322,6 +322,10 @@ namespace console {
             bool  graph_hot_update_enable = true;
             // 可选：扫描 kernel 参数槽位上限，限制 patch 遍历成本（默认 64）
             int   graph_hot_update_scan_limit = 64;
+			// 新增：允许使用 ping-pong 机制（前提是外部未绑定预测位置缓冲）
+            bool allow_pingpong_with_external_pred = true;
+            // 新增：是否启用双外部位置缓冲零拷贝 ping-pong（否则使用单外部预测缓冲旧实现）
+            bool use_external_pos_pingpong = true;
         } perf;
     };
 

@@ -276,6 +276,57 @@ namespace gfx {
         return true;
     }
 
+    bool RendererD3D12::CreateSharedParticleBufferIndexed(int slot, uint32_t numElements, uint32_t strideBytes, HANDLE& outSharedHandle) {
+        outSharedHandle = nullptr;
+        if (slot < 0 || slot > 1) return false;
+        const UINT64 sizeBytes = UINT64(numElements) * UINT64(strideBytes);
+        D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC rd{};
+        rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        rd.Width = sizeBytes;
+        rd.Height = 1;
+        rd.DepthOrArraySize = 1;
+        rd.MipLevels = 1;
+        rd.Format = DXGI_FORMAT_UNKNOWN;
+        rd.SampleDesc = { 1,0 };
+        rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        rd.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+        Microsoft::WRL::ComPtr<ID3D12Resource> res;
+        if (FAILED(m_device.device()->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_SHARED, &rd,
+            D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&res)))) return false;
+
+        int srvIndex = m_device.createBufferSRV(res.Get(), numElements, strideBytes);
+        if (srvIndex < 0) return false;
+
+        HANDLE handle = nullptr;
+        if (FAILED(m_device.device()->CreateSharedHandle(res.Get(), nullptr, GENERIC_ALL, nullptr, &handle))) return false;
+
+        m_sharedParticleBuffers[slot] = res;
+        m_particleSrvIndexPing[slot] = srvIndex;
+        if (slot == 0) m_activePingIndex = 0;
+
+        // 不在此更新 m_particleSrvIndex（由 UpdateParticleSRVForPingPong 决定）
+        if (numElements > m_particleCount) m_particleCount = numElements;
+        outSharedHandle = handle;
+        return true;
+    }
+
+    void RendererD3D12::UpdateParticleSRVForPingPong(const void* devicePtrCurr) {
+        if (!devicePtrCurr) return;
+        std::fprintf(stderr, "[Render][PingSRV] activeIndex=%d devicePtr=%p srv=%d\n",
+            m_activePingIndex, devicePtrCurr, m_particleSrvIndex);
+        // 匹配保存的 CUDA 指针 → 选择 SRV
+        for (int i = 0; i < 2; ++i) {
+            if (m_knownCudaPtrs[i] == devicePtrCurr && m_particleSrvIndexPing[i] >= 0) {
+                m_activePingIndex = i;
+                m_particleSrvIndex = m_particleSrvIndexPing[i];
+                return;
+            }
+        }
+        // 若未匹配到，保持原值（可能仍是单缓冲模式）
+    }
+
     void RendererD3D12::BuildFrameGraph(){
         prof::Range r("Renderer.BuildFrameGraph", prof::Color(0x90, 0x40, 0x30));
         m_fg = core::FrameGraph{};
@@ -400,14 +451,18 @@ namespace gfx {
         }
     }
 
-    bool RendererD3D12::ImportSharedBufferAsSRV(HANDLE sharedHandle,uint32_t numElements,uint32_t strideBytes,int& outSrvIndex){
-        ID3D12Resource* res=nullptr;
-        if(!m_device.openSharedResource(sharedHandle,__uuidof(ID3D12Resource),(void**)&res)) return false;
-        m_sharedParticleBuffer.Attach(res);
-        m_particleSrvIndex = m_device.createBufferSRV(m_sharedParticleBuffer.Get(), numElements, strideBytes);
-        if(m_particleSrvIndex<0) return false;
+    bool RendererD3D12::ImportSharedBufferAsSRV(HANDLE sharedHandle, uint32_t numElements, uint32_t strideBytes, int& outSrvIndex) {
+        ID3D12Resource* res = nullptr;
+        if (!m_device.openSharedResource(sharedHandle, __uuidof(ID3D12Resource), (void**)&res)) return false;
+        Microsoft::WRL::ComPtr<ID3D12Resource> local;
+        local.Attach(res);
+        int srvIndex = m_device.createBufferSRV(local.Get(), numElements, strideBytes);
+        if (srvIndex < 0) return false;
+        // 默认作为单缓冲旧路径
+        m_sharedParticleBuffer = local;
+        m_particleSrvIndex = srvIndex;
         m_particleCount = numElements;
-        outSrvIndex = m_particleSrvIndex;
+        outSrvIndex = srvIndex;
         return true;
     }
 

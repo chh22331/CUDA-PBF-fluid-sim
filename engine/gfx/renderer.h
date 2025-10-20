@@ -17,24 +17,24 @@ namespace gfx {
         float screenSize[2];
         float particleRadiusPx;
         float thicknessScale;
-        uint32_t groups;            // CubeMix: 立方体团数（非 CubeMix =0）
-        uint32_t particlesPerGroup; // 单团粒子数（非 CubeMix =0）
+        uint32_t groups;
+        uint32_t particlesPerGroup;
         uint32_t pad0;
         uint32_t pad1;
     };
 
     struct CameraParams {
         float3 eye = make_float3(0.5f, 0.5f, 2.0f);
-        float3 at  = make_float3(0.5f, 0.5f, 0.5f);
-        float3 up  = make_float3(0.0f, 1.0f, 0.0f);
+        float3 at = make_float3(0.5f, 0.5f, 0.5f);
+        float3 up = make_float3(0.0f, 1.0f, 0.0f);
         float  fovYDeg = 45.0f;
         float  nearZ = 0.01f;
-        float  farZ  = 100.0f;
+        float  farZ = 100.0f;
     };
     struct VisualParams {
         float particleRadiusPx = 3.0f;
-        float thicknessScale   = 1.0f;
-        float clearColor[4]    = {0.1f, 0.2f, 0.35f, 1.0f};
+        float thicknessScale = 1.0f;
+        float clearColor[4] = { 0.1f, 0.2f, 0.35f, 1.0f };
     };
 
     class RendererD3D12 {
@@ -45,37 +45,48 @@ namespace gfx {
         void RenderFrame(core::Profiler& profiler);
         void Shutdown();
 
-        bool ImportSharedBufferAsSRV(HANDLE sharedHandle, uint32_t numElements, uint32_t strideBytes, int& outSrvIndex);
+        // 原单缓冲接口（保留兼容）
         bool CreateSharedParticleBuffer(uint32_t numElements, uint32_t strideBytes, HANDLE& outSharedHandle);
+
+        // 新增：带索引创建（slot=0/1），用于双外部 ping-pong
+        bool CreateSharedParticleBufferIndexed(int slot, uint32_t numElements, uint32_t strideBytes, HANDLE& outSharedHandle);
+
+        // 新增：根据当前 CUDA 设备指针切换显示 SRV
+        void UpdateParticleSRVForPingPong(const void* devicePtrCurr);
+
+        bool ImportSharedBufferAsSRV(HANDLE sharedHandle, uint32_t numElements, uint32_t strideBytes, int& outSrvIndex);
 
         void SetCamera(const CameraParams& p) { m_camera = p; }
         void SetVisual(const VisualParams& v) { m_visual = v; }
         void SetParticleCount(uint32_t n) { m_particleCount = n; }
         void WaitForGPU();
 
-        // —— 新增：上传分组调色板（RGB 连续） —— //
         bool UpdateGroupPalette(const float* rgbTriples, uint32_t groupCount);
-
-        // —— 新增：设置分组元数据（CubeMix） —— //
         void SetParticleGrouping(uint32_t groups, uint32_t particlesPerGroup) {
             m_groups = groups;
             m_particlesPerGroup = particlesPerGroup;
         }
+        // 双缓冲新增（slot 0/1）
+        Microsoft::WRL::ComPtr<ID3D12Resource> m_sharedParticleBuffers[2];
+        int  m_particleSrvIndexPing[2] = { -1, -1 };
+        void* m_knownCudaPtrs[2] = { nullptr, nullptr }; // 来自 cudaExternalMemoryGetMappedBuffer 返回的设备指针
+        int  m_activePingIndex = 0;
 
     private:
-        void createThicknessResources(); // 保留
-        void createNormalResources();    // 保留
+        void createThicknessResources();
+        void createNormalResources();
 
         D3D12Device m_device;
         core::FrameGraph m_fg;
 
         float m_clearColor[4] = { 0.1f, 0.2f, 0.35f, 1.0f };
 
+        // 单缓冲旧字段（仍用于单外部预测）
         Microsoft::WRL::ComPtr<ID3D12Resource> m_sharedParticleBuffer;
         int m_particleSrvIndex = -1;
+
         uint32_t m_particleCount = 0;
 
-        // Palette
         Microsoft::WRL::ComPtr<ID3D12Resource> m_paletteBuffer;
         int m_paletteSrvIndex = -1;
         uint32_t m_groups = 0;

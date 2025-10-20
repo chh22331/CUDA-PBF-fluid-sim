@@ -29,6 +29,7 @@ namespace sim {
         void seedBoxLattice(uint32_t nx, uint32_t ny, uint32_t nz, float3 origin, float spacing);
         void seedBoxLatticeAuto(uint32_t total, float3 origin, float spacing);
         bool importPosPredFromD3D12(void* sharedHandleWin32, size_t bytes);
+        bool bindExternalPosPingPong(void* sharedHandleA, size_t bytesA, void* sharedHandleB, size_t bytesB); // new API
         uint32_t activeParticleCount() const { return m_params.numParticles; }
         bool computeStats(SimStats& out, uint32_t sampleStride = 4) const;
         bool computeStatsBruteforce(SimStats& out, uint32_t sampleStride, uint32_t maxISamples) const;
@@ -36,6 +37,14 @@ namespace sim {
         double lastGpuFrameMs() const { return static_cast<double>(m_lastFrameMs); }
         void seedCubeMix(uint32_t groupCount, const float3* groupCenters, uint32_t edgeParticles, float spacing, bool applyJitter, float jitterAmp, uint32_t jitterSeed);
         bool adaptivePrecisionCheck(const SimStats& stats);
+
+        float4* pingpongPosA() const { return (m_bufs.externalPingPong ? m_bufs.d_pos_curr : nullptr); } // 在 bind 后初始 curr=A
+        float4* pingpongPosB() const { return (m_bufs.externalPingPong ? m_bufs.d_pos_next : nullptr); }
+        bool externalPingPongEnabled() const { return m_bufs.externalPingPong; }
+        void debugSampleDisplacement(uint32_t sampleStride = 1024);
+
+        cudaStream_t cudaStream() const { return m_stream; }
+        void syncForRender(); // 新增
 
     private:
         bool buildGrid(const SimParams& p);

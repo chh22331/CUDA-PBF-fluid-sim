@@ -37,11 +37,16 @@ namespace sim {
         Half4* d_prev_pos_h4 = nullptr;
 
         uint32_t  capacity = 0;
-        bool      posPredExternal = false; // 预测位置由外部共享缓冲提供
+        bool      posPredExternal = false; // 单外部预测或镜像模式
+        bool      externalPingPong = false; // 真正双外部 ping-pong 模式
+        bool      ownsPosBuffers = true;    // 是否由内部分配并负责释放位置缓冲
 
         bool usePosHalf = false;
         bool useVelHalf = false;
         bool usePosPredHalf = false;
+
+        uint32_t guardA = 0xA11CE5u;
+        uint32_t guardB = 0xBEEFBEEFu;
 
         bool anyHalf() const { return usePosHalf || useVelHalf || usePosPredHalf; }
         bool hasPrevSnapshot() const { return d_prev_pos_h4 != nullptr; }
@@ -73,12 +78,11 @@ namespace sim {
             for (auto& it : items) if (it.enabled) UnpackHalf4ToFloat4(it.src, it.dst, N, s);
         }
 
-        // Swap position ping-pong (after frame)
-        // 新增：在 allocate 与 swap 后调用指针绑定
+        // 内部分配
         void allocate(uint32_t cap) {
             allocateInternal(cap, false, false, false);
             ensurePrevSnapshot();
-            BindDeviceGlobalsFrom(*this); // 新增
+            BindDeviceGlobalsFrom(*this);
         }
         void allocateWithPrecision(const sim::SimPrecision& prec, uint32_t cap) {
             bool posH = (prec.positionStore == sim::NumericType::FP16_Packed || prec.positionStore == sim::NumericType::FP16);
@@ -86,29 +90,113 @@ namespace sim {
             bool predH = (prec.predictedPosStore == sim::NumericType::FP16_Packed || prec.predictedPosStore == sim::NumericType::FP16);
             allocateInternal(cap, posH, velH, predH);
             ensurePrevSnapshot();
-            BindDeviceGlobalsFrom(*this); // 新增
+            BindDeviceGlobalsFrom(*this);
+        }
+
+        // 真正双外部 ping-pong 绑定（零拷贝）
+        void bindExternalPosPingPong(float4* ptrA, float4* ptrB, uint32_t cap) {
+            checkGuards("bindExternalPingPong.before");
+            std::fprintf(stderr,
+                "[ExternalPosPP][Bind.Enter] A=%p B=%p oldCurr=%p oldNext=%p externalPingPong(old)=%d posPredExternal(old)=%d owns=%d\n",
+                (void*)ptrA, (void*)ptrB, (void*)d_pos_curr, (void*)d_pos_next, (int)externalPingPong, (int)posPredExternal, (int)ownsPosBuffers);
+            if (ownsPosBuffers) {
+                if (d_pos_curr) cudaFree(d_pos_curr);
+                if (d_pos_next) cudaFree(d_pos_next);
+                d_pos_curr = d_pos_next = nullptr;
+                d_pos = d_pos_pred = nullptr;
+                ownsPosBuffers = false;
+            }
+            capacity = cap;
+            d_pos_curr = ptrA;
+            d_pos_next = ptrB;
+            d_pos = d_pos_curr;
+            d_pos_pred = d_pos_next;
+            // 关键：双外部语义不再使用“外部预测镜像”标志，避免进入镜像/复制分支
+            posPredExternal = false;         // 修正：改为 false
+            externalPingPong = true;
+            usePosHalf = usePosPredHalf = false;
+            d_pos_h4 = d_pos_pred_h4 = nullptr;
+            BindDeviceGlobalsFrom(*this);
+            std::fprintf(stderr,
+                "[ExternalPosPP][Bind.Applied] curr=%p next=%p pred=%p externalPingPong=1 posPredExternal=0 capacity=%u\n",
+                (void*)d_pos_curr, (void*)d_pos_next, (void*)d_pos_pred, capacity);
+            checkGuards("bindExternalPingPong.after");
         }
 
         void swapPositionPingPong() {
-            std::swap(d_pos_curr, d_pos_next);
-            d_pos = d_pos_curr;
-            d_pos_pred = d_pos_next;
-            // 绑定更新：位置指针交换后需要刷新符号
-            BindDeviceGlobalsFrom(*this); // 新增
+            checkGuards("swapPositionPingPong.before");
+            if (externalPingPong) {
+                // 纯外部双缓冲：直接交换指针，无任何复制
+                std::swap(d_pos_curr, d_pos_next);
+                d_pos = d_pos_curr;
+                d_pos_pred = d_pos_next; // 保持 predicted 语义 = next
+                std::fprintf(stderr,
+                    "[SwapPP][External] curr=%p next=%p pred=%p\n",
+                    (void*)d_pos_curr, (void*)d_pos_next, (void*)d_pos_pred);
+                BindDeviceGlobalsFrom(*this);
+                checkGuards("swapPositionPingPong.after");
+                return;
+            }
+            // 镜像/内部路径
+            float4* oldCurr = d_pos_curr;
+            float4* oldNext = d_pos_next;
+            if (posPredExternal) {
+                std::swap(d_pos_curr, d_pos_next);
+                d_pos = d_pos_curr; // 不触碰外部 d_pos_pred（镜像模式）
+                std::fprintf(stderr,
+                    "[SwapPP][SkipPred] curr=%p next=%p pred(external)=%p cap=%u\n",
+                    (void*)d_pos_curr, (void*)d_pos_next, (void*)d_pos_pred, capacity);
+            } else {
+                std::swap(d_pos_curr, d_pos_next);
+                d_pos = d_pos_curr;
+                d_pos_pred = d_pos_next;
+                std::fprintf(stderr,
+                    "[SwapPP][Internal] curr=%p next=%p pred=%p cap=%u\n",
+                    (void*)d_pos_curr, (void*)d_pos_next, (void*)d_pos_pred, capacity);
+            }
+            BindDeviceGlobalsFrom(*this);
+            checkGuards("swapPositionPingPong.after");
         }
 
+        // 单外部预测（镜像）
         void bindExternalPosPred(float4* ptr) {
-            if (d_pos_pred && !posPredExternal) cudaFree(d_pos_pred);
+            checkGuards("bindExternal.before");
+            std::fprintf(stderr,
+                "[ExternalPred][Bind.Enter] newPtr=%p oldPred=%p posPredExternal(old)=%d next(internal)=%p\n",
+                (void*)ptr, (void*)d_pos_pred, (int)posPredExternal, (void*)d_pos_next);
+            if (d_pos_pred && !posPredExternal && ownsPosBuffers) {
+                cudaFree(d_pos_pred);
+            }
             d_pos_pred = ptr;
-            d_pos_next = ptr;
             posPredExternal = true;
-            BindDeviceGlobalsFrom(*this); // 新增：外部预测缓冲绑定后刷新
+            externalPingPong = false; // 只是镜像
+            BindDeviceGlobalsFrom(*this);
+            std::fprintf(stderr,
+                "[ExternalPred][Bind.Applied] pred=%p next(internal)=%p mode=MirrorOnly external=1\n",
+                (void*)d_pos_pred, (void*)d_pos_next);
+            checkGuards("bindExternal.after");
         }
         void detachExternalPosPred() {
+            checkGuards("detachExternal.before");
+            std::fprintf(stderr,
+                "[PingPong][DetachExternal][Enter] predPtr=%p nextPtr=%p external(old)=%d pingPongExt=%d cap=%u\n",
+                (void*)d_pos_pred, (void*)d_pos_next, (int)posPredExternal, (int)externalPingPong, capacity);
             d_pos_pred = nullptr;
-            d_pos_next = nullptr;
             posPredExternal = false;
-            BindDeviceGlobalsFrom(*this); // 新增：解除后符号指针置空
+            externalPingPong = false;
+            BindDeviceGlobalsFrom(*this);
+            std::fprintf(stderr,
+                "[PingPong][DetachExternal][Applied] pred=%p external=%d pingPongExt=%d\n",
+                (void*)d_pos_pred, (int)posPredExternal, (int)externalPingPong);
+            checkGuards("detachExternal.after");
+        }
+
+        void checkGuards(const char* tag) const {
+            if (guardA != 0xA11CE5u || guardB != 0xBEEFBEEFu) {
+                std::fprintf(stderr,
+                    "[GuardCorrupt][%s] guardA=%08X guardB=%08X posPredExternal=%d externalPingPong=%d capacity=%u\n",
+                    tag, guardA, guardB, (int)posPredExternal, (int)externalPingPong, capacity);
+            }
         }
 
         void release();
@@ -116,13 +204,20 @@ namespace sim {
 
     private:
         void allocateInternal(uint32_t cap, bool posH, bool velH, bool predH) {
+            checkGuards("allocateInternal.before");
+            std::fprintf(stderr,
+                "[Origin][AllocateInternal] cap=%u posH=%d velH=%d predH=%d (prevCap=%u)\n",
+                cap, (int)posH, (int)velH, (int)predH, capacity);
+
             if (cap == 0) cap = 1;
             if (cap == capacity && posH == usePosHalf && velH == useVelHalf && predH == usePosPredHalf) return;
             release();
             capacity = cap;
             usePosHalf = posH; useVelHalf = velH; usePosPredHalf = predH;
+            ownsPosBuffers = true;
+            externalPingPong = false; posPredExternal = false;
             auto alloc = [&](void** p, size_t elemSize) { cudaMalloc(p, elemSize * capacity); };
-            // Allocate two position buffers for ping-pong unless external predicted supplied later
+            // Allocate two position buffers for ping-pong unless later replaced externally
             alloc((void**)&d_pos_curr, sizeof(float4));
             alloc((void**)&d_pos_next, sizeof(float4));
             d_pos = d_pos_curr; d_pos_pred = d_pos_next; // legacy alias
@@ -135,15 +230,29 @@ namespace sim {
             if (useVelHalf)      alloc((void**)&d_vel_h4,       sizeof(Half4));
             if (usePosPredHalf)  alloc((void**)&d_pos_pred_h4,  sizeof(Half4));
             if (useVelHalf)      alloc((void**)&d_delta_h4,     sizeof(Half4));
+            std::fprintf(stderr,
+                "[Origin][AllocateInternal][Done] cap=%u d_pos_curr=%p d_pos_next=%p posPredExternal=%d externalPingPong=%d\n",
+                capacity, (void*)d_pos_curr, (void*)d_pos_next, (int)posPredExternal, (int)externalPingPong);
+            checkGuards("allocateInternal.after");
+
         }
     };
 
     inline void DeviceBuffers::release() {
+        checkGuards("release.before");
+        std::fprintf(stderr,
+            "[Origin][Release] capacity=%u posPredExternal=%d externalPingPong=%d ownsPos=%d\n",
+            capacity, (int)posPredExternal, (int)externalPingPong, (int)ownsPosBuffers);
         auto fre = [](auto*& p) { if (p) { cudaFree(p); p = nullptr; } };
-        fre(d_pos_curr); fre(d_pos_next); fre(d_vel_curr); fre(d_vel_prev);
-        fre(d_pos); fre(d_vel); fre(d_pos_pred); fre(d_lambda); fre(d_delta);
+        // 仅释放内部拥有的 position 缓冲
+        if (ownsPosBuffers) { fre(d_pos_curr); fre(d_pos_next); }
+        fre(d_vel_curr); fre(d_vel_prev);
+        // 基础别名指针避免误释放外部（d_pos/d_pos_pred 与 curr/next 同步）
+        if (ownsPosBuffers) { fre(d_pos); fre(d_pos_pred); } else { d_pos = nullptr; d_pos_pred = nullptr; }
+        fre(d_lambda); fre(d_delta);
         fre(d_pos_h4); fre(d_vel_h4); fre(d_pos_pred_h4); fre(d_delta_h4); fre(d_prev_pos_h4);
-        capacity = 0; posPredExternal = false;
+        capacity = 0; posPredExternal = false; externalPingPong = false; ownsPosBuffers = true;
+        checkGuards("release.after");
         usePosHalf = useVelHalf = usePosPredHalf = false;
     }
 

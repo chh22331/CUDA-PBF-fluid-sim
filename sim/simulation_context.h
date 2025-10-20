@@ -19,4 +19,6 @@ namespace sim {
         // Graph / pipeline capture helpers
         bool               sortTempPreEnsured = false; // true 时 PhaseGridBuildFull 跳过 Query
     };
+    // ===== 新增：全局帧索引（供日志定位回退帧） =====
+    extern uint64_t g_simFrameIndex;
 } // namespace sim

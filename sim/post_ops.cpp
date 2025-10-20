@@ -16,6 +16,15 @@ extern "C" void LaunchXSPHCompactMP(float4*, const float4*, const sim::Half4*, c
 
 namespace sim {
 
+static inline const char* ClassifyRecycleFallback(const SimulationContext& ctx) {
+    bool ext = ctx.bufs->posPredExternal;
+    bool pp = ctx.pingPongPos;
+    if (ext && !pp) return "Both(External+PingPongOff)";
+    if (ext && pp)  return "ExternalPredOnly";
+    if (!ext && !pp) return "PingPongOffOnly";
+    return "Unexpected(NoCondition)"; // ä¸åº”è§¦å‘å¤åˆ¶æ—¶è°ƒç”¨
+}
+
 static DeviceParams MakeDP(const SimParams& p){ return MakeDeviceParams(p); }
 
 void BoundaryOp::run(SimulationContext& ctx, const SimParams& p, cudaStream_t s) {
@@ -25,13 +34,30 @@ void BoundaryOp::run(SimulationContext& ctx, const SimParams& p, cudaStream_t s)
 }
 
 void RecycleOp::run(SimulationContext& ctx, const SimParams& p, cudaStream_t s) {
-    if(!ctx.effectiveVel) ctx.effectiveVel = ctx.bufs->d_vel;
-    prof::Range r("PostOp.Recycle", prof::Color(0x90,0x40,0xA0));
-    LaunchRecycleToNozzleConst(ctx.bufs->d_pos, ctx.bufs->d_pos_pred, ctx.effectiveVel, p.grid, p.dt, p.numParticles, 0, s);
-    // ½öÔÚÎ´ÆôÓÃ ping-pong »òÊ¹ÓÃÍâ²¿Ô¤²â»º³åÊ±Ö´ÐÐÎ»ÖÃ¿½±´
-    if(p.numParticles>0 && (ctx.bufs->posPredExternal || !ctx.pingPongPos)){
-        prof::Range rCopy("D2D.pos_pred->pos", prof::Color(0xE0,0x30,0x30));
-        cudaMemcpyAsync(ctx.bufs->d_pos, ctx.bufs->d_pos_pred, sizeof(float4)*p.numParticles, cudaMemcpyDeviceToDevice, s);
+    if (!ctx.effectiveVel) ctx.effectiveVel = ctx.bufs->d_vel;
+    prof::Range r("PostOp.Recycle", prof::Color(0x90, 0x40, 0xA0));
+
+    LaunchRecycleToNozzleConst(ctx.bufs->d_pos, ctx.bufs->d_pos_pred, ctx.effectiveVel,
+        p.grid, p.dt, p.numParticles, 0, s);
+
+    static uint64_t s_lastCopyFrame = UINT64_MAX;
+    // externalPingPong æ¨¡å¼å®Œå…¨é›¶æ‹·è´ï¼šä¸æ‰§è¡Œå›žé€€å¤åˆ¶
+    bool needCopy = (p.numParticles > 0) && !ctx.pingPongPos && !ctx.bufs->posPredExternal && !ctx.bufs->externalPingPong;
+    if (needCopy) {
+        if (s_lastCopyFrame == g_simFrameIndex) return;
+        s_lastCopyFrame = g_simFrameIndex;
+        size_t bytes = sizeof(float4) * p.numParticles;
+        const char* reason = ClassifyRecycleFallback(ctx); // å¤ç”¨å·²æœ‰åˆ†ç±»å‡½æ•°
+        std::fprintf(stderr,
+            "[RecycleFallback][Frame=%llu] reason=%s d_pos=%p d_pos_pred=%p bytes=%zu (%.3f MB)\n",
+            (unsigned long long)g_simFrameIndex,
+            reason,
+            (void*)ctx.bufs->d_pos,
+            (void*)ctx.bufs->d_pos_pred,
+            bytes, bytes / (1024.0 * 1024.0));
+        prof::Range rCopy("D2D.pos_pred->pos", prof::Color(0xE0, 0x30, 0x30));
+        cudaMemcpyAsync(ctx.bufs->d_pos, ctx.bufs->d_pos_pred,
+            bytes, cudaMemcpyDeviceToDevice, s);
     }
 }
 

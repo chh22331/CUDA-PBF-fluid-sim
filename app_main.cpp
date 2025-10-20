@@ -437,18 +437,39 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 
     // 4) D3D12-CUDA 共享粒子缓冲
     {
-        HANDLE shared = nullptr;
         const uint32_t capacity = (simParams.maxParticles > 0) ? simParams.maxParticles : simParams.numParticles;
-        if (!renderer.CreateSharedParticleBuffer(capacity, sizeof(float4), shared)) {
-            MessageBoxW(hwnd, L"CreateSharedParticleBuffer failed.", L"PBF-X", MB_ICONERROR);
-            return 1;
+        if (cc.perf.use_external_pos_pingpong) {
+            HANDLE sharedA = nullptr, sharedB = nullptr;
+            if (!renderer.CreateSharedParticleBufferIndexed(0, capacity, sizeof(float4), sharedA)) { /* error */ }
+            if (!renderer.CreateSharedParticleBufferIndexed(1, capacity, sizeof(float4), sharedB)) { /* error */ }
+
+            size_t bytes = size_t(capacity) * sizeof(float4);
+            if (!simulator.bindExternalPosPingPong(sharedA, bytes, sharedB, bytes)) { /* error */ }
+
+            // 关闭句柄（已被 CUDA / D3D12 导入）
+            CloseHandle(sharedA);
+            CloseHandle(sharedB);
+
+            // 将 CUDA 返回的两个设备指针注册给渲染器（新增获取接口）
+            // 需要在 Simulator 增加访问函数：
+            // float4* pingpongPosA() const; float4* pingpongPosB() const;
+            renderer.m_knownCudaPtrs[0] = simulator.pingpongPosA();
+            renderer.m_knownCudaPtrs[1] = simulator.pingpongPosB();
+            renderer.UpdateParticleSRVForPingPong(simulator.devicePositions());
         }
-        if (!simulator.importPosPredFromD3D12(shared, size_t(capacity) * sizeof(float4))) {
+        else {
+            HANDLE shared = nullptr;
+            if (!renderer.CreateSharedParticleBuffer(capacity, sizeof(float4), shared)) {
+                MessageBoxW(hwnd, L"CreateSharedParticleBuffer failed.", L"PBF-X", MB_ICONERROR);
+                return 1;
+            }
+            if (!simulator.importPosPredFromD3D12(shared, size_t(capacity) * sizeof(float4))) {
+                CloseHandle(shared);
+                MessageBoxW(hwnd, L"importPosPredFromD3D12 failed.", L"PBF-X", MB_ICONERROR);
+                return 1;
+            }
             CloseHandle(shared);
-            MessageBoxW(hwnd, L"importPosPredFromD3D12 failed.", L"PBF-X", MB_ICONERROR);
-            return 1;
         }
-        CloseHandle(shared);
     }
 
     // 5) 初始布点 - 根据模式选择
@@ -684,6 +705,11 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         }
         if (doStep) {
             simulator.step(simParams);
+            // 新增：渲染前同步 CUDA（自动模式防止读取未完成写入导致位置来回跳）
+            simulator.syncForRender();
+            if (simulator.externalPingPongEnabled()) {
+                renderer.UpdateParticleSRVForPingPong(simulator.devicePositions());
+            }
             if (g_DebugEnabled && g_DebugStepRequested) {
                 g_DebugStepRequested = false;
                 g_DebugPaused = true;
