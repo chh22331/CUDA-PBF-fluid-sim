@@ -472,6 +472,19 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         }
     }
 
+    // === 新增：创建并导入共享 Fence 用于 GPU 级同步 ===
+    HANDLE hSharedFence = nullptr;
+    bool fenceCreated = renderer.CreateSimulationSharedFence(hSharedFence);
+    if (fenceCreated && hSharedFence) {
+        if (!simulator.importSharedFenceForSignal(hSharedFence)) {
+            std::fprintf(stderr, "[SimFence] Import failed, fallback to stream sync.\n");
+        }
+        // 句柄可关闭（CUDA 已导入）
+        CloseHandle(hSharedFence); hSharedFence = nullptr;
+    } else {
+        std::fprintf(stderr, "[SimFence] CreateSimulationSharedFence failed, fallback path active.\n");
+    }
+
     // 5) 初始布点 - 根据模式选择
     if (cc.sim.demoMode == console::RuntimeConsole::Simulation::DemoMode::CubeMix) {
         // CubeMix 模式：生成立方体中心并为每个中心播种一个立方体
@@ -705,15 +718,19 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         }
         if (doStep) {
             simulator.step(simParams);
-            // 新增：渲染前同步 CUDA（自动模式防止读取未完成写入导致位置来回跳）
-            simulator.syncForRender();
-            if (simulator.externalPingPongEnabled()) {
-                renderer.UpdateParticleSRVForPingPong(simulator.devicePositions());
-            }
+            // Fence 模式：不再需要 stream 同步；根据开关允许保留旧路径
+            if (!fenceCreated) simulator.syncForRender();
+            if (simulator.externalPingPongEnabled()) renderer.UpdateParticleSRVForPingPong(simulator.devicePositions());
             if (g_DebugEnabled && g_DebugStepRequested) {
                 g_DebugStepRequested = false;
                 g_DebugPaused = true;
             }
+        }
+
+        // 渲染前 GPU 等待仿真 fence（纯 GPU，同步最新完成帧）
+        if (fenceCreated) {
+            uint64_t val = simulator.lastSignalFenceValue();
+            if (val > 0) renderer.WaitSimulationFence(val);
         }
 
         // 记录上一帧 GPU 仿真耗时（ms）：事件查询成功时更新

@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <cuda_runtime.h>
+#include <windows.h>
 #include "parameters.h"
 #include "device_buffers.cuh"
 #include "grid_buffers.cuh"
@@ -46,6 +47,10 @@ namespace sim {
         cudaStream_t cudaStream() const { return m_stream; }
         void syncForRender(); // 新增
 
+        // ==== 新增：外部 semaphore (D3D12 fence) 集成 ====
+        bool importSharedFenceForSignal(HANDLE sharedFenceHandle); // 导入 D3D12_FENCE_FLAG_SHARED fence 作为 external semaphore
+        uint64_t lastSignalFenceValue() const { return m_lastFenceSignalValue; }
+
     private:
         bool buildGrid(const SimParams& p);
         bool ensureSortTemp(std::size_t bytes);
@@ -63,6 +68,7 @@ namespace sim {
         void kVelocityAndPost(cudaStream_t s, const SimParams& p);
         bool cacheGraphNodes();
         void patchGraphPositionPointers(bool fullGraph, float4* oldCurr, float4* oldNext); // new
+        void updateFenceSignalNode(bool fullGraph); // 设置图中外部 semaphore 信号节点的新 fence value
 
     private:
         SimParams m_params{};
@@ -120,5 +126,11 @@ namespace sim {
         bool m_adaptHalfDisabled = false;
 
         ParamChangeTracker m_paramTracker; KernelDispatcher m_kernelDispatcher; PhasePipeline m_pipeline; SimulationContext  m_ctx; std::unique_ptr<IGridStrategy> m_gridStrategy; PostOpsPipeline m_postPipeline;
+
+        // 外部 semaphore (D3D12 Fence) 句柄与状态
+        cudaExternalSemaphore_t m_extSemaphoreFence = nullptr;
+        uint64_t m_lastFenceSignalValue = 0;
+        cudaGraphNode_t m_nodeFenceSignalFull = nullptr;
+        cudaGraphNode_t m_nodeFenceSignalCheap = nullptr;
     };
 } // namespace sim
