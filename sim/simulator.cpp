@@ -108,87 +108,87 @@ namespace sim {
     // 前向声明以便在下方使用（定义仍在后面）
     static inline bool hostPtrReadable(const void* p);
 
-    // Add helper to patch kernel node params with new position pointers
-    void Simulator::patchGraphPositionPointers(bool fullGraph, float4* oldCurr, float4* oldNext) {
-        const auto& c = console::Instance();
-        if (!c.perf.graph_hot_update_enable) return;
-
-        cudaGraphExec_t exec = fullGraph ? m_graphExecFull : m_graphExecCheap;
-        if (!exec) return;
-
-        // 安全性由调用者保证：此时上一帧已经完成（事件已完成），不再强制同步
-        auto& nodes = fullGraph ? m_posNodesFull : m_posNodesCheap;
-        if (nodes.empty()) return;
-
-        int userLimit = c.perf.graph_hot_update_scan_limit;
-        int scanLimit = (userLimit > 0 && userLimit <= 4096) ? userLimit : 512;
-
-        int patchedPtr = 0;
-        int patchedGrid = 0;
-
-        float4* currPosArray[4] = {
-            m_bufs.d_pos,
-            m_bufs.d_pos_pred,
-            m_bufs.d_pos_curr,
-            m_bufs.d_pos_next
-        };
-
-        for (auto nd : nodes) {
-            cudaKernelNodeParams kp{};
-            if (cudaGraphKernelNodeGetParams(nd, &kp) != cudaSuccess) continue;
-            if (!kp.kernelParams) continue;
-
-            uint32_t blocks = (m_params.numParticles + 255u) / 256u;
-            if (blocks == 0) blocks = 1;
-            bool gridChanged = false;
-            if (kp.gridDim.x != blocks) {
-                kp.gridDim.x = blocks;
-                gridChanged = true;
+// Add helper to patch kernel node params with new position pointers
+void Simulator::patchGraphPositionPointers(bool fullGraph, float4* oldCurr, float4* oldNext) {
+    const auto& c = console::Instance();
+    if (!c.perf.graph_hot_update_enable) return;
+    cudaGraphExec_t exec = fullGraph ? m_graphExecFull : m_graphExecCheap;
+    if (!exec) return;
+    CUDA_CHECK(cudaStreamSynchronize(m_stream));
+    // 只使用缓存的包含 position 指针的节点列表（cacheGraphNodes 已构建）
+    auto& nodes = fullGraph ? m_posNodesFull : m_posNodesCheap;
+    if (nodes.empty()) return;
+    auto& nodes = fullGraph ? m_posNodesFull : m_posNodesCheap;
+    int scanLimit = (c.perf.graph_hot_update_scan_limit > 0 &&
+        c.perf.graph_hot_update_scan_limit < 256)
+        ? c.perf.graph_hot_update_scan_limit : 64;
+    int userLimit = c.perf.graph_hot_update_scan_limit;
+    int patched = 0;
+    for (auto nd : nodes) {
+        cudaKernelNodeParams kp{};
+        if (cudaGraphKernelNodeGetParams(nd, &kp) != cudaSuccess) continue;
+        if (!kp.kernelParams) continue;
+        if (cudaGraphKernelNodeGetParams(nd, &kp) != cudaSuccess) continue;
+        void** params = (void**)kp.kernelParams;
+        bool modified = false;
+        void** params = (void**)kp.kernelParams;
+        // 扫描有限槽位（只在首次遇到旧指针时替换）
+        for (int i = 0; i < scanLimit; ++i) {
+            void* slot = params[i];
+            if (!slot) break;
+            if (!hostPtrReadable(slot)) break;
+            // 直接指针匹配
+            if (slot == (void*)oldCurr) {
+                params[i] = (void*)m_bufs.d_pos_curr;
+                modified = true;
+                continue;
+            }
+            if (slot == (void*)oldNext) {
+                params[i] = (void*)m_bufs.d_pos_next;
+                modified = true;
+                continue;
             }
 
-            void** params = (void**)kp.kernelParams;
-            bool modifiedPtr = false;
-
-            for (int i = 0; i < scanLimit; ++i) {
-                void* slot = params[i];
-                if (!slot) break;
-                if (!hostPtrReadable(slot)) break;
-                void* inner = *(void**)slot;
-
-                if (inner == (void*)oldCurr) {
-                    *(void**)slot = (void*)m_bufs.d_pos_curr;
-                    modifiedPtr = true;
-                }
-                else if (inner == (void*)oldNext) {
-                    *(void**)slot = (void*)m_bufs.d_pos_next;
-                    modifiedPtr = true;
-                }
+            // 主机二级存储（参数块指针）匹配
+            if (!hostPtrReadable(slot)) continue;
+            void* inner = *(void**)slot;
+            if (inner == (void*)oldCurr) {
+                *(void**)slot = (void*)m_bufs.d_pos_curr;
+                modified = true;
             }
-
-            if (modifiedPtr || gridChanged) {
-                cudaError_t err = cudaGraphExecKernelNodeSetParams(exec, nd, &kp);
-                if (err == cudaSuccess) {
-                    if (modifiedPtr) ++patchedPtr;
-                    if (gridChanged) ++patchedGrid;
-                }
-                else {
-                    std::fprintf(stderr,
-                        "[Graph][Patch][Warn] setParams fail err=%d (%s)\n",
-                        (int)err, cudaGetErrorString(err));
-                }
+            else if (inner == (void*)oldNext) {
+                *(void**)slot = (void*)m_bufs.d_pos_next;
+                modified = true;
             }
         }
-
-        if (patchedPtr || patchedGrid) {
-            if (c.debug.printHints) {
+            }
+        if (modified) {
+            cudaError_t err = cudaGraphExecKernelNodeSetParams(exec, nd, &kp);
+            if (err == cudaSuccess) {
+                ++patched;
+            }
+            else {
                 std::fprintf(stderr,
-                    "[Graph][HotUpdate] PtrPatched=%d GridPatched=%d (full=%d)\n",
-                    patchedPtr, patchedGrid, fullGraph ? 1 : 0);
+                    "[Graph][PatchPos][Warn] setParams failed err=%d (%s)\n",
+                    (int)err, cudaGetErrorString(err));
             }
         }
     }
-    // ===== Utility =====
-    static inline bool hostPtrReadable(const void* p) {
+        }
+    if (patched > 0) {
+        m_graphNodesPatchedOnce = true;
+        if (c.debug.printHints) {
+            std::fprintf(stderr,
+                "[Graph][HotUpdate] Patched position pointers on %d kernel nodes (full=%d)\n",
+                patched, fullGraph ? 1 : 0);
+        }
+    }
+}
+
+// ===== Utility =====
+static inline bool hostPtrReadable(const void* p) {
+// ===== Utility =====
+static inline bool hostPtrReadable(const void* p) {
 #ifdef _WIN32
         MEMORY_BASIC_INFORMATION mbi{};
         if (!p) return false;
@@ -433,12 +433,8 @@ namespace sim {
                     if (!kp.kernelParams) continue;
                     void** params = (void**)kp.kernelParams;
                     std::unordered_set<const void*> watchVel{ (const void*)m_bufs.d_vel, (const void*)m_bufs.d_delta };
-                    std::unordered_set<const void*> watchPos{
-                        (const void*)m_bufs.d_pos,
-                        (const void*)m_bufs.d_pos_pred,
-                        (const void*)m_bufs.d_pos_curr,
-                        (const void*)m_bufs.d_pos_next
-                    }; bool hasVel = false, hasPos = false;
+                    std::unordered_set<const void*> watchPos{ (const void*)m_bufs.d_pos, (const void*)m_bufs.d_pos_pred };
+                    bool hasVel = false, hasPos = false;
                     for (int i = 0; i < 32; ++i) {
                         void* slot = params[i];
                         if (!slot) break;
@@ -626,46 +622,45 @@ void Simulator::kSolveIter(cudaStream_t s, const SimParams& p) {
 }
 
 void Simulator::kVelocityAndPost(cudaStream_t s, const SimParams& p) {
-    prof::Range r("Phase.VelocityPost", prof::Color(0xC0, 0x40, 0xA0));
+    prof::Range r("Phase.VelocityPost", prof::Color(0xC0,0x40,0xA0));
     bool useMP = UseHalfForPosition(p, Stage::VelocityUpdate, m_bufs);
     if (useMP)
         LaunchVelocityMP(m_bufs.d_vel, m_bufs.d_pos, m_bufs.d_pos_pred,
-            m_bufs.d_pos_h4, m_bufs.d_pos_pred_h4,
-            1.0f / p.dt, p.numParticles, s);
+                         m_bufs.d_pos_h4, m_bufs.d_pos_pred_h4,
+                         1.0f / p.dt, p.numParticles, s);
     else
         LaunchVelocity(m_bufs.d_vel, m_bufs.d_pos, m_bufs.d_pos_pred,
-            1.0f / p.dt, p.numParticles, s);
+                       1.0f / p.dt, p.numParticles, s);
 
     bool xsphApplied = false;
     if (p.xsph_c > 0.f && p.numParticles > 0) {
         DeviceParams dp = MakeDeviceParams(p);
         bool useMPxs = (UseHalfForPosition(p, Stage::XSPH, m_bufs) &&
-            UseHalfForVelocity(p, Stage::XSPH, m_bufs));
+                        UseHalfForVelocity(p, Stage::XSPH, m_bufs));
         if (m_useHashedGrid) {
             if (useMPxs)
                 LaunchXSPHCompactMP(m_bufs.d_delta, m_bufs.d_vel, m_bufs.d_vel_h4,
-                    m_bufs.d_pos_pred, m_bufs.d_pos_pred_h4,
-                    m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
-                    m_grid.d_cellUniqueKeys, m_grid.d_cellOffsets, m_grid.d_compactCount,
-                    dp, p.numParticles, s);
+                                    m_bufs.d_pos_pred, m_bufs.d_pos_pred_h4,
+                                    m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
+                                    m_grid.d_cellUniqueKeys, m_grid.d_cellOffsets, m_grid.d_compactCount,
+                                    dp, p.numParticles, s);
             else
                 LaunchXSPHCompact(m_bufs.d_delta, m_bufs.d_vel, m_bufs.d_pos_pred,
-                    m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
-                    m_grid.d_cellUniqueKeys, m_grid.d_cellOffsets, m_grid.d_compactCount,
-                    dp, p.numParticles, s);
-        }
-        else {
+                                   m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
+                                   m_grid.d_cellUniqueKeys, m_grid.d_cellOffsets, m_grid.d_compactCount,
+                                   dp, p.numParticles, s);
+        } else {
             if (useMPxs)
                 LaunchXSPHMP(m_bufs.d_delta, m_bufs.d_vel, m_bufs.d_vel_h4,
-                    m_bufs.d_pos_pred, m_bufs.d_pos_pred_h4,
-                    m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
-                    m_grid.d_cellStart, m_grid.d_cellEnd,
-                    dp, p.numParticles, s);
+                             m_bufs.d_pos_pred, m_bufs.d_pos_pred_h4,
+                             m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
+                             m_grid.d_cellStart, m_grid.d_cellEnd,
+                             dp, p.numParticles, s);
             else
                 LaunchXSPH(m_bufs.d_delta, m_bufs.d_vel, m_bufs.d_pos_pred,
-                    m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
-                    m_grid.d_cellStart, m_grid.d_cellEnd,
-                    dp, p.numParticles, s);
+                           m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
+                           m_grid.d_cellStart, m_grid.d_cellEnd,
+                           dp, p.numParticles, s);
         }
         xsphApplied = true;
     }
@@ -673,19 +668,16 @@ void Simulator::kVelocityAndPost(cudaStream_t s, const SimParams& p) {
     float4* effectiveVel = xsphApplied ? m_bufs.d_delta : m_bufs.d_vel;
     LaunchBoundary(m_bufs.d_pos_pred, effectiveVel, p.grid, p.boundaryRestitution, p.numParticles, s);
     LaunchRecycleToNozzleConst(m_bufs.d_pos, m_bufs.d_pos_pred, effectiveVel,
-        p.grid, p.dt, p.numParticles, 0, s);
+                               p.grid, p.dt, p.numParticles, 0, s);
 
-    // ================== 修改：在启用 ping-pong 时跳过最终 memcpy ==================
     if (p.numParticles > 0) {
-        if (!m_ctx.pingPongPos) { // 仅非 ping-pong 才需要把预测写回当前
-            CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_pos, m_bufs.d_pos_pred,
-                sizeof(float4) * p.numParticles,
-                cudaMemcpyDeviceToDevice, s));
-            if (xsphApplied) {
-                CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_vel, m_bufs.d_delta,
-                    sizeof(float4) * p.numParticles,
-                    cudaMemcpyDeviceToDevice, s));
-            }
+        CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_pos, m_bufs.d_pos_pred,
+                                   sizeof(float4) * p.numParticles,
+                                   cudaMemcpyDeviceToDevice, s));
+        if (xsphApplied) {
+            CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_vel, m_bufs.d_delta,
+                                       sizeof(float4) * p.numParticles,
+                                       cudaMemcpyDeviceToDevice, s));
         }
     }
 
@@ -808,35 +800,49 @@ void Simulator::kIntegratePred(cudaStream_t s, const SimParams& p) {
             updateFenceSignalNode(true);
             CUDA_CHECK(cudaGraphLaunch(m_graphExecFull, m_stream));
             m_lastFullFrame = m_frameIndex;
+            m_pipeline.runCheap(m_ctx, m_params, m_stream);
         }
-        else {
-            updateFenceSignalNode(false);
-            CUDA_CHECK(cudaGraphLaunch(m_graphExecCheap, m_stream));
+    }
+ 
+    // 执行位置 ping-pong（仅在允许且未使用外部预测缓冲时）
+    if (m_ctx.pingPongPos) {
+        float4* oldCurr = m_bufs.d_pos_curr;
+        float4* oldNext = m_bufs.d_pos_next;
+        std::fprintf(stderr,
+            "[PingPong][SwapAttempt][Frame=%llu] beforeSwap curr=%p next=%p pred=%p ext=%d allow=%d\n",
+            (unsigned long long)m_frameIndex, (void*)oldCurr, (void*)oldNext, (void*)m_bufs.d_pos_pred,
+            (int)m_bufs.posPredExternal, (int)allowPP);
+        m_bufs.swapPositionPingPong();
+        if (useGraphs && c.perf.graph_hot_update_enable) {
+            patchGraphPositionPointers(true, oldCurr, oldNext);
+            patchGraphPositionPointers(false, oldCurr, oldNext);
         }
+        std::fprintf(stderr,
+            "[PingPong][SwapDone][Frame=%llu] curr=%p next=%p pred=%p ext=%d\n",
+            (unsigned long long)m_frameIndex, (void*)m_bufs.d_pos_curr, (void*)m_bufs.d_pos_next, (void*)m_bufs.d_pos_pred,
+            (int)m_bufs.posPredExternal);
+    } else {
+        std::fprintf(stderr,
+            "[PingPong][SkipSwap][Frame=%llu] pingPongPos=0 ext=%d allow=%d can=%d curr=%p next=%p pred=%p\n",
+            (unsigned long long)m_frameIndex, (int)m_bufs.posPredExternal, (int)allowPP, (int)m_canPingPongPos,
+            (void*)m_bufs.d_pos_curr, (void*)m_bufs.d_pos_next, (void*)m_bufs.d_pos_pred);
+    }
 
-        // 记录一个事件在流尾（紧跟信号节点）
-        if (!m_evGraphEnd) cudaEventCreate(&m_evGraphEnd);
-        cudaEventRecord(m_evGraphEnd, m_stream);
-
-        // 延迟交换：等待事件（或用 cudaEventQuery + 下帧再交换）
-        // 简单同步版本（验证用）：
-        cudaEventSynchronize(m_evGraphEnd);
-        if (m_ctx.pingPongPos) {
-            float4* oldCurr = m_bufs.d_pos_curr;
-            float4* oldNext = m_bufs.d_pos_next;
-            m_bufs.swapPositionPingPong();
-            if (c.perf.graph_hot_update_enable) {
-                patchGraphPositionPointers(true, oldCurr, oldNext);
-                patchGraphPositionPointers(false, oldCurr, oldNext);
+        if (doTiming) {
+            if (m_evEnd[cur]) CUDA_CHECK(cudaEventRecord(m_evEnd[cur], m_stream));
+            if (m_evCursor > 0 && m_evStart[prev] && m_evEnd[prev]) {
+                if (cudaEventQuery(m_evEnd[prev]) == cudaSuccess) {
+                    float ms = 0.f;
+                    CUDA_CHECK(cudaEventElapsedTime(&ms, m_evStart[prev], m_evEnd[prev]));
+                    m_lastFrameMs = ms;
+                }
             }
         }
-    }
-    else {
-        // Non-graph path (retain old behavior + manual signal if semaphore present)
-        bool needFull = (m_frameIndex == 0) || (m_lastFullFrame < 0) || ((m_frameIndex - m_lastFullFrame) >= ((c.perf.sort_compact_every_n<=0)?1:c.perf.sort_compact_every_n)) || (m_params.numParticles != m_captured.numParticles);
-        if (needFull) { m_pipeline.runFull(m_ctx, m_params, m_stream); m_lastFullFrame = m_frameIndex; }
-        else { m_pipeline.runCheap(m_ctx, m_params, m_stream); }
-    }
+        std::fprintf(stderr, "[PingPongEval][Frame=%llu] posPredExternal=%d pingPongPos=%d curr=%p next=%p pred=%p\n",
+            (unsigned long long)m_frameIndex, (int)m_bufs.posPredExternal, (int)m_ctx.pingPongPos,
+            (void*)m_bufs.d_pos_curr, (void*)m_bufs.d_pos_next, (void*)m_bufs.d_pos_pred);
+            (unsigned long long)m_frameIndex, (int)m_bufs.posPredExternal, (int)m_ctx.pingPongPos,
+            (void*)m_bufs.d_pos_curr, (void*)m_bufs.d_pos_next, (void*)m_bufs.d_pos_pred);
 
     // ping-pong swap
     if (m_ctx.pingPongPos) {

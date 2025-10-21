@@ -38,9 +38,9 @@ namespace console {
         NumericType velocityStore = NumericType::FP32;
         NumericType predictedPosStore = NumericType::FP32; // PBF 预测位置（若使用）
         NumericType lambdaStore = NumericType::FP32; // PBF λ（约束求解敏感，初期保持 FP32）
-        NumericType densityStore = NumericType::FP32;
-        NumericType auxStore = NumericType::FP32; // 临时/梯度/累加器等
-        NumericType renderTransfer = NumericType::FP32; // 提交渲染的转换目标（保留 float3 默认）
+        NumericType densityStore = NumericType::FP16;
+        NumericType auxStore = NumericType::FP16; // 临时/梯度/累加器等
+        NumericType renderTransfer = NumericType::FP16; // 提交渲染的转换目标（保留 float3 默认）
 
         // ---------------- 核心计算精度（全局默认） ----------------
         NumericType coreCompute = NumericType::FP16; // 主环（邻居/密度/λ/积分）
@@ -49,7 +49,7 @@ namespace console {
 
         // ---------------- 分阶段覆盖（若 useStageOverrides = true 生效） ----------------
         bool        useStageOverrides = true;
-        NumericType emissionCompute = NumericType::FP32;
+        NumericType emissionCompute = NumericType::FP16;
         NumericType gridBuildCompute = NumericType::FP32;
         NumericType neighborCompute = NumericType::FP32;
         NumericType densityCompute = NumericType::FP32;
@@ -105,7 +105,7 @@ namespace console {
 
         // Debug/控制（新增）
         struct Debug {
-            bool enabled = false;        // 开启 Debug 模式
+            bool enabled = true;        // 开启 Debug 模式
             bool pauseOnStart = true;   // 启动即暂停在第 1 帧
             // 采用 Windows VK 与 ASCII 兼容编码（无需包含 windows.h）
             int  keyStep = 32;          // 空格：推进一帧
@@ -149,8 +149,8 @@ namespace console {
         // 仿真配置（集中所有物理与发射/域参数）
         struct Simulation {
             // 粒子与发射器
-            uint32_t numParticles = 3000000;
-            uint32_t maxParticles = 3000000;
+            uint32_t numParticles = 400000;
+            uint32_t maxParticles = 2000000;
             uint32_t emitPerStep = 50;
             bool     faucetFillEnable = true;
             bool     recycleToNozzle = false;
@@ -232,7 +232,7 @@ namespace console {
             static constexpr uint32_t cube_group_count_max = 512;
 
             // 立方体层数（垂直分层放置）。若 cube_group_count=32 且 cube_layers=2 -> 每层16个
-            uint32_t cube_layers = 2;
+            uint32_t cube_layers = 8;
 
             // 立方体中心之间的水平间距（世界单位，沿 X/Z）
             float    cube_group_spacing_world = 80.0f;
@@ -321,13 +321,11 @@ namespace console {
             // true : 使用 ping-pong + cudaGraphExecKernelNodeSetParams (零拷贝模式)
             bool  graph_hot_update_enable = true;
             // 可选：扫描 kernel 参数槽位上限，限制 patch 遍历成本（默认 64）
-            int   graph_hot_update_scan_limit = 4096;
+            int   graph_hot_update_scan_limit = 64;
 			// 新增：允许使用 ping-pong 机制（前提是外部未绑定预测位置缓冲）
-            bool allow_pingpong_with_external_pred = false;
+            bool allow_pingpong_with_external_pred = true;
             // 新增：是否启用双外部位置缓冲零拷贝 ping-pong（否则使用单外部预测缓冲旧实现）
             bool use_external_pos_pingpong = true;
-            // 新增：位置更新模式开关；true=使用 ping-pong (零拷贝)，false=每帧 cudaMemcpyAsync 拷贝
-            bool use_pos_pingpong = true;
         } perf;
     };
 
