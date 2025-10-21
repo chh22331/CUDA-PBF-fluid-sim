@@ -743,17 +743,16 @@ void Simulator::kVelocityAndPost(cudaStream_t s, const SimParams& p) {
         p.grid, p.dt, p.numParticles, 0, s);
     cudaStreamSynchronize(s);
 
-    if (!console::Instance().perf.use_cuda_graphs)
-        DebugPrintP0("AfterBoundaryRecycle", m_bufs, p.numParticles, p.dt);
-
-    if (p.numParticles > 0 && !m_bufs.externalPingPong) {
+    if (p.numParticles > 0) {
         CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_pos, m_bufs.d_pos_pred,
-            sizeof(float4) * p.numParticles,
-            cudaMemcpyDeviceToDevice, s));
+                                   sizeof(float4) * p.numParticles,
+                                   cudaMemcpyDeviceToDevice, s));
+        if (xsphApplied) {
+            CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_vel, m_bufs.d_delta,
+                                       sizeof(float4) * p.numParticles,
+                                       cudaMemcpyDeviceToDevice, s));
+        }
     }
-
-    m_ctx.effectiveVel = effectiveVel;
-    m_ctx.xsphApplied = xsphApplied;
 
     if (m_bufs.anyHalf() && m_params.numParticles > 0 && !m_precisionLogged) {
         m_bufs.packAllToHalf(m_params.numParticles, m_stream);
@@ -1016,34 +1015,61 @@ bool Simulator::step(const SimParams& p) {
 
         float4* oldCurr = m_bufs.d_pos_curr;
         float4* oldNext = m_bufs.d_pos_next;
-        float4* oldPred = nullptr; // 若本帧内预测指针发生过重建，可抓取旧值；这里保持 null 仅在重分配时触发 graphDirty
-        std::swap(m_bufs.d_pos_curr, m_bufs.d_pos_next);
-        m_bufs.d_pos = m_bufs.d_pos_curr;
+        std::fprintf(stderr,
+            "[PingPong][SwapAttempt][Frame=%llu] (AFTER SYNC) curr=%p next=%p pred=%p ext=%d allow=%d\n",
+            (unsigned long long)m_frameIndex, (void*)oldCurr, (void*)oldNext, (void*)m_bufs.d_pos_pred,
+            (int)m_bufs.posPredExternal, (int)allowPP);
 
-        m_swappedThisFrame = true;
+        m_bufs.swapPositionPingPong();
 
-        // 若图没被强制重建且使用热更新，则尝试补丁
-        if (!m_graphDirty) {
-            patchGraphPositionPointers(true, oldCurr, oldNext, oldPred);
-            patchGraphPositionPointers(false, oldCurr, oldNext, oldPred);
+        // 图参数热更新（此时已安全）
+        if (c.perf.use_cuda_graphs && c.perf.graph_hot_update_enable) {
+            patchGraphPositionPointers(true, oldCurr, oldNext);
+            patchGraphPositionPointers(false, oldCurr, oldNext);
         }
+
+        std::fprintf(stderr,
+            "[PingPong][SwapDone][Frame=%llu] curr=%p next=%p pred=%p ext=%d\n",
+            (unsigned long long)m_frameIndex, (void*)m_bufs.d_pos_curr, (void*)m_bufs.d_pos_next, (void*)m_bufs.d_pos_pred,
+            (int)m_bufs.posPredExternal);
+    }
+    else {
+        std::fprintf(stderr,
+            "[PingPong][SkipSwap][Frame=%llu] pingPongPos=0 ext=%d allow=%d can=%d curr=%p next=%p pred=%p\n",
+            (unsigned long long)m_frameIndex, (int)m_bufs.posPredExternal, (int)allowPP, (int)m_canPingPongPos,
+            (void*)m_bufs.d_pos_curr, (void*)m_bufs.d_pos_next, (void*)m_bufs.d_pos_pred);
     }
     signalSimFence(); // signal simulation completion for renderer
 
-    // 计时事件收尾
-    if (doTiming) {
-        if (m_evEnd[cur]) CUDA_CHECK(cudaEventRecord(m_evEnd[cur], m_stream));
-        if (m_evCursor > 0 && m_evStart[prev] && m_evEnd[prev]) {
-            if (cudaEventQuery(m_evEnd[prev]) == cudaSuccess) {
-                float ms = 0.f;
-                CUDA_CHECK(cudaEventElapsedTime(&ms, m_evStart[prev], m_evEnd[prev]));
-                m_lastFrameMs = ms;
+        if (doTiming) {
+            if (m_evEnd[cur]) CUDA_CHECK(cudaEventRecord(m_evEnd[cur], m_stream));
+            if (m_evCursor > 0 && m_evStart[prev] && m_evEnd[prev]) {
+                if (cudaEventQuery(m_evEnd[prev]) == cudaSuccess) {
+                    float ms = 0.f;
+                    CUDA_CHECK(cudaEventElapsedTime(&ms, m_evStart[prev], m_evEnd[prev]));
+                    m_lastFrameMs = ms;
+                }
             }
         }
-    }
+        std::fprintf(stderr, "[PingPongEval][Frame=%llu] posPredExternal=%d pingPongPos=%d curr=%p next=%p pred=%p\n",
+            (unsigned long long)m_frameIndex, (int)m_bufs.posPredExternal, (int)m_ctx.pingPongPos,
+            (void*)m_bufs.d_pos_curr, (void*)m_bufs.d_pos_next, (void*)m_bufs.d_pos_pred);
 
-    ++m_frameIndex;
-    return true;
+    // 修正：外部双缓冲 (externalPingPong) 允许 next==pred，不视为退化；仅内部/镜像单外部时才禁用
+    if (m_ctx.pingPongPos) {
+        if (!m_bufs.externalPingPong && (m_bufs.d_pos_next == m_bufs.d_pos_pred)) {
+            std::fprintf(stderr,
+                "[PingPong][Disable] d_pos_next == d_pos_pred (external binding collapsed both); auto-off. Frame=%llu\n",
+                (unsigned long long)m_frameIndex);
+            m_ctx.pingPongPos = false;
+        }
+    }
+    if (m_useHashedGrid && c.perf.log_grid_compact_stats) {
+        uint32_t M=0; CUDA_CHECK(cudaMemcpy(&M, m_grid.d_compactCount, sizeof(uint32_t), cudaMemcpyDeviceToHost));
+        if (M>0) { double avgOcc = double(m_params.numParticles)/double(M); std::fprintf(stderr,"[GridSparse] Frame=%d | N=%u | M=%u | avgOcc=%.2f\n", m_frameIndex, m_params.numParticles, M, avgOcc); }
+        else { std::fprintf(stderr,"[GridSparse] Frame=%d | N=%u | M=0\n", m_frameIndex, m_params.numParticles); }
+    }
+    ++m_frameIndex; return true;
 }
     bool Simulator::importPosPredFromD3D12(void* sharedHandleWin32, size_t bytes) {
         if (!sharedHandleWin32 || bytes == 0) return false;

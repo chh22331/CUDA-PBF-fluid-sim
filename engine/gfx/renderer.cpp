@@ -348,6 +348,8 @@ namespace gfx {
 
     void RendererD3D12::UpdateParticleSRVForPingPong(const void* devicePtrCurr) {
         if (!devicePtrCurr) return;
+        std::fprintf(stderr, "[Render][PingSRV] activeIndex=%d devicePtr=%p srv=%d\n",
+            m_activePingIndex, devicePtrCurr, m_particleSrvIndex);
         // 匹配保存的 CUDA 指针 → 选择 SRV
         for (int i = 0; i < 2; ++i) {
             if (m_knownCudaPtrs[i] == devicePtrCurr && m_particleSrvIndexPing[i] >= 0) {

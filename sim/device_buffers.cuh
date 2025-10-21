@@ -130,6 +130,9 @@ namespace sim {
                 std::swap(d_pos_curr, d_pos_next);
                 d_pos = d_pos_curr;
                 d_pos_pred = d_pos_next; // 保持 predicted 语义 = next
+                std::fprintf(stderr,
+                    "[SwapPP][External] curr=%p next=%p pred=%p\n",
+                    (void*)d_pos_curr, (void*)d_pos_next, (void*)d_pos_pred);
                 BindDeviceGlobalsFrom(*this);
                 checkGuards("swapPositionPingPong.after");
                 return;
