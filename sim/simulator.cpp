@@ -1015,6 +1015,7 @@ bool Simulator::step(const SimParams& p) {
 
         float4* oldCurr = m_bufs.d_pos_curr;
         float4* oldNext = m_bufs.d_pos_next;
+		float4* oldPred = m_bufs.d_pos_pred;
         std::fprintf(stderr,
             "[PingPong][SwapAttempt][Frame=%llu] (AFTER SYNC) curr=%p next=%p pred=%p ext=%d allow=%d\n",
             (unsigned long long)m_frameIndex, (void*)oldCurr, (void*)oldNext, (void*)m_bufs.d_pos_pred,
@@ -1024,8 +1025,8 @@ bool Simulator::step(const SimParams& p) {
 
         // 图参数热更新（此时已安全）
         if (c.perf.use_cuda_graphs && c.perf.graph_hot_update_enable) {
-            patchGraphPositionPointers(true, oldCurr, oldNext);
-            patchGraphPositionPointers(false, oldCurr, oldNext);
+            patchGraphPositionPointers(true, oldCurr, oldNext, oldPred);
+            patchGraphPositionPointers(false, oldCurr, oldNext, oldPred);
         }
 
         std::fprintf(stderr,
