@@ -105,7 +105,7 @@ namespace console {
 
         // Debug/控制（新增）
         struct Debug {
-            bool enabled = true;        // 开启 Debug 模式
+            bool enabled = false;        // 开启 Debug 模式
             bool pauseOnStart = true;   // 启动即暂停在第 1 帧
             // 采用 Windows VK 与 ASCII 兼容编码（无需包含 windows.h）
             int  keyStep = 32;          // 空格：推进一帧
@@ -199,7 +199,7 @@ namespace console {
             float    xsph_c = 0.05f;
 
             // 邻域核参数
-            float    smoothingRadius = 2.0f;
+            float    smoothingRadius = 1.8f;
             float3   gridMins = make_float3(0.0f, 0.0f, 0.0f);
             float3   gridMaxs = make_float3(200.0f, 200.0f, 200.0f);
             float    cellSize = 0.0f;
@@ -208,7 +208,7 @@ namespace console {
             int      solverIters = 2;
             int      maxNeighbors = 64;
             bool     useMixedPrecision = true;
-            int      sortEveryN = 4;
+            int      sortEveryN = 8;
             float    boundaryRestitution = 0.0f;
 
             // —— 新增：自适应 h/喷口半径（降低稀疏场景下“无邻居”概率） —__
@@ -327,6 +327,16 @@ namespace console {
             // 新增：是否启用双外部位置缓冲零拷贝 ping-pong（否则使用单外部预测缓冲旧实现）
             bool use_external_pos_pingpong = true;
         } perf;
+
+        // ============== 基准测试（Benchmark）配置 ==============
+        struct Benchmark {
+            bool     enabled = true;              // 开启基准模式：开启后到达停止步数后自动退出
+            uint64_t stop_after_steps = 1800;         // 累计模拟步数达到该值时停止 (0=不自动停止)
+            uint64_t sample_start = 900;             // 采样起始帧 (包含)
+            uint64_t sample_end = 1800;               // 采样结束帧 (包含，需 >= start；0 表示若 start=0 则只采第 0 帧)
+            bool     print_each_frame = false;     // 可选：逐帧打印（默认关，避免干扰）
+            bool     force_full_gpu_timing = false; // 强制每帧记录 GPU sim 时间（覆盖 frame_timing_every_n）
+        } benchmark;
     };
 
     RuntimeConsole& Instance();

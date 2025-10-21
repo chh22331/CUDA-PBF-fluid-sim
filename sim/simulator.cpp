@@ -633,17 +633,26 @@ void Simulator::kVelocityAndPost(cudaStream_t s, const SimParams& p) {
     LaunchRecycleToNozzleConst(m_bufs.d_pos, m_bufs.d_pos_pred, effectiveVel,
                                p.grid, p.dt, p.numParticles, 0, s);
 
-    if (p.numParticles > 0) {
+    if(p.numParticles > 0 && !m_bufs.externalPingPong) {
         CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_pos, m_bufs.d_pos_pred,
-                                   sizeof(float4) * p.numParticles,
-                                   cudaMemcpyDeviceToDevice, s));
+            sizeof(float4) * p.numParticles,
+            cudaMemcpyDeviceToDevice, s));
         if (xsphApplied) {
             CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_vel, m_bufs.d_delta,
-                                       sizeof(float4) * p.numParticles,
-                                       cudaMemcpyDeviceToDevice, s));
+                sizeof(float4) * p.numParticles,
+                cudaMemcpyDeviceToDevice, s));
+        }
+    }
+    else {
+        // 外部 ping-pong：不复制，等待帧末 swap 把 d_pos_next 变成新的 d_pos_curr
+        if (xsphApplied && !m_bufs.externalPingPong) {
+            CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_vel, m_bufs.d_delta,
+                sizeof(float4) * p.numParticles,
+                cudaMemcpyDeviceToDevice, s));
         }
     }
 
+    // 半精初次打包逻辑保持不变
     if (m_bufs.anyHalf() && m_params.numParticles > 0 && !m_precisionLogged) {
         m_bufs.packAllToHalf(m_params.numParticles, m_stream);
         UpdateDevicePrecisionView(m_bufs, m_params.precision);
@@ -791,11 +800,6 @@ void Simulator::kIntegratePred(cudaStream_t s, const SimParams& p) {
 
         float4* oldCurr = m_bufs.d_pos_curr;
         float4* oldNext = m_bufs.d_pos_next;
-        std::fprintf(stderr,
-            "[PingPong][SwapAttempt][Frame=%llu] (AFTER SYNC) curr=%p next=%p pred=%p ext=%d allow=%d\n",
-            (unsigned long long)m_frameIndex, (void*)oldCurr, (void*)oldNext, (void*)m_bufs.d_pos_pred,
-            (int)m_bufs.posPredExternal, (int)allowPP);
-
         m_bufs.swapPositionPingPong();
 
         // 图参数热更新（此时已安全）
@@ -803,11 +807,6 @@ void Simulator::kIntegratePred(cudaStream_t s, const SimParams& p) {
             patchGraphPositionPointers(true, oldCurr, oldNext);
             patchGraphPositionPointers(false, oldCurr, oldNext);
         }
-
-        std::fprintf(stderr,
-            "[PingPong][SwapDone][Frame=%llu] curr=%p next=%p pred=%p ext=%d\n",
-            (unsigned long long)m_frameIndex, (void*)m_bufs.d_pos_curr, (void*)m_bufs.d_pos_next, (void*)m_bufs.d_pos_pred,
-            (int)m_bufs.posPredExternal);
     }
     else {
         std::fprintf(stderr,
@@ -826,10 +825,7 @@ void Simulator::kIntegratePred(cudaStream_t s, const SimParams& p) {
                 }
             }
         }
-        std::fprintf(stderr, "[PingPongEval][Frame=%llu] posPredExternal=%d pingPongPos=%d curr=%p next=%p pred=%p\n",
-            (unsigned long long)m_frameIndex, (int)m_bufs.posPredExternal, (int)m_ctx.pingPongPos,
-            (void*)m_bufs.d_pos_curr, (void*)m_bufs.d_pos_next, (void*)m_bufs.d_pos_pred);
-
+         
     // 修正：外部双缓冲 (externalPingPong) 允许 next==pred，不视为退化；仅内部/镜像单外部时才禁用
     if (m_ctx.pingPongPos) {
         if (!m_bufs.externalPingPong && (m_bufs.d_pos_next == m_bufs.d_pos_pred)) {

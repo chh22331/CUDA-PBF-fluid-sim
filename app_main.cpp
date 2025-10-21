@@ -1,3 +1,5 @@
+
+#define NOMINMAX
 #include <cstdio>
 #include <vector>
 #include <cstdint>
@@ -376,6 +378,75 @@ static std::string MakeConfigAbsolutePath() {
     return out;
 }
 
+// ================= 基准统计辅助 =================
+struct BenchAccumulator {
+    std::vector<double> simMs;    // 模拟耗时 (ms) （GPU优先，失败回退CPU）
+    std::vector<double> renderMs; // 渲染耗时 (ms)
+    void add(double s, double r) {
+        if (s > 0.0) simMs.push_back(s); // 忽略 -1 / 0 无效 GPU 计时
+        renderMs.push_back(r);
+    }
+};
+
+static double Percentile(const std::vector<double>& v, double q) {
+    if (v.empty()) return 0.0; if (q <= 0.0) return v.front(); if (q >= 1.0) return v.back();
+    double pos = q * (v.size() - 1); size_t i0 = (size_t)std::floor(pos); size_t i1 = std::min(v.size() - 1, i0 + 1); double t = pos - i0; return v[i0] * (1.0 - t) + v[i1] * t;
+}
+
+static void PrintBenchSummary(const console::RuntimeConsole& cc, const BenchAccumulator& acc) {
+    if (acc.renderMs.empty()) {
+        std::printf("[Benchmark] No samples collected.\n");
+        return;
+    }
+    std::vector<double> s = acc.simMs;
+    std::vector<double> r = acc.renderMs;
+    std::sort(r.begin(), r.end());
+    if (!s.empty()) std::sort(s.begin(), s.end());
+
+    auto avg = [](const std::vector<double>& a) {
+        double sum = 0; for (double x : a) sum += x;
+        return sum / std::max<size_t>(1, a.size());
+        };
+
+    double avgRender = avg(acc.renderMs);
+    double p99Render = (r.empty() ? 0.0 : (r.size() == 1 ? r[0] : r[(size_t)std::round(0.99 * (r.size() - 1))]));
+    double bestRender = r.empty() ? 0.0 : r.front();
+    double worstRender = r.empty() ? 0.0 : r.back();
+
+    bool hasSim = !s.empty();
+    double avgSim = hasSim ? avg(acc.simMs) : 0.0;
+    double p99Sim = hasSim ? (s.size() == 1 ? s[0] : s[(size_t)std::round(0.99 * (s.size() - 1))]) : 0.0;
+    double bestSim = hasSim ? s.front() : 0.0;
+    double worstSim = hasSim ? s.back() : 0.0;
+
+    double avgFrame = hasSim ? (avgSim + avgRender) : avgRender;
+    double fpsAvg = (avgFrame > 1e-6) ? 1000.0 / avgFrame : 0.0;
+    double frameP99 = hasSim ? (p99Sim + p99Render) : p99Render;
+    double fps1Low = (frameP99 > 1e-6) ? 1000.0 / frameP99 : 0.0;
+
+    std::printf("================ Benchmark Summary ================\n");
+    std::printf("Samples: %zu (frames %llu..%llu)\n",
+        acc.renderMs.size(),
+        (unsigned long long)cc.benchmark.sample_start,
+        (unsigned long long)cc.benchmark.sample_end);
+
+    if (hasSim) {
+        std::printf("AvgSim=%.3f ms | AvgRender=%.3f ms | AvgFrame=%.3f ms | AvgFPS=%.2f\n",
+            avgSim, avgRender, avgFrame, fpsAvg);
+        std::printf("BestSim=%.3f ms | WorstSim=%.3f ms | 1%%LowSim(p99)=%.3f ms\n",
+            bestSim, worstSim, p99Sim);
+    }
+    else {
+        std::printf("No valid GPU sim timing collected (fallback only used for render).\n");
+        std::printf("AvgRender=%.3f ms | AvgFrame≈Render=%.3f ms | AvgFPS=%.2f\n",
+            avgRender, avgRender, fpsAvg);
+    }
+    std::printf("BestRender=%.3f ms | WorstRender=%.3f ms | 1%%LowRender(p99)=%.3f ms\n",
+        bestRender, worstRender, p99Render);
+    std::printf("1%%LowFPS~=%.2f (using frame p99 time)\n", fps1Low);
+    std::printf("===================================================\n");
+}
+
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 #ifdef ENABLE_NVTX
     nvtx3::scoped_range sr_main{ "Program.Main" };
@@ -390,6 +461,11 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         if (!config::LoadFile(cfgPath, cc, &cfgState, &err) && !err.empty()) {
             std::fprintf(stderr, "Config load warning: %s\n", err.c_str());
         }
+    }
+
+    // 如果基准模式强制 GPU 计时每帧
+    if (cc.benchmark.enabled && cc.benchmark.force_full_gpu_timing) {
+        cc.perf.frame_timing_every_n = 1; // 保证 Simulator 记录每帧 GPU sim 时间
     }
 
     // 1) 应用窗口（使用配置中的分辨率/vsync）
@@ -529,6 +605,9 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     // 新：用于相机 dt（上一帧结束 → 本帧开始）
     using Clock = std::chrono::steady_clock;
     static auto s_prevFrameEnd = Clock::now();
+
+    // 基准统计容器
+    BenchAccumulator benchAcc;
 
     while (running) {
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -703,10 +782,12 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         if (g_DebugEnabled) {
             doStep = !g_DebugPaused || g_DebugStepRequested;
         }
+        double simMsCpu = 0.0;
         if (doStep) {
+            auto simStartWall = Clock::now();
             simulator.step(simParams);
-            // 新增：渲染前同步 CUDA（自动模式防止读取未完成写入导致位置来回跳）
-            simulator.syncForRender();
+            auto simEndWall = Clock::now();
+            simMsCpu = std::chrono::duration<double, std::milli>(simEndWall - simStartWall).count();
             if (simulator.externalPingPongEnabled()) {
                 renderer.UpdateParticleSRVForPingPong(simulator.devicePositions());
             }
@@ -716,9 +797,11 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
             }
         }
 
-        // 记录上一帧 GPU 仿真耗时（ms）：事件查询成功时更新
+        // GPU 计时（可能为 -1 表示不可用）
         const double simMsGpu = simulator.lastGpuFrameMs();
+        double simMsEffective = (simMsGpu > 0.0) ? simMsGpu : simMsCpu;
         profiler.addRow("sim_ms_gpu", simMsGpu);
+        profiler.addRow("sim_ms_effective", simMsEffective);
 
         // 同步当前活动粒子数到渲染器
         {
@@ -730,7 +813,6 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         // —— 渲染 —— //
         auto renderStart = Clock::now();
         renderer.RenderFrame(profiler);
-        // 为获取“真实渲染耗时/显示帧率”，等待 GPU 渲染队列完成
         renderer.WaitForGPU();
         auto renderEnd = Clock::now();
         const double renderMs = std::chrono::duration<double, std::milli>(renderEnd - renderStart).count();
@@ -748,16 +830,35 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         profiler.addRow("frame_ms", frameMs);
         profiler.addRow("fps", fpsInst);
 
-        // 更新窗口标题
         UpdateWindowTitleHUD(hwnd, simParams.numParticles, s_fpsEma);
 
-        // 周期打印模拟统计（可开关）
         if (cc.debug.printPeriodicStats) {
             TickAndPrintSimStats(simulator, simParams);
         }
 
+        // ===== 基准统计采样 =====
+        if (cc.benchmark.enabled) {
+            uint64_t f = frameIndex;
+            if (f >= cc.benchmark.sample_start && f <= cc.benchmark.sample_end) {
+                benchAcc.add(simMsEffective, renderMs);
+                if (cc.benchmark.print_each_frame) {
+                    std::printf("[Bench][Frame=%llu] sim=%.3f ms (gpu=%.3f) render=%.3f ms\n",
+                        (unsigned long long)f, simMsEffective, simMsGpu, renderMs);
+                }
+            }
+            if (cc.benchmark.stop_after_steps > 0 && f + 1 >= cc.benchmark.stop_after_steps) {
+                PrintBenchSummary(cc, benchAcc);
+                running = false;
+            }
+        }
+
         profiler.flushCsv(cc.app.csv_path, frameIndex);
         ++frameIndex;
+    }
+
+    // 退出前如开启基准但未达 stop 条件也输出一次
+    if (cc.benchmark.enabled) {
+        PrintBenchSummary(cc, benchAcc);
     }
 
     simulator.shutdown();
