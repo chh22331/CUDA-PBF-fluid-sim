@@ -13,7 +13,6 @@
 namespace gfx {
 
     namespace {
-
         struct Mat4 { float m[16]; };
         static Mat4 mul(const Mat4& a, const Mat4& b) { Mat4 r{}; for(int c=0;c<4;++c) for(int r0=0;r0<4;++r0) r.m[c*4+r0]=
             a.m[0*4+r0]*b.m[c*4+0]+a.m[1*4+r0]*b.m[c*4+1]+a.m[2*4+r0]*b.m[c*4+2]+a.m[3*4+r0]*b.m[c*4+3]; return r; }
@@ -245,6 +244,11 @@ namespace gfx {
         if(!m_device.initialize(hwnd,dp)) return false;
         m_device.createSrvHeap(256,true);
         std::memcpy(m_clearColor,m_visual.clearColor,sizeof(m_clearColor));
+        // 新增：创建共享时间线 fence 供 CUDA 导入
+        if (FAILED(m_device.device()->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&m_timelineFence)))) return false;
+        if (FAILED(m_device.device()->CreateSharedHandle(m_timelineFence.Get(), nullptr, GENERIC_ALL, nullptr, &m_timelineFenceSharedHandle))) return false;
+        m_renderFenceValue = 0; // 渲染完成值（偶数序列）
+        m_lastSimFenceValue = 0; // 最近模拟完成值（奇数）
         BuildFrameGraph();
         return true;
     }
@@ -252,7 +256,25 @@ namespace gfx {
     void RendererD3D12::Shutdown(){
         m_sharedParticleBuffer.Reset();
         m_paletteBuffer.Reset();
+        if (m_timelineFenceSharedHandle) { CloseHandle(m_timelineFenceSharedHandle); m_timelineFenceSharedHandle=nullptr; }
+        m_timelineFence.Reset();
         m_device.shutdown();
+    }
+
+    // 新增：等待指定模拟完成 fence 值（只排队 GPU 等待）
+    void RendererD3D12::WaitSimulationFence(uint64_t simValue){
+        if(!m_timelineFence) return;
+        if (simValue > m_lastSimFenceValue) {
+            m_device.queue()->Wait(m_timelineFence.Get(), simValue);
+            m_lastSimFenceValue = simValue; // 记录最新已等待的模拟值
+        }
+    }
+
+    // 新增：渲染完成后递增渲染 fence（偶数），供模拟可选使用
+    void RendererD3D12::SignalRenderComplete(uint64_t /*lastSimValue*/){
+        if(!m_timelineFence) return;
+        ++m_renderFenceValue; // 偶数序列：0,1,2,... 这里不强制偶数，仅单调即可
+        m_device.queue()->Signal(m_timelineFence.Get(), m_renderFenceValue);
     }
 
     bool RendererD3D12::CreateSharedParticleBuffer(uint32_t numElements,uint32_t strideBytes,HANDLE& outSharedHandle){
@@ -310,6 +332,18 @@ namespace gfx {
         if (numElements > m_particleCount) m_particleCount = numElements;
         outSharedHandle = handle;
         return true;
+    }
+
+    void RendererD3D12::RegisterPingPongCudaPtrs(const void* ptrA, const void* ptrB) {
+        m_knownCudaPtrs[0] = const_cast<void*>(ptrA);
+        m_knownCudaPtrs[1] = const_cast<void*>(ptrB);
+        if (ptrA) {
+            UpdateParticleSRVForPingPong(ptrA);
+        }
+        std::fprintf(stderr,
+            "[Render.PingPong][Register] ptrA=%p ptrB=%p activePing=%d srvIndex=%d srvA=%d srvB=%d\n",
+            ptrA, ptrB, m_activePingIndex, m_particleSrvIndex,
+            m_particleSrvIndexPing[0], m_particleSrvIndexPing[1]);
     }
 
     void RendererD3D12::UpdateParticleSRVForPingPong(const void* devicePtrCurr) {

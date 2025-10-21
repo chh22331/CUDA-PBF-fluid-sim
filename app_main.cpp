@@ -1,4 +1,3 @@
-
 #define NOMINMAX
 #include <cstdio>
 #include <vector>
@@ -451,7 +450,6 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 #ifdef ENABLE_NVTX
     nvtx3::scoped_range sr_main{ "Program.Main" };
 #endif
-    // 0) 统一控制台与配置加载
     auto& cc = console::Instance();
     config::State cfgState{};
     {
@@ -462,7 +460,6 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
             std::fprintf(stderr, "Config load warning: %s\n", err.c_str());
         }
     }
-
     // 如果基准模式强制 GPU 计时每帧
     if (cc.benchmark.enabled && cc.benchmark.force_full_gpu_timing) {
         cc.perf.frame_timing_every_n = 1; // 保证 Simulator 记录每帧 GPU sim 时间
@@ -516,36 +513,33 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         const uint32_t capacity = (simParams.maxParticles > 0) ? simParams.maxParticles : simParams.numParticles;
         if (cc.perf.use_external_pos_pingpong) {
             HANDLE sharedA = nullptr, sharedB = nullptr;
-            if (!renderer.CreateSharedParticleBufferIndexed(0, capacity, sizeof(float4), sharedA)) { /* error */ }
-            if (!renderer.CreateSharedParticleBufferIndexed(1, capacity, sizeof(float4), sharedB)) { /* error */ }
+            renderer.CreateSharedParticleBufferIndexed(0, capacity, sizeof(float4), sharedA);
+            renderer.CreateSharedParticleBufferIndexed(1, capacity, sizeof(float4), sharedB);
 
             size_t bytes = size_t(capacity) * sizeof(float4);
-            if (!simulator.bindExternalPosPingPong(sharedA, bytes, sharedB, bytes)) { /* error */ }
-
-            // 关闭句柄（已被 CUDA / D3D12 导入）
+            if (!simulator.bindExternalPosPingPong(sharedA, bytes, sharedB, bytes)) {
+                std::fprintf(stderr, "[App][Error] bindExternalPosPingPong failed.\n");
+            }
             CloseHandle(sharedA);
             CloseHandle(sharedB);
 
-            // 将 CUDA 返回的两个设备指针注册给渲染器（新增获取接口）
-            // 需要在 Simulator 增加访问函数：
-            // float4* pingpongPosA() const; float4* pingpongPosB() const;
-            renderer.m_knownCudaPtrs[0] = simulator.pingpongPosA();
-            renderer.m_knownCudaPtrs[1] = simulator.pingpongPosB();
-            renderer.UpdateParticleSRVForPingPong(simulator.devicePositions());
+            // 核心：登记两个设备指针（A=curr，B=next）
+            renderer.RegisterPingPongCudaPtrs(simulator.pingpongPosA(), simulator.pingpongPosB());
+            // 初始粒子数
+            renderer.SetParticleCount(simulator.activeParticleCount());
         }
         else {
             HANDLE shared = nullptr;
-            if (!renderer.CreateSharedParticleBuffer(capacity, sizeof(float4), shared)) {
-                MessageBoxW(hwnd, L"CreateSharedParticleBuffer failed.", L"PBF-X", MB_ICONERROR);
-                return 1;
-            }
-            if (!simulator.importPosPredFromD3D12(shared, size_t(capacity) * sizeof(float4))) {
-                CloseHandle(shared);
-                MessageBoxW(hwnd, L"importPosPredFromD3D12 failed.", L"PBF-X", MB_ICONERROR);
-                return 1;
-            }
+            renderer.CreateSharedParticleBuffer(capacity, sizeof(float4), shared);
+            simulator.importPosPredFromD3D12(shared, size_t(capacity) * sizeof(float4));
             CloseHandle(shared);
+            renderer.SetParticleCount(simulator.activeParticleCount());
         }
+    }
+
+    // Timeline fence binding (zero CPU polling)
+    if (!simulator.bindTimelineFence(renderer.SharedTimelineFenceHandle())) {
+        std::fprintf(stderr, "[App][Warn] bindTimelineFence failed, fallback to sequential usage.\n");
     }
 
     // 5) 初始布点 - 根据模式选择
@@ -581,7 +575,6 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         renderer.UpdateGroupPalette(nullptr, 0);
         renderer.SetParticleGrouping(0, 0);
     }
-
     {
         const uint32_t active = simulator.activeParticleCount();
         simParams.numParticles = active;
@@ -628,7 +621,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                 console::FitCameraToDomain(cc);
                 console::ApplyRendererRuntime(cc, renderer);
                 if (cc.debug.printHotReload) {
-                    std::printf("[HotReload] Applied whitelisted fields. profile=%s, K=%d, maxNeighbors=%d, sortEveryN=%d, point_size=%.2f\n",
+                    std::printf("[HotReload] Applied profile=%s K=%d maxN=%d sortN=%d point_size=%.2f\n",
                         cfgState.activeProfile.c_str(), simParams.solverIters, simParams.maxNeighbors, simParams.sortEveryN, cc.viewer.point_size_px);
                 }
             }
@@ -637,7 +630,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         profiler.beginFrame(frameIndex);
 
         // 元数据
-        profiler.addCounter("num_particles", static_cast<int64_t>(simParams.numParticles));
+        profiler.addCounter("num_particles", (int64_t)simParams.numParticles);
         profiler.addCounter("solver_iters", simParams.solverIters);
         profiler.addCounter("max_neighbors", simParams.maxNeighbors);
         profiler.addCounter("sort_every_n", simParams.sortEveryN);
@@ -646,8 +639,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         if (diagEveryNFrames != UINT32_MAX &&
             (frameIndex % diagEveryNFrames) == 0) {
             sim::SimStats sGrid{};
-            if (simulator.computeStats(sGrid, /*sampleStride=*/8)) {
-                // 用整型缩放便于 CSV
+            if (simulator.computeStats(sGrid, 8)) {
                 profiler.addCounter("avg_neighbors_grid_x1000", (int64_t)llround(sGrid.avgNeighbors * 1000.0));
                 profiler.addCounter("avg_rho_rel_grid_x1000", (int64_t)llround(sGrid.avgRhoRel * 1000.0));
                 profiler.addCounter("avg_rho_grid_x1000", (int64_t)llround(sGrid.avgRho * 1000.0));
@@ -655,7 +647,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 
             sim::SimStats sBF{};
             if ((cc.debug.printDiagnostics || cc.debug.printWarnings || cc.debug.printHints) &&
-                simulator.computeStatsBruteforce(sBF, /*sampleStride=*/16, /*maxISamples=*/512)) {
+                simulator.computeStatsBruteforce(sBF, 16, 512)) {
                 profiler.addCounter("avg_neighbors_bf_x1000", (int64_t)llround(sBF.avgNeighbors * 1000.0));
                 profiler.addCounter("avg_rho_rel_bf_x1000", (int64_t)llround(sBF.avgRhoRel * 1000.0));
                 profiler.addCounter("avg_rho_bf_x1000", (int64_t)llround(sBF.avgRho * 1000.0));
@@ -778,42 +770,55 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         }
 
         // —— 模拟 —— //
-        bool doStep = true;
-        if (g_DebugEnabled) {
-            doStep = !g_DebugPaused || g_DebugStepRequested;
-        }
         double simMsCpu = 0.0;
+        bool doStep = (!g_DebugEnabled) || (!g_DebugPaused) || g_DebugStepRequested;
         if (doStep) {
             auto simStartWall = Clock::now();
             simulator.step(simParams);
             auto simEndWall = Clock::now();
             simMsCpu = std::chrono::duration<double, std::milli>(simEndWall - simStartWall).count();
-            if (simulator.externalPingPongEnabled()) {
-                renderer.UpdateParticleSRVForPingPong(simulator.devicePositions());
-            }
+
+            // 单步复位
             if (g_DebugEnabled && g_DebugStepRequested) {
                 g_DebugStepRequested = false;
                 g_DebugPaused = true;
             }
-        }
 
-        // GPU 计时（可能为 -1 表示不可用）
-        const double simMsGpu = simulator.lastGpuFrameMs();
+            // 条件 SRV 切换：只有真正发生指针交换时更新（最小化日志）
+            if (simulator.externalPingPongEnabled() && simulator.swappedThisFrame()) {
+                renderer.UpdateParticleSRVForPingPong(simulator.pingpongPosB()); ;
+            }
+        }
+        // 保守冗余（可选）：若担心漏帧，可在此添加一次冪等调用
+        // renderer.UpdateParticleSRVForPingPong(simulator.devicePositions());
+
+        double simMsGpu = simulator.lastGpuFrameMs();
         double simMsEffective = (simMsGpu > 0.0) ? simMsGpu : simMsCpu;
         profiler.addRow("sim_ms_gpu", simMsGpu);
         profiler.addRow("sim_ms_effective", simMsEffective);
 
-        // 同步当前活动粒子数到渲染器
-        {
-            const uint32_t active = simulator.activeParticleCount();
-            simParams.numParticles = active;
-            renderer.SetParticleCount(active);
-        }
+        // 更新粒子数（发射可能增加）
+        renderer.SetParticleCount(simulator.activeParticleCount());
+
+        // GPU timeline wait (non-blocking CPU): ensure simulation writes visible
+        renderer.WaitSimulationFence(simulator.lastSimFenceValue());
 
         // —— 渲染 —— //
         auto renderStart = Clock::now();
+        if (!simulator.externalPingPongEnabled()) {
+            renderer.UpdateParticleSRVForPingPong(simulator.renderPositionPtr());
+            std::fprintf(stderr, "[PP-Debug][Render] renderPtr=%p swapped=%d A=%p B=%p activeSrvIdx=%d\n",
+                simulator.renderPositionPtr(),
+                simulator.swappedThisFrame(),
+                simulator.pingpongPosA(),
+                simulator.pingpongPosB(),/* 可添加 renderer 当前 srvIndex */ 0 /* 替换为真实字段 */);
+        } 
         renderer.RenderFrame(profiler);
-        renderer.WaitForGPU();
+        if (cc.perf.wait_render_gpu) { // 新性能开关决定是否保留 GPU 等待
+            renderer.WaitForGPU();
+        }
+        // Signal render completion for optional future use
+        renderer.SignalRenderComplete(simulator.lastSimFenceValue());
         auto renderEnd = Clock::now();
         const double renderMs = std::chrono::duration<double, std::milli>(renderEnd - renderStart).count();
         profiler.addRow("render_ms", renderMs);

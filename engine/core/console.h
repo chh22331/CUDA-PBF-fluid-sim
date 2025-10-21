@@ -34,13 +34,13 @@ namespace console {
     // 统一数值精度配置（作为 Simulation 的子成员），仅定义开关，无副作用
     struct PrecisionConfig {
         // ---------------- 存储精度（粒子主数据与辅助缓冲） ----------------
-        NumericType positionStore = NumericType::FP16;
+        NumericType positionStore = NumericType::FP32;
         NumericType velocityStore = NumericType::FP32;
         NumericType predictedPosStore = NumericType::FP32; // PBF 预测位置（若使用）
         NumericType lambdaStore = NumericType::FP32; // PBF λ（约束求解敏感，初期保持 FP32）
-        NumericType densityStore = NumericType::FP16;
-        NumericType auxStore = NumericType::FP16; // 临时/梯度/累加器等
-        NumericType renderTransfer = NumericType::FP16; // 提交渲染的转换目标（保留 float3 默认）
+        NumericType densityStore = NumericType::FP32;
+        NumericType auxStore = NumericType::FP32; // 临时/梯度/累加器等
+        NumericType renderTransfer = NumericType::FP32; // 提交渲染的转换目标（保留 float3 默认）
 
         // ---------------- 核心计算精度（全局默认） ----------------
         NumericType coreCompute = NumericType::FP16; // 主环（邻居/密度/λ/积分）
@@ -300,7 +300,7 @@ namespace console {
             int   neighbor_cap = 0;
             int   launch_bounds_tbs = 256;
             int   min_blocks_per_sm = 2;
-            bool  use_cuda_graphs = false;
+            bool  use_cuda_graphs = true;
 
             // 新增：启用哈希/压缩网格（按 cell-key 排序 + 压缩段表）
             bool  use_hashed_grid = true;
@@ -321,11 +321,13 @@ namespace console {
             // true : 使用 ping-pong + cudaGraphExecKernelNodeSetParams (零拷贝模式)
             bool  graph_hot_update_enable = true;
             // 可选：扫描 kernel 参数槽位上限，限制 patch 遍历成本（默认 64）
-            int   graph_hot_update_scan_limit = 64;
+            int   graph_hot_update_scan_limit = 4096;
 			// 新增：允许使用 ping-pong 机制（前提是外部未绑定预测位置缓冲）
             bool allow_pingpong_with_external_pred = true;
             // 新增：是否启用双外部位置缓冲零拷贝 ping-pong（否则使用单外部预测缓冲旧实现）
             bool use_external_pos_pingpong = true;
+            // 新增：是否仍然等待渲染 GPU 完成（保持旧行为）
+            bool  wait_render_gpu = false;
         } perf;
 
         // ============== 基准测试（Benchmark）配置 ==============
