@@ -36,7 +36,6 @@ namespace gfx {
             DWORD n = GetModuleFileNameW(nullptr, path, MAX_PATH);
             std::wstring exe(path, n ? n : 0);
             size_t slash = exe.find_last_of(L"\\/");
-
             if (slash == std::wstring::npos) return L".";
             return exe.substr(0, slash);
         }
@@ -253,8 +252,6 @@ namespace gfx {
     void RendererD3D12::Shutdown(){
         m_sharedParticleBuffer.Reset();
         m_paletteBuffer.Reset();
-        if (m_simFenceSharedHandle) { CloseHandle(m_simFenceSharedHandle); m_simFenceSharedHandle = nullptr; }
-        m_simFence.Reset();
         m_device.shutdown();
     }
 
@@ -309,6 +306,7 @@ namespace gfx {
         m_particleSrvIndexPing[slot] = srvIndex;
         if (slot == 0) m_activePingIndex = 0;
 
+        // 不在此更新 m_particleSrvIndex（由 UpdateParticleSRVForPingPong 决定）
         if (numElements > m_particleCount) m_particleCount = numElements;
         outSharedHandle = handle;
         return true;
@@ -318,6 +316,7 @@ namespace gfx {
         if (!devicePtrCurr) return;
         std::fprintf(stderr, "[Render][PingSRV] activeIndex=%d devicePtr=%p srv=%d\n",
             m_activePingIndex, devicePtrCurr, m_particleSrvIndex);
+        // 匹配保存的 CUDA 指针 → 选择 SRV
         for (int i = 0; i < 2; ++i) {
             if (m_knownCudaPtrs[i] == devicePtrCurr && m_particleSrvIndexPing[i] >= 0) {
                 m_activePingIndex = i;
@@ -325,38 +324,7 @@ namespace gfx {
                 return;
             }
         }
-    }
-
-    // ==== 新增：创建共享仿真 Fence ====
-    bool RendererD3D12::CreateSimulationSharedFence(HANDLE& outSharedHandle) {
-        outSharedHandle = nullptr;
-        if (m_simFence) return false; // 已创建
-        if (FAILED(m_device.device()->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&m_simFence)))) return false;
-        HANDLE h = nullptr;
-        if (FAILED(m_device.device()->CreateSharedHandle(m_simFence.Get(), nullptr, GENERIC_ALL, nullptr, &h))) return false;
-        m_simFenceSharedHandle = h;
-        outSharedHandle = h;
-        m_simFenceValue = 0;
-        std::fprintf(stderr, "[SimFence][Create] handle=%p initialValue=%llu\n", (void*)h, (unsigned long long)m_simFenceValue);
-        return true;
-    }
-    void RendererD3D12::AttachSimulationFenceFromHandle(HANDLE hSharedFence) {
-        if (m_simFence) return; // 已存在则不重复
-        ID3D12Fence* f = nullptr;
-        if (FAILED(m_device.device()->OpenSharedHandle(hSharedFence, IID_PPV_ARGS(&f)))) {
-            std::fprintf(stderr, "[SimFence][Attach][Error] open shared handle failed\n");
-            return;
-        }
-        m_simFence.Attach(f);
-        m_simFenceSharedHandle = hSharedFence; // 交由上层关闭
-        m_simFenceValue = 0;
-        std::fprintf(stderr, "[SimFence][Attach] handle=%p\n", (void*)hSharedFence);
-    }
-    void RendererD3D12::WaitSimulationFence(uint64_t value) {
-        if (!m_simFence) return;
-        // GPU wait（不阻塞 CPU）
-        m_device.queue()->Wait(m_simFence.Get(), value);
-        std::fprintf(stderr, "[SimFence][QueueWait] value=%llu\n", (unsigned long long)value);
+        // 若未匹配到，保持原值（可能仍是单缓冲模式）
     }
 
     void RendererD3D12::BuildFrameGraph(){
@@ -420,8 +388,8 @@ namespace gfx {
                     D3D12_RESOURCE_BARRIER b{};
                     b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
                     b.Transition.pResource = m_sharedParticleBuffer.Get();
-                    b.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-                    b.Transition.StateAfter  = D3D12_RESOURCE_STATE_RENDER_TARGET;
+                    b.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
+                    b.Transition.StateAfter  = D3D12_RESOURCE_STATE_GENERIC_READ;
                     b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
                     cl->ResourceBarrier(1,&b);
                 }
@@ -456,8 +424,8 @@ namespace gfx {
                     D3D12_RESOURCE_BARRIER b{};
                     b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
                     b.Transition.pResource = m_sharedParticleBuffer.Get();
-                    b.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-                    b.Transition.StateAfter  = D3D12_RESOURCE_STATE_PRESENT;
+                    b.Transition.StateBefore = D3D12_RESOURCE_STATE_GENERIC_READ;
+                    b.Transition.StateAfter  = D3D12_RESOURCE_STATE_COMMON;
                     b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
                     cl->ResourceBarrier(1,&b);
                 }

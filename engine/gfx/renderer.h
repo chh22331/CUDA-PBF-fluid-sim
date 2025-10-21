@@ -72,13 +72,6 @@ namespace gfx {
         void* m_knownCudaPtrs[2] = { nullptr, nullptr }; // 来自 cudaExternalMemoryGetMappedBuffer 返回的设备指针
         int  m_activePingIndex = 0;
 
-        // ==== 新增：仿真同步共享 Fence 接口 ===＝
-        bool CreateSimulationSharedFence(HANDLE& outSharedHandle); // 创建共享 fence 供 CUDA 导入
-        void AttachSimulationFenceFromHandle(HANDLE hSharedFence); // 可选：外部已创建时附加（未使用可忽略）
-        void WaitSimulationFence(uint64_t value); // 在图形队列等待仿真 fence 达到 value
-        uint64_t CurrentSimulationFenceValue() const { return m_simFenceValue; }
-        void AdvanceSimulationFenceValue(uint64_t v) { m_simFenceValue = v; }
-
     private:
         void createThicknessResources();
         void createNormalResources();
@@ -101,11 +94,6 @@ namespace gfx {
 
         CameraParams m_camera{};
         VisualParams m_visual{};
-
-        // 仿真同步 fence（共享给 CUDA）
-        Microsoft::WRL::ComPtr<ID3D12Fence> m_simFence; // D3D12_FENCE_FLAG_SHARED
-        HANDLE m_simFenceSharedHandle = nullptr;        // 仅创建后临时持有供导入
-        uint64_t m_simFenceValue = 0;                   // 最新已发出的等待值（跟踪方便）
     };
 
 } // namespace gfx

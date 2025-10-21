@@ -69,124 +69,105 @@ extern "C" void LaunchRecycleToNozzleConst(float4*, float4*, float4*, sim::GridB
 extern "C" void* GetRecycleKernelPtr();
 
 namespace sim {
+    // 全局帧索引定义
     uint64_t g_simFrameIndex = 0;
 
-    // 新增：实现外部 semaphore fence 节点参数更新/回退异步 signal
-    void Simulator::updateFenceSignalNode(bool fullGraph) {
-        if (!m_extSemaphoreFence) return; // 未导入 fence
-        cudaGraphNode_t node = fullGraph ? m_nodeFenceSignalFull : m_nodeFenceSignalCheap;
-        ++m_lastFenceSignalValue; // 下一个 fence 值
-        if (!node) {
-            // 图中尚未有信号节点：直接异步信号（保持正确性）
-            cudaExternalSemaphoreSignalParams sig{}; sig.params.fence.value = m_lastFenceSignalValue; sig.flags = 0;
-            cudaSignalExternalSemaphoresAsync(&m_extSemaphoreFence, &sig, 1, m_stream);
-            return;
-        }
-        cudaExternalSemaphoreSignalNodeParams params{};
-        params.extSemArray = &m_extSemaphoreFence;
-        cudaExternalSemaphoreSignalParams sig{}; sig.params.fence.value = m_lastFenceSignalValue; sig.flags = 0;
-        params.paramsArray = &sig; params.numExtSems = 1;
-#if CUDART_VERSION >= 12000
-        cudaError_t err = cudaGraphExecExternalSemaphoresSignalNodeSetParams(fullGraph ? m_graphExecFull : m_graphExecCheap, node, &params);
-        if (err != cudaSuccess) {
-            // 回退：额外异步信号（节点仍将发旧值，但我们用新值覆盖）
-            cudaExternalSemaphoreSignalParams sig2{}; sig2.params.fence.value = m_lastFenceSignalValue; sig2.flags = 0;
-            cudaSignalExternalSemaphoresAsync(&m_extSemaphoreFence, &sig2, 1, m_stream);
-            if (console::Instance().debug.printHints) {
-                std::fprintf(stderr, "[SimFence][Fallback] setParams err=%d (%s) value=%llu full=%d -> async signal\n", (int)err, cudaGetErrorString(err), (unsigned long long)m_lastFenceSignalValue, fullGraph?1:0);
-            }
-        } else if (console::Instance().debug.printHints) {
-            std::fprintf(stderr, "[SimFence][NodeSet] value=%llu full=%d\n", (unsigned long long)m_lastFenceSignalValue, fullGraph?1:0);
-        }
-#else
-        // 版本不支持：直接异步信号
-        cudaExternalSemaphoreSignalParams sig2{}; sig2.params.fence.value = m_lastFenceSignalValue; sig2.flags = 0;
-        cudaSignalExternalSemaphoresAsync(&m_extSemaphoreFence, &sig2, 1, m_stream);
-#endif
-    }
-
-    // 前向声明以便在下方使用（定义仍在后面）
-    static inline bool hostPtrReadable(const void* p);
+// 前向声明以便在下方使用（定义仍在后面）
+static inline bool hostPtrReadable(const void* p);
 
 // Add helper to patch kernel node params with new position pointers
 void Simulator::patchGraphPositionPointers(bool fullGraph, float4* oldCurr, float4* oldNext) {
     const auto& c = console::Instance();
     if (!c.perf.graph_hot_update_enable) return;
+
     cudaGraphExec_t exec = fullGraph ? m_graphExecFull : m_graphExecCheap;
     if (!exec) return;
     CUDA_CHECK(cudaStreamSynchronize(m_stream));
-    // 只使用缓存的包含 position 指针的节点列表（cacheGraphNodes 已构建）
+
     auto& nodes = fullGraph ? m_posNodesFull : m_posNodesCheap;
     if (nodes.empty()) return;
-    auto& nodes = fullGraph ? m_posNodesFull : m_posNodesCheap;
-    int scanLimit = (c.perf.graph_hot_update_scan_limit > 0 &&
-        c.perf.graph_hot_update_scan_limit < 256)
-        ? c.perf.graph_hot_update_scan_limit : 64;
+
+    // 取消 <256 限制，直接使用配置；并给出安全上限
     int userLimit = c.perf.graph_hot_update_scan_limit;
-    int patched = 0;
+    int scanLimit = (userLimit > 0 && userLimit <= 4096) ? userLimit : 512;
+
+    int patchedPtr = 0;
+    int patchedGrid = 0;
+
+    // 当前所有可能的动态位置指针形态
+    float4* currPosArray[4] = {
+        m_bufs.d_pos,          // 可能别名
+        m_bufs.d_pos_pred,
+        m_bufs.d_pos_curr,     // ping-pong 当前
+        m_bufs.d_pos_next      // ping-pong 备用
+    };
+
     for (auto nd : nodes) {
         cudaKernelNodeParams kp{};
         if (cudaGraphKernelNodeGetParams(nd, &kp) != cudaSuccess) continue;
         if (!kp.kernelParams) continue;
-        if (cudaGraphKernelNodeGetParams(nd, &kp) != cudaSuccess) continue;
+
+        // 尝试更新 gridDim（与当前粒子数对应）
+        // 注意：这里假设所有“位置相关”节点都需要全覆盖粒子，可根据实际分类细化
+        uint32_t blocks = (m_params.numParticles + 255u) / 256u;
+        if (blocks == 0) blocks = 1;
+        bool gridChanged = false;
+        if (kp.gridDim.x != blocks) {
+            kp.gridDim.x = blocks;
+            gridChanged = true;
+        }
+
         void** params = (void**)kp.kernelParams;
-        bool modified = false;
-        void** params = (void**)kp.kernelParams;
-        // 扫描有限槽位（只在首次遇到旧指针时替换）
+        bool modifiedPtr = false;
+
         for (int i = 0; i < scanLimit; ++i) {
             void* slot = params[i];
             if (!slot) break;
             if (!hostPtrReadable(slot)) break;
-            // 直接指针匹配
-            if (slot == (void*)oldCurr) {
-                params[i] = (void*)m_bufs.d_pos_curr;
-                modified = true;
-                continue;
-            }
-            if (slot == (void*)oldNext) {
-                params[i] = (void*)m_bufs.d_pos_next;
-                modified = true;
-                continue;
-            }
-
-            // 主机二级存储（参数块指针）匹配
-            if (!hostPtrReadable(slot)) continue;
             void* inner = *(void**)slot;
+
+            // 若匹配旧的 curr/next 则替换成新
             if (inner == (void*)oldCurr) {
                 *(void**)slot = (void*)m_bufs.d_pos_curr;
-                modified = true;
+                modifiedPtr = true;
             }
             else if (inner == (void*)oldNext) {
                 *(void**)slot = (void*)m_bufs.d_pos_next;
-                modified = true;
+                modifiedPtr = true;
+            }
+            else {
+                // 如果出现指向已失效的某种 pos 变体，也同步替换为最新 curr
+                for (auto* pTest : currPosArray) {
+                    if (pTest && inner == (void*)pTest) {
+                        // 保持原值即可，不强制改
+                        break;
+                    }
+                }
             }
         }
-            }
-        if (modified) {
+
+        if (modifiedPtr || gridChanged) {
             cudaError_t err = cudaGraphExecKernelNodeSetParams(exec, nd, &kp);
             if (err == cudaSuccess) {
-                ++patched;
+                if (modifiedPtr) ++patchedPtr;
+                if (gridChanged) ++patchedGrid;
             }
             else {
                 std::fprintf(stderr,
-                    "[Graph][PatchPos][Warn] setParams failed err=%d (%s)\n",
+                    "[Graph][Patch][Warn] setParams fail err=%d (%s)\n",
                     (int)err, cudaGetErrorString(err));
             }
         }
     }
-        }
-    if (patched > 0) {
-        m_graphNodesPatchedOnce = true;
+
+    if (patchedPtr || patchedGrid) {
         if (c.debug.printHints) {
             std::fprintf(stderr,
-                "[Graph][HotUpdate] Patched position pointers on %d kernel nodes (full=%d)\n",
-                patched, fullGraph ? 1 : 0);
+                "[Graph][HotUpdate] PtrPatched=%d GridPatched=%d (full=%d scanLimit=%d)\n",
+                patchedPtr, patchedGrid, fullGraph ? 1 : 0, scanLimit);
         }
     }
 }
-
-// ===== Utility =====
-static inline bool hostPtrReadable(const void* p) {
 // ===== Utility =====
 static inline bool hostPtrReadable(const void* p) {
 #ifdef _WIN32
@@ -202,131 +183,114 @@ static inline bool hostPtrReadable(const void* p) {
 #endif
     }
 
-    // ==== 新增：导入共享 Fence 供 CUDA Signal ====
-    bool Simulator::importSharedFenceForSignal(HANDLE sharedFenceHandle) {
-        if (!sharedFenceHandle) return false;
-        if (m_extSemaphoreFence) return true;
-        cudaExternalSemaphoreHandleDesc desc{};
-        desc.type = cudaExternalSemaphoreHandleTypeD3D12Fence;
-        desc.handle.win32.handle = sharedFenceHandle;
-        desc.flags = 0;
-        cudaError_t err = cudaImportExternalSemaphore(&m_extSemaphoreFence, &desc);
-        if (err != cudaSuccess) {
-            std::fprintf(stderr, "[SimFence][Import][Error] cudaImportExternalSemaphore failed err=%d (%s)\n", (int)err, cudaGetErrorString(err));
-            return false;
-        }
-        std::fprintf(stderr, "[SimFence][Import] semaphore=%p\n", (void*)m_extSemaphoreFence);
-        return true;
-    }
-
-    // ===== Initialization / Shutdown =====
-    bool Simulator::initialize(const SimParams& p) {
-        prof::Range rInit("Sim.Initialize", prof::Color(0x10,0x90,0xF0));
+// ===== Initialization / Shutdown =====
+bool Simulator::initialize(const SimParams& p) {
+    prof::Range rInit("Sim.Initialize", prof::Color(0x10,0x90,0xF0));
 
         m_params = p;
         CUDA_CHECK(cudaStreamCreateWithFlags(&m_stream, cudaStreamNonBlocking));
 
-        const auto& c = console::Instance();
-        m_frameTimingEveryN  = c.perf.frame_timing_every_n;
-        m_frameTimingEnabled = (m_frameTimingEveryN != 0);
-        m_useHashedGrid      = c.perf.use_hashed_grid;
+    const auto& c = console::Instance();
+    m_frameTimingEveryN  = c.perf.frame_timing_every_n;
+    m_frameTimingEnabled = (m_frameTimingEveryN != 0);
+    m_useHashedGrid      = c.perf.use_hashed_grid;
 
-        // Strategy context
-        m_ctx.bufs = &m_bufs;
-        m_ctx.grid = &m_grid;
-        m_ctx.useHashedGrid = m_useHashedGrid;
-        if (m_useHashedGrid) {
-            m_gridStrategy = std::make_unique<HashedGridStrategy>();
-        } else {
-            m_gridStrategy = std::make_unique<DenseGridStrategy>();
-        }
-        m_ctx.gridStrategy = m_gridStrategy.get();
-        m_ctx.dispatcher   = &m_kernelDispatcher;
-
-        uint32_t capacity = (p.maxParticles > 0) ? p.maxParticles : p.numParticles;
-        if (capacity == 0) capacity = 1;
-
-        bool needHalf = (p.precision.positionStore     == NumericType::FP16_Packed) ||
-                        (p.precision.velocityStore     == NumericType::FP16_Packed) ||
-                        (p.precision.predictedPosStore == NumericType::FP16_Packed);
-
-        if (needHalf) m_bufs.allocateWithPrecision(p.precision, capacity);
-        else          m_bufs.allocate(capacity);
-
-        UpdateDevicePrecisionView(m_bufs, p.precision);
-
-        m_grid.allocateIndices(capacity);
-        m_grid.ensureCompactCapacity(capacity);
-        if (!buildGrid(m_params)) return false;
-
-        if (capacity > 0) {
-            std::vector<uint32_t> h_idx(capacity);
-            for (uint32_t i = 0; i < capacity; ++i) h_idx[i] = i;
-            CUDA_CHECK(cudaMemcpy(m_grid.d_indices, h_idx.data(), sizeof(uint32_t) * capacity, cudaMemcpyHostToDevice));
-        }
-
-        if (p.numParticles > 0) {
-            CUDA_CHECK(cudaMemcpy(m_bufs.d_pos_pred, m_bufs.d_pos, sizeof(float4) * p.numParticles, cudaMemcpyDeviceToDevice));
-            if (needHalf) m_bufs.packAllToHalf(p.numParticles, m_stream);
-        }
-
-        // ===== 半精镜像模式一次性日志（M1） =====
-        if (!m_precisionLogged) {
-            const auto& pr = m_params.precision;
-            bool posHalf  = (pr.positionStore     == NumericType::FP16_Packed);
-            bool velHalf  = (pr.velocityStore     == NumericType::FP16_Packed);
-            bool predHalf = (pr.predictedPosStore == NumericType::FP16_Packed);
-            std::fprintf(stderr,
-                "[Precision] Init | posHalf=%d velHalf=%d predHalf=%d | core=%u fp32Acc=%d halfIntr=%d\n",
-                posHalf, velHalf, predHalf, (unsigned)pr.coreCompute,
-                pr.forceFp32Accumulate ? 1 : 0, pr.enableHalfIntrinsics ? 1 : 0);
-
-            if ((posHalf  && !m_bufs.d_pos_h4) ||
-                (velHalf  && !m_bufs.d_vel_h4) ||
-                (predHalf && !m_bufs.d_pos_pred_h4)) {
-                std::fprintf(stderr,
-                    "[Precision][Warn] Requested half mirror not allocated (pos=%p vel=%p pred=%p).\n",
-                    (void*)m_bufs.d_pos_h4, (void*)m_bufs.d_vel_h4, (void*)m_bufs.d_pos_pred_h4);
-            } else if (posHalf || velHalf || predHalf) {
-                size_t extra = 0;
-                if (posHalf)  extra += sizeof(Half4) * m_bufs.capacity;
-                if (velHalf)  extra += sizeof(Half4) * m_bufs.capacity;
-                if (predHalf) extra += sizeof(Half4) * m_bufs.capacity;
-                std::fprintf(stderr,
-                    "[Precision] Mirror allocated capacity=%u overhead=%.2f MB\n",
-                    m_bufs.capacity, extra / (1024.0 * 1024.0));
-            }
-
-            bool autoMapped = (m_params.useMixedPrecision && posHalf && velHalf && predHalf &&
-                                pr.coreCompute == NumericType::FP32 && pr.forceFp32Accumulate);
-            std::fprintf(stderr, "[Precision] autoMapMixed=%d\n", autoMapped ? 1 : 0);
-            m_precisionLogged = true;
-        }
-
-        m_canPingPongPos       = true;
-        m_graphDirty           = true;
-        m_captured             = {};
-        m_cachedNodesReady     = false;
-        m_nodeRecycleFull      = nullptr;
-        m_nodeRecycleCheap     = nullptr;
-        m_lastFrameMs          = -1.f;
-        m_evCursor             = 0;
-        m_lastParamUpdateFrame = -1;
-
-        // Build phase pipeline (only once)
-        if (m_pipeline.full().empty()) {
-            BuildDefaultPipelines(m_pipeline);
-        }
-        // Configure post ops based on params
-        PostOpsConfig postCfg{};
-        postCfg.enableXsph = (p.xsph_c > 0.f);
-        postCfg.enableBoundary = true;
-        postCfg.enableRecycle  = true;
-        m_pipeline.post().configure(postCfg, m_useHashedGrid, postCfg.enableXsph);
-
-        m_paramTracker.capture(m_params, m_numCells);
-        return true;
+    // Strategy context
+    m_ctx.bufs = &m_bufs;
+    m_ctx.grid = &m_grid;
+    m_ctx.useHashedGrid = m_useHashedGrid;
+    if (m_useHashedGrid) {
+        m_gridStrategy = std::make_unique<HashedGridStrategy>();
+    } else {
+        m_gridStrategy = std::make_unique<DenseGridStrategy>();
     }
+    m_ctx.gridStrategy = m_gridStrategy.get();
+    m_ctx.dispatcher   = &m_kernelDispatcher;
+
+    uint32_t capacity = (p.maxParticles > 0) ? p.maxParticles : p.numParticles;
+    if (capacity == 0) capacity = 1;
+
+    bool needHalf = (p.precision.positionStore     == NumericType::FP16_Packed) ||
+                    (p.precision.velocityStore     == NumericType::FP16_Packed) ||
+                    (p.precision.predictedPosStore == NumericType::FP16_Packed);
+
+    if (needHalf) m_bufs.allocateWithPrecision(p.precision, capacity);
+    else          m_bufs.allocate(capacity);
+
+    UpdateDevicePrecisionView(m_bufs, p.precision);
+
+    m_grid.allocateIndices(capacity);
+    m_grid.ensureCompactCapacity(capacity);
+    if (!buildGrid(m_params)) return false;
+
+    if (capacity > 0) {
+        std::vector<uint32_t> h_idx(capacity);
+        for (uint32_t i = 0; i < capacity; ++i) h_idx[i] = i;
+        CUDA_CHECK(cudaMemcpy(m_grid.d_indices, h_idx.data(), sizeof(uint32_t) * capacity, cudaMemcpyHostToDevice));
+    }
+
+    if (p.numParticles > 0) {
+        CUDA_CHECK(cudaMemcpy(m_bufs.d_pos_pred, m_bufs.d_pos, sizeof(float4) * p.numParticles, cudaMemcpyDeviceToDevice));
+        if (needHalf) m_bufs.packAllToHalf(p.numParticles, m_stream);
+    }
+
+    // ===== 半精镜像模式一次性日志（M1） =====
+    if (!m_precisionLogged) {
+        const auto& pr = m_params.precision;
+        bool posHalf  = (pr.positionStore     == NumericType::FP16_Packed);
+        bool velHalf  = (pr.velocityStore     == NumericType::FP16_Packed);
+        bool predHalf = (pr.predictedPosStore == NumericType::FP16_Packed);
+        std::fprintf(stderr,
+            "[Precision] Init | posHalf=%d velHalf=%d predHalf=%d | core=%u fp32Acc=%d halfIntr=%d\n",
+            posHalf, velHalf, predHalf, (unsigned)pr.coreCompute,
+            pr.forceFp32Accumulate ? 1 : 0, pr.enableHalfIntrinsics ? 1 : 0);
+
+        if ((posHalf  && !m_bufs.d_pos_h4) ||
+            (velHalf  && !m_bufs.d_vel_h4) ||
+            (predHalf && !m_bufs.d_pos_pred_h4)) {
+            std::fprintf(stderr,
+                "[Precision][Warn] Requested half mirror not allocated (pos=%p vel=%p pred=%p).\n",
+                (void*)m_bufs.d_pos_h4, (void*)m_bufs.d_vel_h4, (void*)m_bufs.d_pos_pred_h4);
+        } else if (posHalf || velHalf || predHalf) {
+            size_t extra = 0;
+            if (posHalf)  extra += sizeof(Half4) * m_bufs.capacity;
+            if (velHalf)  extra += sizeof(Half4) * m_bufs.capacity;
+            if (predHalf) extra += sizeof(Half4) * m_bufs.capacity;
+            std::fprintf(stderr,
+                "[Precision] Mirror allocated capacity=%u overhead=%.2f MB\n",
+                m_bufs.capacity, extra / (1024.0 * 1024.0));
+        }
+
+        bool autoMapped = (m_params.useMixedPrecision && posHalf && velHalf && predHalf &&
+                            pr.coreCompute == NumericType::FP32 && pr.forceFp32Accumulate);
+        std::fprintf(stderr, "[Precision] autoMapMixed=%d\n", autoMapped ? 1 : 0);
+        m_precisionLogged = true;
+    }
+
+    m_canPingPongPos       = true;
+    m_graphDirty           = true;
+    m_captured             = {};
+    m_cachedNodesReady     = false;
+    m_nodeRecycleFull      = nullptr;
+    m_nodeRecycleCheap     = nullptr;
+    m_lastFrameMs          = -1.f;
+    m_evCursor             = 0;
+    m_lastParamUpdateFrame = -1;
+
+    // Build phase pipeline (only once)
+    if (m_pipeline.full().empty()) {
+        BuildDefaultPipelines(m_pipeline);
+    }
+    // Configure post ops based on params
+    PostOpsConfig postCfg{};
+    postCfg.enableXsph = (p.xsph_c > 0.f);
+    postCfg.enableBoundary = true;
+    postCfg.enableRecycle  = true;
+    m_pipeline.post().configure(postCfg, m_useHashedGrid, postCfg.enableXsph);
+
+    m_paramTracker.capture(m_params, m_numCells);
+    return true;
+}
 
     void Simulator::shutdown() {
         if (m_extPosPred) {
@@ -348,7 +312,6 @@ static inline bool hostPtrReadable(const void* p) {
         }
 
         if (m_stream) { cudaStreamDestroy(m_stream); m_stream = nullptr; }
-        if (m_extSemaphoreFence) { cudaDestroyExternalSemaphore(m_extSemaphoreFence); m_extSemaphoreFence = nullptr; }
     }
 
     // ===== Grid & Param Helpers =====
@@ -796,32 +759,57 @@ void Simulator::kIntegratePred(cudaStream_t s, const SimParams& p) {
     }
     auto updNode = [&](cudaGraphExec_t exec, cudaGraphNode_t& node, cudaKernelNodeParams& base){ if(!exec||!node||m_params.numParticles==0) return; uint32_t blocks=(m_params.numParticles+255u)/256u; if(blocks==0) blocks=1; cudaKernelNodeParams kp=base; kp.gridDim=dim3(blocks,1,1); cudaError_t err=cudaGraphExecKernelNodeSetParams(exec,node,&kp); if(err==cudaErrorInvalidResourceHandle){ std::fprintf(stderr,"[Graph][Warn] Kernel node invalid, recache & retry (node=%p, N=%u)\n",(void*)node,m_params.numParticles); cacheGraphNodes(); if(exec==m_graphExecFull){ node=m_nodeRecycleFull; base=m_kpRecycleBaseFull; } else if(exec==m_graphExecCheap){ node=m_nodeRecycleCheap; base=m_kpRecycleBaseCheap; } if(node){ kp=base; kp.gridDim=dim3(blocks,1,1); cudaError_t err2=cudaGraphExecKernelNodeSetParams(exec,node,&kp); if(err2!=cudaSuccess) std::fprintf(stderr,"[Graph][Error] Retry setParams failed err=%d (%s)\n",(int)err2,cudaGetErrorString(err2)); } else { std::fprintf(stderr,"[Graph][Error] Recycle node not found after recache.\n"); } } };
     if (c.perf.use_cuda_graphs) {
+        if (!m_graphExecFull || !m_graphExecCheap) { if (c.debug.printErrors) std::fprintf(stderr,"Simulator::step: CUDA Graph not ready (exec == nullptr)\n"); return false; }
+        if (needFull) updNode(m_graphExecFull, m_nodeRecycleFull, m_kpRecycleBaseFull); else updNode(m_graphExecCheap, m_nodeRecycleCheap, m_kpRecycleBaseCheap);
+        if (needFull) { CUDA_CHECK(cudaGraphLaunch(m_graphExecFull, m_stream)); m_lastFullFrame = m_frameIndex; } else { CUDA_CHECK(cudaGraphLaunch(m_graphExecCheap, m_stream)); }
+    } else {
+        // 非 graph：用 pipeline 全流程
+        if (m_pipeline.full().empty()) {
+            BuildDefaultPipelines(m_pipeline);
+            PostOpsConfig cfg{};
+            cfg.enableXsph = (m_params.xsph_c > 0.f);
+            cfg.enableBoundary = true;
+            cfg.enableRecycle = true;
+            m_pipeline.post().configure(cfg, m_useHashedGrid, cfg.enableXsph);
+        }
+        m_ctx.bufs = &m_bufs; m_ctx.grid = &m_grid; m_ctx.useHashedGrid = m_useHashedGrid;
+        m_ctx.gridStrategy = m_gridStrategy.get(); m_ctx.dispatcher = &m_kernelDispatcher;
         if (needFull) {
-            updateFenceSignalNode(true);
-            CUDA_CHECK(cudaGraphLaunch(m_graphExecFull, m_stream));
+            m_pipeline.runFull(m_ctx, m_params, m_stream);
             m_lastFullFrame = m_frameIndex;
+            m_pipeline.runCheap(m_ctx, m_params, m_stream);
+        }
+        else {
             m_pipeline.runCheap(m_ctx, m_params, m_stream);
         }
     }
  
     // 执行位置 ping-pong（仅在允许且未使用外部预测缓冲时）
     if (m_ctx.pingPongPos) {
+        // 等图中全部 kernel 完成，避免指针提前交换导致后续 block 写错缓冲
+        CUDA_CHECK(cudaStreamSynchronize(m_stream));
+
         float4* oldCurr = m_bufs.d_pos_curr;
         float4* oldNext = m_bufs.d_pos_next;
         std::fprintf(stderr,
-            "[PingPong][SwapAttempt][Frame=%llu] beforeSwap curr=%p next=%p pred=%p ext=%d allow=%d\n",
+            "[PingPong][SwapAttempt][Frame=%llu] (AFTER SYNC) curr=%p next=%p pred=%p ext=%d allow=%d\n",
             (unsigned long long)m_frameIndex, (void*)oldCurr, (void*)oldNext, (void*)m_bufs.d_pos_pred,
             (int)m_bufs.posPredExternal, (int)allowPP);
+
         m_bufs.swapPositionPingPong();
-        if (useGraphs && c.perf.graph_hot_update_enable) {
+
+        // 图参数热更新（此时已安全）
+        if (c.perf.use_cuda_graphs && c.perf.graph_hot_update_enable) {
             patchGraphPositionPointers(true, oldCurr, oldNext);
             patchGraphPositionPointers(false, oldCurr, oldNext);
         }
+
         std::fprintf(stderr,
             "[PingPong][SwapDone][Frame=%llu] curr=%p next=%p pred=%p ext=%d\n",
             (unsigned long long)m_frameIndex, (void*)m_bufs.d_pos_curr, (void*)m_bufs.d_pos_next, (void*)m_bufs.d_pos_pred,
             (int)m_bufs.posPredExternal);
-    } else {
+    }
+    else {
         std::fprintf(stderr,
             "[PingPong][SkipSwap][Frame=%llu] pingPongPos=0 ext=%d allow=%d can=%d curr=%p next=%p pred=%p\n",
             (unsigned long long)m_frameIndex, (int)m_bufs.posPredExternal, (int)allowPP, (int)m_canPingPongPos,
@@ -841,16 +829,21 @@ void Simulator::kIntegratePred(cudaStream_t s, const SimParams& p) {
         std::fprintf(stderr, "[PingPongEval][Frame=%llu] posPredExternal=%d pingPongPos=%d curr=%p next=%p pred=%p\n",
             (unsigned long long)m_frameIndex, (int)m_bufs.posPredExternal, (int)m_ctx.pingPongPos,
             (void*)m_bufs.d_pos_curr, (void*)m_bufs.d_pos_next, (void*)m_bufs.d_pos_pred);
-            (unsigned long long)m_frameIndex, (int)m_bufs.posPredExternal, (int)m_ctx.pingPongPos,
-            (void*)m_bufs.d_pos_curr, (void*)m_bufs.d_pos_next, (void*)m_bufs.d_pos_pred);
 
-    // ping-pong swap
+    // 修正：外部双缓冲 (externalPingPong) 允许 next==pred，不视为退化；仅内部/镜像单外部时才禁用
     if (m_ctx.pingPongPos) {
-        float4* oldCurr = m_bufs.d_pos_curr; float4* oldNext = m_bufs.d_pos_next;
-        m_bufs.swapPositionPingPong();
-        if (c.perf.use_cuda_graphs && c.perf.graph_hot_update_enable) { patchGraphPositionPointers(true, oldCurr, oldNext); patchGraphPositionPointers(false, oldCurr, oldNext); }
+        if (!m_bufs.externalPingPong && (m_bufs.d_pos_next == m_bufs.d_pos_pred)) {
+            std::fprintf(stderr,
+                "[PingPong][Disable] d_pos_next == d_pos_pred (external binding collapsed both); auto-off. Frame=%llu\n",
+                (unsigned long long)m_frameIndex);
+            m_ctx.pingPongPos = false;
+        }
     }
-
+    if (m_useHashedGrid && c.perf.log_grid_compact_stats) {
+        uint32_t M=0; CUDA_CHECK(cudaMemcpy(&M, m_grid.d_compactCount, sizeof(uint32_t), cudaMemcpyDeviceToHost));
+        if (M>0) { double avgOcc = double(m_params.numParticles)/double(M); std::fprintf(stderr,"[GridSparse] Frame=%d | N=%u | M=%u | avgOcc=%.2f\n", m_frameIndex, m_params.numParticles, M, avgOcc); }
+        else { std::fprintf(stderr,"[GridSparse] Frame=%d | N=%u | M=0\n", m_frameIndex, m_params.numParticles); }
+    }
     ++m_frameIndex; return true;
 }
 
@@ -1154,7 +1147,8 @@ void Simulator::kIntegratePred(cudaStream_t s, const SimParams& p) {
 
     void Simulator::syncForRender() {
         if (m_stream) {
-            cudaStreamSynchronize(m_stream); // legacy path (may be disabled later)
+            cudaStreamSynchronize(m_stream);
         }
     }
+
 } // namespace sim
