@@ -68,6 +68,7 @@ extern "C" void LaunchSortPairsQuery(size_t*, const uint32_t*, uint32_t*, const 
 extern "C" void LaunchSortPairs(void*, size_t, uint32_t*, uint32_t*, uint32_t*, uint32_t*, uint32_t, cudaStream_t);
 extern "C" void LaunchRecycleToNozzleConst(float4*, float4*, float4*, sim::GridBounds, float, uint32_t, int, cudaStream_t);
 extern "C" void* GetRecycleKernelPtr();
+extern "C" void LaunchIntegratePredSemiImplicit(const float4*, float4*, float4*, float3, float, uint32_t, cudaStream_t);
 
 namespace sim {
     // 全局帧索引定义
@@ -666,23 +667,35 @@ void Simulator::kSolveIter(cudaStream_t s, const SimParams& p) {
 void Simulator::kVelocityAndPost(cudaStream_t s, const SimParams& p) {
     prof::Range r("Phase.VelocityPost", prof::Color(0xC0, 0x40, 0xA0));
 
+    bool semiImplicit = p.pbf.semi_implicit_integration_enable;
+
     if (!console::Instance().perf.use_cuda_graphs)
         DebugPrintP0("BeforeVelocity", m_bufs, p.numParticles, p.dt);
 
-    bool useMP = UseHalfForPosition(p, Stage::VelocityUpdate, m_bufs);
-    if (useMP)
-        LaunchVelocityMP(m_bufs.d_vel, m_bufs.d_pos, m_bufs.d_pos_pred,
-            m_bufs.d_pos_h4, m_bufs.d_pos_pred_h4,
-            1.0f / p.dt, p.numParticles, s);
-    else
-        LaunchVelocity(m_bufs.d_vel, m_bufs.d_pos, m_bufs.d_pos_pred,
-            1.0f / p.dt, p.numParticles, s);
-    cudaStreamSynchronize(s);
-
-    if (!console::Instance().perf.use_cuda_graphs)
-        DebugPrintP0("AfterVelocity", m_bufs, p.numParticles, p.dt);
-
     bool xsphApplied = false;
+
+    if (!semiImplicit) {
+        // 原显式路径：差分推导速度
+        bool useMP = UseHalfForPosition(p, Stage::VelocityUpdate, m_bufs);
+        if (useMP)
+            LaunchVelocityMP(m_bufs.d_vel, m_bufs.d_pos, m_bufs.d_pos_pred,
+                m_bufs.d_pos_h4, m_bufs.d_pos_pred_h4,
+                1.0f / p.dt, p.numParticles, s);
+        else
+            LaunchVelocity(m_bufs.d_vel, m_bufs.d_pos, m_bufs.d_pos_pred,
+                1.0f / p.dt, p.numParticles, s);
+        cudaStreamSynchronize(s);
+
+        if (!console::Instance().perf.use_cuda_graphs)
+            DebugPrintP0("AfterVelocity", m_bufs, p.numParticles, p.dt);
+    }
+    else {
+        // 半隐式路径：速度已在积分核中加入重力更新，这里不再差分重写；直接进入 XSPH 以对更新后的 v 做平滑
+        if (!console::Instance().perf.use_cuda_graphs)
+            DebugPrintP0("SkipVelocityDiff(SemiImplicit)", m_bufs, p.numParticles, p.dt);
+    }
+
+    // XSPH 平滑（两种模式都可用）
     if (p.xsph_c > 0.f && p.numParticles > 0) {
         DeviceParams dp = MakeDeviceParams(p);
         bool useMPxs = (UseHalfForPosition(p, Stage::XSPH, m_bufs) &&
@@ -717,9 +730,14 @@ void Simulator::kVelocityAndPost(cudaStream_t s, const SimParams& p) {
         cudaStreamSynchronize(s);
         if (!console::Instance().perf.use_cuda_graphs)
             DebugPrintP0("AfterXSPH", m_bufs, p.numParticles, p.dt);
+
+        // 半隐式与显式都统一：用平滑后的速度覆盖 d_vel
+        CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_vel, m_bufs.d_delta,
+            sizeof(float4) * p.numParticles,
+            cudaMemcpyDeviceToDevice, s));
     }
 
-    float4* effectiveVel = xsphApplied ? m_bufs.d_delta : m_bufs.d_vel;
+    float4* effectiveVel = m_bufs.d_vel; // 半隐式：积分使用更新后的速度；显式：差分或 XSPH 后的速度
     LaunchBoundary(m_bufs.d_pos_pred, effectiveVel, p.grid, p.boundaryRestitution, p.numParticles, s);
     LaunchRecycleToNozzleConst(m_bufs.d_pos, m_bufs.d_pos_pred, effectiveVel,
         p.grid, p.dt, p.numParticles, 0, s);
@@ -730,7 +748,8 @@ void Simulator::kVelocityAndPost(cudaStream_t s, const SimParams& p) {
 
     if (p.numParticles > 0 && !m_bufs.externalPingPong) {
         CUDA_CHECK(cudaMemcpyAsync(m_bufs.d_pos, m_bufs.d_pos_pred,
-            sizeof(float4) * p.numParticles, cudaMemcpyDeviceToDevice, s));
+            sizeof(float4) * p.numParticles,
+            cudaMemcpyDeviceToDevice, s));
     }
 
     m_ctx.effectiveVel = effectiveVel;
@@ -757,17 +776,39 @@ void Simulator::kIntegratePred(cudaStream_t s, const SimParams& p) {
     if (!console::Instance().perf.use_cuda_graphs)
         DebugPrintP0("BeforeIntegrate", m_bufs, p.numParticles, p.dt);
 
-    const float4* velSrc = (m_ctx.xsphApplied && m_ctx.effectiveVel) ? m_ctx.effectiveVel : m_bufs.d_vel;
+    // 半隐式模式只使用当前帧累积后的速度（不使用 XSPH effectiveVel，因为那是在后处理阶段才更新）
+    bool semiImplicit = p.pbf.semi_implicit_integration_enable;
+
+    const float4* velSrc;
+    if (semiImplicit) {
+        velSrc = m_bufs.d_vel; // 半隐式：直接用当前速度，内部核会加重力并回写
+    }
+    else {
+        velSrc = (m_ctx.xsphApplied && m_ctx.effectiveVel) ? m_ctx.effectiveVel : m_bufs.d_vel;
+    }
+
     bool useMP = (UseHalfForPosition(p, Stage::Integration, m_bufs) &&
         UseHalfForVelocity(p, Stage::Integration, m_bufs));
 
-    if (useMP)
-        LaunchIntegratePredMP(m_bufs.d_pos, velSrc, m_bufs.d_pos_pred,
-            m_bufs.d_pos_h4, m_bufs.d_vel_h4,
-            p.gravity, p.dt, p.numParticles, s);
-    else
-        LaunchIntegratePred(m_bufs.d_pos, velSrc, m_bufs.d_pos_pred,
-            p.gravity, p.dt, p.numParticles, s);
+    if (semiImplicit) {
+        // 调用半隐式核（已经负责回写速度 + 生成 pos_pred）
+        LaunchIntegratePredSemiImplicit(m_bufs.d_pos,
+            m_bufs.d_vel,      // 非 const
+            m_bufs.d_pos_pred,
+            p.gravity,
+            p.dt,
+            p.numParticles,
+            s);
+    }
+    else {
+        if (useMP)
+            LaunchIntegratePredMP(m_bufs.d_pos, velSrc, m_bufs.d_pos_pred,
+                m_bufs.d_pos_h4, m_bufs.d_vel_h4,
+                p.gravity, p.dt, p.numParticles, s);
+        else
+            LaunchIntegratePred(m_bufs.d_pos, velSrc, m_bufs.d_pos_pred,
+                p.gravity, p.dt, p.numParticles, s);
+    }
 
     LaunchBoundary(m_bufs.d_pos_pred, m_bufs.d_vel, p.grid, 0.0f, p.numParticles, s);
     cudaStreamSynchronize(s);
