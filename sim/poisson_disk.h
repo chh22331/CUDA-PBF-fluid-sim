@@ -1,11 +1,11 @@
-#pragma once
+ï»¿#pragma once
 #include <vector>
 #include <random>
 #include <cuda_runtime.h>
 
 namespace sim {
-// Éú³É°ë¾¶ R Ô²ÅÌÄÚ Poisson-disk ²ÉÑùµã£¬×îĞ¡¼ä¾à rMin£¬Ä¿±êÊıÁ¿ target¡£
-// ½á¹ûĞ´Èë outPts£¨float2: ¾Ö²¿Æ½Ãæ×ø±ê£©£¬Èô²»×ã target Ôò·µ»ØÒÑÕÒµ½µÄµã¡£
+// ç”ŸæˆåŠå¾„ R åœ†ç›˜å†… Poisson-disk é‡‡æ ·ç‚¹ï¼Œæœ€å°é—´è· rMinï¼Œç›®æ ‡æ•°é‡ targetã€‚
+// ç»“æœå†™å…¥ outPtsï¼ˆfloat2: å±€éƒ¨å¹³é¢åæ ‡ï¼‰ï¼Œè‹¥ä¸è¶³ target åˆ™è¿”å›å·²æ‰¾åˆ°çš„ç‚¹ã€‚
 void poisson_disk_in_circle(float R, float rMin, int target,
                             std::mt19937& rng,
                             std::vector<float2>& outPts);

@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <cstdint>
 #include <vector>
 #include <random>
@@ -12,11 +12,11 @@
 #include "../engine/core/console.h"
 
 namespace sim {
-    // ¸ºÔğÅç¿Ú£¨faucet£©Á£×Ó·¢ÉäÂß¼­£¬¸ôÀë³ö step() ÖĞµÄ¸´ÔÓËæ»ú²¥ÖÖ´úÂë¡£
+    // è´Ÿè´£å–·å£ï¼ˆfaucetï¼‰ç²’å­å‘å°„é€»è¾‘ï¼Œéš”ç¦»å‡º step() ä¸­çš„å¤æ‚éšæœºæ’­ç§ä»£ç ã€‚
     class Emitter {
     public:
-        // Ö´ĞĞÒ»´Î·¢Éä¡£·µ»Ø±¾Ö¡Êµ¼ÊĞÂÔöÁ£×ÓÊı¡£
-        // ÒªÇó£ºsimParams.numParticles ÒÑÎªµ±Ç°»îÔ¾Êı£»²»³¬¹ı maxParticles¡£
+        // æ‰§è¡Œä¸€æ¬¡å‘å°„ã€‚è¿”å›æœ¬å¸§å®é™…æ–°å¢ç²’å­æ•°ã€‚
+        // è¦æ±‚ï¼šsimParams.numParticles å·²ä¸ºå½“å‰æ´»è·ƒæ•°ï¼›ä¸è¶…è¿‡ maxParticlesã€‚
         static uint32_t EmitFaucet(DeviceBuffers& buffers,
                                    SimParams& simParams,
                                    const console::RuntimeConsole& cc,
@@ -24,7 +24,7 @@ namespace sim {
                                    uint64_t frameIndex,
                                    cudaStream_t stream);
     private:
-        // ¸´ÓÃµÄ host pinned »º³å£¨±ÜÃâÆµ·±·ÖÅäÊÍ·Å£©¡£
+        // å¤ç”¨çš„ host pinned ç¼“å†²ï¼ˆé¿å…é¢‘ç¹åˆ†é…é‡Šæ”¾ï¼‰ã€‚
         static float4* s_h_pos;
         static float4* s_h_vel;
         static uint32_t s_h_cap;

@@ -34,7 +34,7 @@ namespace console {
     // 统一数值精度配置（作为 Simulation 的子成员），仅定义开关，无副作用
     struct PrecisionConfig {
         // ---------------- 存储精度（粒子主数据与辅助缓冲） ----------------
-        NumericType positionStore = NumericType::FP32;
+        NumericType positionStore = NumericType::FP16;
         NumericType velocityStore = NumericType::FP32;
         NumericType predictedPosStore = NumericType::FP32; // PBF 预测位置（若使用）
         NumericType lambdaStore = NumericType::FP32; // PBF λ（约束求解敏感，初期保持 FP32）
@@ -105,7 +105,7 @@ namespace console {
 
         // Debug/控制（新增）
         struct Debug {
-            bool enabled = true;        // 开启 Debug 模式
+            bool enabled = false;        // 开启 Debug 模式
             bool pauseOnStart = true;   // 启动即暂停在第 1 帧
             // 采用 Windows VK 与 ASCII 兼容编码（无需包含 windows.h）
             int  keyStep = 32;          // 空格：推进一帧
@@ -205,7 +205,7 @@ namespace console {
             float    cellSize = 0.0f;
 
             // 其他数值参数
-            int      solverIters = 2;
+            int      solverIters = 1;
             int      maxNeighbors = 64;
             bool     useMixedPrecision = true;
             int      sortEveryN = 4;
@@ -227,20 +227,20 @@ namespace console {
             // 手动指定立方体数量（粒子团数量），仅在 cube_auto_partition=false 时使用
             uint32_t cube_group_count = 128;
             // 单个立方体边长（按粒子数，边上粒子个数）；用于 cube_edge_particles^3
-            uint32_t cube_edge_particles = 20;
+            uint32_t cube_edge_particles = 25;
             // 最大允许粒子团数量（用于颜色数组与安全限制）
             static constexpr uint32_t cube_group_count_max = 512;
 
             // 立方体层数（垂直分层放置）。若 cube_group_count=32 且 cube_layers=2 -> 每层16个
-            uint32_t cube_layers = 8;
+            uint32_t cube_layers = 2;
 
             // 立方体中心之间的水平间距（世界单位，沿 X/Z）
-            float    cube_group_spacing_world = 80.0f;
+            float    cube_group_spacing_world = 100.0f;
             // 层之间的垂直间距（世界单位，立方体 Y 方向层距）
             float    cube_layer_spacing_world = 200.0f;
 
             // 立方体底层离地高度（世界坐标 Y）
-            float    cube_base_height = 50.0f;
+            float    cube_base_height = 100.0f;
 
             // 单个立方体内格点的粒子间距缩放（相对 smoothingRadius 或 h），用于调节初始紧实程度
             float    cube_lattice_spacing_factor_h = 1.05f;
@@ -329,6 +329,22 @@ namespace console {
             // 新增：是否仍然等待渲染 GPU 完成（保持旧行为）
             bool  wait_render_gpu = false;
         } perf;
+
+        // ================== 新增：跑分配置 ==================
+        struct Benchmark {
+            bool enabled = true; // 开关
+            // 结束条件（二选一，>0 生效；若都>0先满足者）
+            int total_frames = 0; // 运行总帧数（含预热+采样）
+            double total_seconds = 30; // 或按时间终止
+            // 采样范围（帧）
+            int sample_begin_frame = 0; // 采样起始帧（含）
+            int sample_end_frame = -1; // 采样结束帧（含，<0 表示直到结束条件）
+            // 采样范围（时间，秒）—— 当 use_time_range=true 时使用下列替代帧区间
+            bool use_time_range = true; // true: 使用时间窗口
+            double sample_begin_seconds = 15.0;
+            double sample_end_seconds = -1.0; // <=0 表示到结束条件
+            bool print_per_frame = false; // 调试：是否逐帧打印（大量输出，默认关）
+        } bench;
     };
 
     RuntimeConsole& Instance();
@@ -339,7 +355,7 @@ namespace console {
     void BuildRenderInitParams(const RuntimeConsole& c, gfx::RenderInitParams& out);
     void ApplyRendererRuntime(const RuntimeConsole& c, gfx::RendererD3D12& r);
     void FitCameraToDomain(RuntimeConsole& c);
-    // —— 新增：CubeMix 准备（自动分解 + 域拟合 + 颜色） —— //
+    // —— 新增：CubeMix 准备（自动分解 + 域拟合 + 渲染颜色） —— //
     void PrepareCubeMix(RuntimeConsole& c);
 
     // —— 新增：生成立方体中心列表（供播种使用，与 PrepareCubeMix 保持一致） —— //

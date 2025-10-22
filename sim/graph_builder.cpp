@@ -1,4 +1,4 @@
-#include "graph_builder.h"
+ï»¿#include "graph_builder.h"
 #include "simulator.h"
 #include "grid_system.h"
 #include "phase_pipeline.h"
@@ -23,7 +23,7 @@ namespace sim {
 bool GraphBuilder::recordSequencePipeline(Simulator& sim, const SimParams& p, bool full, cudaGraph_t& outGraph) {
     outGraph = nullptr;
 
-    // Ô¤´¦Àí£ºÅÅĞòÁÙÊ±¿Õ¼äÓëÏ¡ÊèÍø¸ñ scratch Ö»ÔÚ full Â·¾¶¼ì²é£¬µ« cheap ÈÔĞè hashed scratch
+    // é¢„å¤„ç†ï¼šæ’åºä¸´æ—¶ç©ºé—´ä¸ç¨€ç–ç½‘æ ¼ scratch åªåœ¨ full è·¯å¾„æ£€æŸ¥ï¼Œä½† cheap ä»éœ€ hashed scratch
     if (full) {
         if (p.numParticles > 0) {
             size_t tempBytes = 0;
@@ -53,7 +53,7 @@ bool GraphBuilder::recordSequencePipeline(Simulator& sim, const SimParams& p, bo
         }
     }
 
-    // È·±£ pipeline ÒÑ¹¹½¨
+    // ç¡®ä¿ pipeline å·²æ„å»º
     if (sim.m_pipeline.full().empty()) {
         BuildDefaultPipelines(sim.m_pipeline);
         PostOpsConfig cfg{};
@@ -63,7 +63,7 @@ bool GraphBuilder::recordSequencePipeline(Simulator& sim, const SimParams& p, bo
         sim.m_pipeline.post().configure(cfg, sim.m_useHashedGrid, cfg.enableXsph);
     }
 
-    // Í¬²½ÉÏÏÂÎÄÖ¸Õë£¨¿ÉÄÜÈİÁ¿À©Õ¹ºóÖØ·ÖÅä£©
+    // åŒæ­¥ä¸Šä¸‹æ–‡æŒ‡é’ˆï¼ˆå¯èƒ½å®¹é‡æ‰©å±•åé‡åˆ†é…ï¼‰
     sim.m_ctx.bufs = &sim.m_bufs;
     sim.m_ctx.grid = &sim.m_grid;
     sim.m_ctx.useHashedGrid = sim.m_useHashedGrid;

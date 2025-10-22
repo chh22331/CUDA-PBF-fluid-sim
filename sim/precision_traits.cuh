@@ -11,10 +11,16 @@ namespace sim {
         uint8_t useHalfVel;
         uint8_t useHalfPosPred;
         uint8_t useHalfGeneric; // 为后续邻居等阶段统一只读入口预留
+        uint8_t useHalfLambda; // 新增
+        uint8_t useHalfDensity; // 新增
+        uint8_t useHalfAux; // 新增
         const Half4* d_pos_h4;
         const Half4* d_vel_h4;
         const Half4* d_pos_pred_h4;
-        // 预留：后续可加入 lambda/density half 指针
+        const __half* d_lambda_h; // 新增
+        const __half* d_density_h; // 新增
+        const __half* d_aux_h; // 新增
+        //预留：后续可加入 lambda/density half 指针
     };
 
 #ifndef SIM_HALF_CONVERT_DEFINED
@@ -87,6 +93,24 @@ namespace sim {
                     __half2float(h.w));
             }
             return d_vel_fp32[i];
+        }
+        __device__ static inline float loadLambda(const float* d_lambda_fp32,
+            const __half* d_lambda_h,
+            uint32_t i) {
+            if (g_precisionView.useHalfLambda && d_lambda_h) return __half2float(d_lambda_h[i]);
+            return d_lambda_fp32[i];
+        }
+        __device__ static inline float loadDensity(const float* d_density_fp32,
+            const __half* d_density_h,
+            uint32_t i) {
+            if (g_precisionView.useHalfDensity && d_density_h) return __half2float(d_density_h[i]);
+            return d_density_fp32[i];
+        }
+        __device__ static inline float loadAux(const float* d_aux_fp32,
+            const __half* d_aux_h,
+            uint32_t i) {
+            if (g_precisionView.useHalfAux && d_aux_h) return __half2float(d_aux_h[i]);
+            return d_aux_fp32[i];
         }
         __device__ static inline void storeVel(float4* d_vel_fp32,
             uint32_t i,

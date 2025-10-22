@@ -1,9 +1,9 @@
-#pragma once
+ï»¿#pragma once
 #include <cuda_runtime.h>
 #include <cmath>
 
 namespace sim {
-// »ù´¡ float3 ¹¤¾ßº¯Êı£¨Í³Ò»¶¨Òå£¬±ÜÃâ simulator.cpp ¶à´¦ÖØ¸´ lambda£©
+// åŸºç¡€ float3 å·¥å…·å‡½æ•°ï¼ˆç»Ÿä¸€å®šä¹‰ï¼Œé¿å… simulator.cpp å¤šå¤„é‡å¤ lambdaï¼‰
 static inline float3 make3(float x, float y, float z) { return make_float3(x, y, z); }
 static inline float3 add3(float3 a, float3 b) { return make3(a.x + b.x, a.y + b.y, a.z + b.z); }
 static inline float3 sub3(float3 a, float3 b) { return make3(a.x - b.x, a.y - b.y, a.z - b.z); }

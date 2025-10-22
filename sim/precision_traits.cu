@@ -9,18 +9,22 @@ namespace sim {
 
     bool UpdateDevicePrecisionView(const DeviceBuffers& bufs, const SimPrecision& pr) {
         DevicePrecisionView h{};
-        auto isPackedHalf = [](NumericType t) {
-            return t == NumericType::FP16_Packed;
-            };
+        auto isPackedHalf = [](NumericType t) { return t == NumericType::FP16_Packed || t == NumericType::FP16; };
 
         h.useHalfPos = (isPackedHalf(pr.positionStore) && bufs.d_pos_h4 != nullptr) ? 1 : 0;
         h.useHalfVel = (isPackedHalf(pr.velocityStore) && bufs.d_vel_h4 != nullptr) ? 1 : 0;
         h.useHalfPosPred = (isPackedHalf(pr.predictedPosStore) && bufs.d_pos_pred_h4 != nullptr) ? 1 : 0;
-        h.useHalfGeneric = h.useHalfPos;
+        h.useHalfGeneric = h.useHalfPos; //先复用
+        h.useHalfLambda = (isPackedHalf(pr.lambdaStore) && bufs.d_lambda_h != nullptr) ? 1 : 0;
+        h.useHalfDensity = (isPackedHalf(pr.densityStore) && bufs.d_density_h != nullptr) ? 1 : 0;
+        h.useHalfAux = (isPackedHalf(pr.auxStore) && bufs.d_aux_h != nullptr) ? 1 : 0;
 
         h.d_pos_h4 = bufs.d_pos_h4;
         h.d_vel_h4 = bufs.d_vel_h4;
         h.d_pos_pred_h4 = bufs.d_pos_pred_h4;
+        h.d_lambda_h = bufs.d_lambda_h;
+        h.d_density_h = bufs.d_density_h;
+        h.d_aux_h = bufs.d_aux_h;
 
         cudaError_t e = cudaMemcpyToSymbol(g_precisionView, &h, sizeof(h));
         if (e != cudaSuccess) {

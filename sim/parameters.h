@@ -15,13 +15,13 @@ namespace sim {
 
     // ========== 新增：精度配置（运行期由 BuildSimParams 填充）==========
     struct SimPrecision {
-        // 存储
+        // 存储（位置 /速度 /预测 / λ / 密度 / 辅助 / 渲染提交转换）
         NumericType positionStore      = NumericType::FP32;
         NumericType velocityStore      = NumericType::FP32;
         NumericType predictedPosStore  = NumericType::FP32;
-        NumericType lambdaStore        = NumericType::FP32;
-        NumericType densityStore       = NumericType::FP32;
-        NumericType auxStore           = NumericType::FP32;
+        NumericType lambdaStore        = NumericType::FP32; // 可半精镜像（__half 标量）
+        NumericType densityStore       = NumericType::FP32; // 可半精镜像（__half 标量）
+        NumericType auxStore           = NumericType::FP32; // 可半精镜像（__half 标量）
         NumericType renderTransfer     = NumericType::FP32;
 
         // 计算
@@ -29,7 +29,7 @@ namespace sim {
         bool        forceFp32Accumulate = true;
         bool        enableHalfIntrinsics = false;
 
-        // 分阶段覆盖（暂留，后续 M2 可使用）
+        // 分阶段覆盖
         bool        useStageOverrides  = false;
         NumericType emissionCompute    = NumericType::FP32;
         NumericType gridBuildCompute   = NumericType::FP32;

@@ -1,26 +1,26 @@
-#pragma once
+ï»¿#pragma once
 #include <cuda_runtime.h>
 #include <cmath>
 #include "parameters.h"
 
-// ÊıÖµ½üËÆÓë½á¹¹±È½Ï¹¤¾ß£¬Í³Ò»¹©¸÷Ä£¿éÊ¹ÓÃ£¨Ô­ÏÈÉ¢ÂäÓÚ simulator.cpp£©
+// æ•°å€¼è¿‘ä¼¼ä¸ç»“æ„æ¯”è¾ƒå·¥å…·ï¼Œç»Ÿä¸€ä¾›å„æ¨¡å—ä½¿ç”¨ï¼ˆåŸå…ˆæ•£è½äº simulator.cppï¼‰
 namespace sim {
-    // ±êÁ¿½üËÆÏàµÈ£ºÔÊĞíÏà¶ÔÎó²î eps * max(1, |a|, |b|)
+    // æ ‡é‡è¿‘ä¼¼ç›¸ç­‰ï¼šå…è®¸ç›¸å¯¹è¯¯å·® eps * max(1, |a|, |b|)
     static inline bool approxEq(float a, float b, float eps = 1e-6f) {
         float da = fabsf(a - b);
         float ma = fmaxf(fabsf(a), fabsf(b));
         return da <= eps * fmaxf(1.0f, ma);
     }
-    // float3 ·ÖÁ¿ÖğÒ»½üËÆÏàµÈ
+    // float3 åˆ†é‡é€ä¸€è¿‘ä¼¼ç›¸ç­‰
     static inline bool approxEq3(float3 a, float3 b, float eps = 1e-6f) {
         return approxEq(a.x, b.x, eps) && approxEq(a.y, b.y, eps) && approxEq(a.z, b.z, eps);
     }
-    // Íø¸ñ²ÎÊıÕûÌå±È½Ï£¨º¬ mins/maxs/cellSize/dim£©
+    // ç½‘æ ¼å‚æ•°æ•´ä½“æ¯”è¾ƒï¼ˆå« mins/maxs/cellSize/dimï¼‰
     static inline bool gridEqual(const GridBounds& a, const GridBounds& b, float eps = 1e-6f) {
         return approxEq3(a.mins, b.mins, eps) && approxEq3(a.maxs, b.maxs, eps) && approxEq(a.cellSize, b.cellSize, eps)
             && (a.dim.x == b.dim.x) && (a.dim.y == b.dim.y) && (a.dim.z == b.dim.z);
     }
-    // Kernel ÏµÊı¿íËÉ±È½Ï£º²ÉÓÃÏà¶ÔãĞÖµ rel£¨Ä¬ÈÏ 2%£©
+    // Kernel ç³»æ•°å®½æ¾æ¯”è¾ƒï¼šé‡‡ç”¨ç›¸å¯¹é˜ˆå€¼ relï¼ˆé»˜è®¤ 2%ï¼‰
     static inline bool kernelEqualRelaxed(const KernelCoeffs& a, const KernelCoeffs& b, float rel = 0.02f) {
         auto nearRel = [&](float x, float y) {
             float mx = fmaxf(fabsf(x), fabsf(y));

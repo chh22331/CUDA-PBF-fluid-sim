@@ -54,11 +54,13 @@ extern "C" void LaunchLambdaWarmStart(float* lambda,
     KLambdaWarmStart << <blocks, 256, 0, s >> > (lambda, existingCount, totalCount, decay);
 }
 
-// 密度/λ 计算 (已移除模板与 half 累加逻辑, 全部使用 FP32)
+// λ计算：读取上一迭代 λ 支持半精镜像（若启用）
 __global__ void KLambdaHalfFloatAccum(
     float* __restrict__ d_lambda,
     const float4* __restrict__ d_pos_pred_fp32,
     const Half4* __restrict__ d_pos_pred_h4,
+    const float* __restrict__ d_lambda_fp32,
+    const __half* __restrict__ d_lambda_h,
     const uint32_t* __restrict__ indicesSorted,
     const uint32_t* __restrict__ keysSorted,
     const uint32_t* __restrict__ cellStart,
@@ -72,7 +74,7 @@ __global__ void KLambdaHalfFloatAccum(
     uint32_t pid = indicesSorted[is];
 
     // 读上一迭代 / 上一帧 λ（用于 XPBD）
-    float lambda_prev = d_lambda[pid];
+    float lambda_prev = PrecisionTraits::loadLambda(d_lambda_fp32, d_lambda_h, pid);
 
     float4 pi4 = PrecisionTraits::loadPosPred(d_pos_pred_fp32, d_pos_pred_h4, pid);
     float3 pi = make_float3(pi4.x, pi4.y, pi4.z);
@@ -153,11 +155,11 @@ __global__ void KLambdaHalfFloatAccum(
     d_lambda[pid] = lambda;
 }
 
-template<typename RhoAccumT, typename GradAccumT>
 __global__ void KDeltaApplyHalfGeneric(
     float4* __restrict__ d_pos_pred,
     float4* __restrict__ d_delta,
-    const float* __restrict__ d_lambda,
+    const float* __restrict__ d_lambda_fp32,
+    const __half* __restrict__ d_lambda_h,
     const float4* __restrict__ d_pos_pred_fp32,
     const Half4* __restrict__ d_pos_pred_h4,
     const uint32_t* __restrict__ indicesSorted,
@@ -165,13 +167,13 @@ __global__ void KDeltaApplyHalfGeneric(
     const uint32_t* __restrict__ cellStart,
     const uint32_t* __restrict__ cellEnd,
     DeviceParams dp,
-    uint32_t N,
-    bool accumHalf)
+    uint32_t N)
 {
     uint32_t iSorted = blockIdx.x * blockDim.x + threadIdx.x;
     if (iSorted >= N) return;
     uint32_t pid = indicesSorted[iSorted];
-    float lambda_i = d_lambda[pid];
+
+    float lambda_i = PrecisionTraits::loadLambda(d_lambda_fp32, d_lambda_h, pid);
 
     float4 pi4 = PrecisionTraits::loadPosPred(d_pos_pred_fp32, d_pos_pred_h4, pid);
     float3 pi = make_float3(pi4.x, pi4.y, pi4.z);
@@ -211,7 +213,7 @@ __global__ void KDeltaApplyHalfGeneric(
                     if (r2 >= h2) continue;
                     float r = sqrtf(r2);
                     float3 g = grad_spiky_f(kc, rij, r);
-                    float lambda_j = d_lambda[pj];
+                    float lambda_j = PrecisionTraits::loadLambda(d_lambda_fp32, d_lambda_h, pj);
                     float scale = -(lambda_i + lambda_j) * mass * invRest;
                     disp.x += scale * g.x;
                     disp.y += scale * g.y;
@@ -246,6 +248,8 @@ extern "C" void LaunchLambdaHalf(
     float* lambda,
     const float4* pos_pred_fp32,
     const Half4* pos_pred_h4,
+    const float* lambda_fp32,
+    const __half* lambda_h,
     const uint32_t* indicesSorted,
     const uint32_t* keysSorted,
     const uint32_t* cellStart,
@@ -258,7 +262,7 @@ extern "C" void LaunchLambdaHalf(
     if (N == 0) return;
     // 忽略 forceFp32Accum（全部使用 float 累加）
     (void)forceFp32Accum;
-    KLambdaHalfFloatAccum << <gridFor(N), 256, 0, s >> > (lambda, pos_pred_fp32, pos_pred_h4,
+    KLambdaHalfFloatAccum << <gridFor(N), 256, 0, s >> > (lambda, pos_pred_fp32, pos_pred_h4, lambda_fp32, lambda_h,
         indicesSorted, keysSorted, cellStart, cellEnd,
         dp, N);
 }
@@ -266,7 +270,8 @@ extern "C" void LaunchLambdaHalf(
 extern "C" void LaunchDeltaApplyHalf(
     float4* pos_pred,
     float4* delta,
-    const float* lambda,
+    const float* lambda_fp32,
+    const __half* lambda_h,
     const float4* pos_pred_fp32,
     const Half4* pos_pred_h4,
     const uint32_t* indicesSorted,
@@ -280,8 +285,8 @@ extern "C" void LaunchDeltaApplyHalf(
 {
     if (N == 0) return;
     bool halfAccum = !forceFp32Accum;
-    KDeltaApplyHalfGeneric<float, float> << <gridFor(N), 256, 0, s >> > (
-        pos_pred, delta, lambda,
+    KDeltaApplyHalfGeneric << <gridFor(N), 256, 0, s >> > (
+        pos_pred, delta, lambda_fp32, lambda_h,
         pos_pred_fp32, pos_pred_h4,
         indicesSorted, keysSorted, cellStart, cellEnd,
         dp, N, halfAccum);

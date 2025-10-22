@@ -141,9 +141,9 @@ void BuildSimParams(const RuntimeConsole& c, sim::SimParams& out) {
         out.precision.positionStore = sim::NumericType::FP16_Packed;
         out.precision.velocityStore = sim::NumericType::FP16_Packed;
         out.precision.predictedPosStore = sim::NumericType::FP16_Packed;
-        out.precision.lambdaStore = sim::NumericType::FP32;
-        out.precision.densityStore = sim::NumericType::FP32;
-        out.precision.auxStore = sim::NumericType::FP32;
+        out.precision.lambdaStore = sim::NumericType::FP32; // 保持稳定
+        out.precision.densityStore = sim::NumericType::FP32; // 保持稳定
+        out.precision.auxStore = sim::NumericType::FP16_Packed; // 新增：aux 可半精镜像
         out.precision.renderTransfer = sim::NumericType::FP32;
         out.precision.coreCompute = sim::NumericType::FP32;
         out.precision.forceFp32Accumulate = true;
@@ -178,13 +178,15 @@ void BuildSimParams(const RuntimeConsole& c, sim::SimParams& out) {
         out.precision.densityErrorTolerance = src.densityErrorTolerance;
         out.precision.lambdaVarianceTolerance = src.lambdaVarianceTolerance;
         out.precision.adaptCheckEveryN = src.adaptCheckEveryN;
-        // 若用户使用 FP16 (非 Packed)，M1 自动升级到 FP16_Packed（仅镜像阶段）
-        if (out.precision.positionStore == sim::NumericType::FP16)
-            out.precision.positionStore = sim::NumericType::FP16_Packed;
-        if (out.precision.velocityStore == sim::NumericType::FP16)
-            out.precision.velocityStore = sim::NumericType::FP16_Packed;
-        if (out.precision.predictedPosStore == sim::NumericType::FP16)
-            out.precision.predictedPosStore = sim::NumericType::FP16_Packed;
+        // 若用户使用 FP16 (非 Packed)，统一升级为 FP16_Packed（向量或标量镜像都可复用）
+        auto upgradeIfPlainHalf = [](sim::NumericType& t){ if (t == sim::NumericType::FP16) t = sim::NumericType::FP16_Packed; };
+        upgradeIfPlainHalf(out.precision.positionStore);
+        upgradeIfPlainHalf(out.precision.velocityStore);
+        upgradeIfPlainHalf(out.precision.predictedPosStore);
+        upgradeIfPlainHalf(out.precision.auxStore);
+        // lambda / density仍可保持 FP16（不强制打包标志），此处只镜像 Packed视图：
+        if (out.precision.lambdaStore == sim::NumericType::FP16) out.precision.lambdaStore = sim::NumericType::FP16; // 保持标量 half语义
+        if (out.precision.densityStore == sim::NumericType::FP16) out.precision.densityStore = sim::NumericType::FP16; // 保持标量 half语义
     }
     // 现有 out.precision 基础字段已写入，此处补充阶段覆盖与 fp16StageMask 逻辑
         const auto& pc = c.sim.precision;

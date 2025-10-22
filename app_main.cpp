@@ -1,3 +1,4 @@
+#define NOMINMAX
 #include <cstdio>
 #include <vector>
 #include <cstdint>
@@ -525,6 +526,40 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     using Clock = std::chrono::steady_clock;
     static auto s_prevFrameEnd = Clock::now();
 
+    // ================= 跑分状态 =================
+    const bool benchEnabled = cc.bench.enabled;
+    const int benchTotalFrames = cc.bench.total_frames;
+    const double benchTotalSeconds = cc.bench.total_seconds;
+    const bool benchUseTimeRange = cc.bench.use_time_range;
+    const int sampleBeginFrame = cc.bench.sample_begin_frame;
+    const int sampleEndFrameCfg = cc.bench.sample_end_frame; //可能 <0
+    const double sampleBeginSec = cc.bench.sample_begin_seconds;
+    const double sampleEndSecCfg = cc.bench.sample_end_seconds;
+
+    auto wallStart = Clock::now(); // 跑分整体起始时间
+
+    // 累计数据（只统计采样窗口内）
+    uint64_t benchSampledFrames = 0;
+    double accumFrameMs = 0.0;
+    double accumSimGpuMs = 0.0;
+    double accumRenderMs = 0.0;
+    double frameMsMin = 1e300, frameMsMax = 0.0;
+    double simMsMin = 1e300, simMsMax = 0.0;
+    double renderMsMin = 1e300, renderMsMax = 0.0;
+
+    auto InFrameSampleWindow = [&](uint64_t frameIdx) -> bool {
+        if (benchUseTimeRange) return false; // 帧范围模式下才走这里
+        if ((int64_t)frameIdx < sampleBeginFrame) return false;
+        if (sampleEndFrameCfg >= 0 && (int64_t)frameIdx > sampleEndFrameCfg) return false;
+        return true;
+    };
+    auto InTimeSampleWindow = [&](double elapsedSec) -> bool {
+        if (!benchUseTimeRange) return false;
+        if (elapsedSec < sampleBeginSec) return false;
+        if (sampleEndSecCfg > 0.0 && elapsedSec > sampleEndSecCfg) return false;
+        return true;
+    };
+
     while (running) {
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) running = false;
@@ -533,6 +568,17 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 
         // 帧开始时间（用于 frame_ms）
         auto frameStart = Clock::now();
+        double elapsedSec = std::chrono::duration<double>(frameStart - wallStart).count();
+
+        // ==== 跑分结束条件判断（循环顶部即可早停）====
+        if (benchEnabled) {
+            bool reachedFrames = (benchTotalFrames > 0) && ((int64_t)frameIndex >= benchTotalFrames);
+            bool reachedTime = (benchTotalSeconds > 0.0) && (elapsedSec >= benchTotalSeconds);
+            if (reachedFrames || reachedTime) {
+                running = false; //直接跳出主循环
+            }
+        }
+        if (!running) break; // 避免多做一帧
 
         // 热加载
         if (hotReloadEveryNFrames != UINT32_MAX &&
@@ -667,8 +713,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         UpdateFreeFlyCamera(g_Camera, dtSec);
         SyncCameraToRenderer(cc, renderer, g_Camera);
 
-        // Debug 控制
-        if (g_DebugEnabled) {
+        // Debug 控制（跑分开启时可选择忽略手动暂停）
+        if (g_DebugEnabled && !benchEnabled) {
             if (KeyPressedOnce(cc.debug.keyTogglePause)) {
                 g_DebugPaused = !g_DebugPaused;
                 if (cc.debug.printDebugKeys) {
@@ -694,13 +740,11 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 
         // —— 模拟 —— //
         bool doStep = true;
-        if (g_DebugEnabled) {
+        if (g_DebugEnabled && !benchEnabled) { // 跑分时强制连续运行
             doStep = !g_DebugPaused || g_DebugStepRequested;
         }
         if (doStep) {
             simulator.step(simParams);
-            // 新增：渲染前同步 CUDA（自动模式防止读取未完成写入导致位置来回跳）
-            simulator.syncForRender();
             if (simulator.externalPingPongEnabled()) {
                 renderer.UpdateParticleSRVForPingPong(simulator.devicePositions());
             }
@@ -717,7 +761,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         // 保守冗余（可选）：若担心漏帧，可在此添加一次冪等调用
         // renderer.UpdateParticleSRVForPingPong(simulator.devicePositions());
 
-        // 记录上一帧 GPU 仿真耗时（ms）：事件查询成功时更新
+        //记录上一帧 GPU 仿真耗时（ms）：事件查询成功时更新
         const double simMsGpu = simulator.lastGpuFrameMs();
         profiler.addRow("sim_ms_gpu", simMsGpu);
 
@@ -731,11 +775,6 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         auto renderStart = Clock::now();
         if (!simulator.externalPingPongEnabled()) {
             renderer.UpdateParticleSRVForPingPong(simulator.renderPositionPtr());
-            std::fprintf(stderr, "[PP-Debug][Render] renderPtr=%p swapped=%d A=%p B=%p activeSrvIdx=%d\n",
-                simulator.renderPositionPtr(),
-                simulator.swappedThisFrame(),
-                simulator.pingpongPosA(),
-                simulator.pingpongPosB(),/* 可添加 renderer 当前 srvIndex */ 0 /* 替换为真实字段 */);
         } 
         renderer.RenderFrame(profiler);
         // 为获取“真实渲染耗时/显示帧率”，等待 GPU 渲染队列完成
@@ -764,8 +803,57 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
             TickAndPrintSimStats(simulator, simParams);
         }
 
+        // ====== 跑分采集 ======
+        if (benchEnabled) {
+            bool inWindow = benchUseTimeRange ? InTimeSampleWindow(elapsedSec) : InFrameSampleWindow(frameIndex);
+            if (inWindow) {
+                ++benchSampledFrames;
+                accumFrameMs += frameMs;
+                accumSimGpuMs += simMsGpu;
+                accumRenderMs += renderMs;
+                frameMsMin = std::min(frameMsMin, frameMs);
+                frameMsMax = std::max(frameMsMax, frameMs);
+                simMsMin = std::min(simMsMin, simMsGpu);
+                simMsMax = std::max(simMsMax, simMsGpu);
+                renderMsMin = std::min(renderMsMin, renderMs);
+                renderMsMax = std::max(renderMsMax, renderMs);
+                if (cc.bench.print_per_frame) {
+                    std::printf("[BenchFrame] f=%llu frame_ms=%.3f sim_ms=%.3f render_ms=%.3f\n",
+                        (unsigned long long)frameIndex, frameMs, simMsGpu, renderMs);
+                }
+            }
+        }
+
         profiler.flushCsv(cc.app.csv_path, frameIndex);
         ++frameIndex;
+    }
+
+    // ======= 跑分结果输出 =======
+    if (benchEnabled) {
+        double benchElapsedSec = std::chrono::duration<double>(Clock::now() - wallStart).count();
+        if (benchSampledFrames > 0) {
+            double avgFrame = accumFrameMs / benchSampledFrames;
+            double avgSim = accumSimGpuMs / benchSampledFrames;
+            double avgRender = accumRenderMs / benchSampledFrames;
+            double fps = 1000.0 / avgFrame;
+            std::printf("\n==== Benchmark Result ====\n");
+            std::printf("SampledFrames: %llu\n", (unsigned long long)benchSampledFrames);
+            std::printf("TotalElapsedSec: %.3f\n", benchElapsedSec);
+            if (!benchUseTimeRange) {
+                std::printf("FrameRange: [%d, %s]\n", sampleBeginFrame,
+                    (cc.bench.sample_end_frame >= 0) ? std::to_string(cc.bench.sample_end_frame).c_str() : "end");
+            } else {
+                std::printf("TimeRangeSec: [%.3f, %s]\n", sampleBeginSec,
+                    (cc.bench.sample_end_seconds > 0.0) ? std::to_string(cc.bench.sample_end_seconds).c_str() : "end");
+            }
+            std::printf("Frame_ms avg=%.3f min=%.3f max=%.3f\n", avgFrame, frameMsMin, frameMsMax);
+            std::printf("Sim_msGpu avg=%.3f min=%.3f max=%.3f\n", avgSim, simMsMin, simMsMax);
+            std::printf("Render_ms avg=%.3f min=%.3f max=%.3f\n", avgRender, renderMsMin, renderMsMax);
+            std::printf("FPS_avg=%.2f\n", fps);
+            std::printf("==========================\n");
+        } else {
+            std::printf("[Benchmark] No frames sampled (check window configuration).\n");
+        }
     }
 
     simulator.shutdown();

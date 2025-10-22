@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include <cstdint>
 #include <cstdarg>
 #include <cstdio>
@@ -23,8 +23,8 @@ namespace sim {
         case LC::Hint:      return c.debug.printHints;
         case LC::Diag:      return c.debug.printDiagnostics;
         case LC::HotReload: return c.debug.printHotReload;
-        case LC::Precision: return true; // ¾«¶ÈÈÕÖ¾×ÜÊÇÔÊĞí£¨¿ÉÔÙ¼Ó¿ª¹Ø£©
-        case LC::Perf:      return true; // ĞÔÄÜÀàÄ¬ÈÏÔÊĞí
+        case LC::Precision: return true; // ç²¾åº¦æ—¥å¿—æ€»æ˜¯å…è®¸ï¼ˆå¯å†åŠ å¼€å…³ï¼‰
+        case LC::Perf:      return true; // æ€§èƒ½ç±»é»˜è®¤å…è®¸
         default:            return true;
         }
     }

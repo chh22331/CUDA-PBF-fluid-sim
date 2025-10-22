@@ -1,4 +1,4 @@
-#include "device_globals.cuh"
+﻿#include "device_globals.cuh"
 #include "device_buffers.cuh"
 
 namespace sim {
