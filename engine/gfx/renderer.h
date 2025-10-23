@@ -66,6 +66,7 @@ namespace gfx {
             m_groups = groups;
             m_particlesPerGroup = particlesPerGroup;
         }
+        void SetUseHalfRender(bool enable){ m_useHalfRender = enable; }
 
         // 时间线同步访问器
         HANDLE SharedTimelineFenceHandle() const { return m_timelineFenceSharedHandle; }
@@ -106,7 +107,12 @@ namespace gfx {
         Microsoft::WRL::ComPtr<ID3D12Fence> m_timelineFence; // 单调递增：偶=render, 奇=sim 完成
         HANDLE m_timelineFenceSharedHandle = nullptr;
         uint64_t m_renderFenceValue = 0; // 最近一次渲染完成的偶数值
-        uint64_t m_lastSimFenceValue = 0; // 最近一次模拟完成的奇数值
+        uint64_t m_lastSimFenceValue =0; // 最近一次模拟完成的奇数值
+
+        // 半精渲染链路：根据 precision.renderTransfer选择使用 half版着色器
+        bool m_useHalfRender = false;
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> m_psoPointsFloat; // 原 float4版
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> m_psoPointsHalf; // half 压缩版 (uint2 解码)
     };
 
 } // namespace gfx

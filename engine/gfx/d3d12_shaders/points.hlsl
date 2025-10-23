@@ -75,3 +75,4 @@ float4 PSMain(VSOut i) : SV_Target
     // 若需要圆形点，可在此裁剪: if(length(i.uv*2-1)>1) discard;
     return float4(i.col, 1.0);
 }
+

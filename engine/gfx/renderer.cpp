@@ -1,6 +1,6 @@
 #include "renderer.h"
-#include "../../sim/cuda_vec_math.cuh"
 #include "../core/prof_nvtx.h"
+#include "../../sim/cuda_vec_math.cuh"
 #include <chrono>
 #include <d3dcompiler.h>
 #include <cstring>
@@ -360,19 +360,24 @@ namespace gfx {
     }
 
     void RendererD3D12::BuildFrameGraph(){
-        prof::Range r("Renderer.BuildFrameGraph", prof::Color(0x90, 0x40, 0x30));
+        prof::Range r("Renderer.BuildFrameGraph", prof::Color(0x90,0x40,0x30));
         m_fg = core::FrameGraph{};
         auto rsGfx = CreateRootSignatureGfx(m_device.device());
-        auto vs = Compile(L"engine\\gfx\\d3d12_shaders\\points.hlsl","VSMain","vs_5_1");
-        auto ps = Compile(L"engine\\gfx\\d3d12_shaders\\points.hlsl","PSMain","ps_5_1");
+        // 编译 float版着色器
+        auto vsFloat = Compile(L"engine\\gfx\\d3d12_shaders\\points.hlsl","VSMain","vs_5_1");
+        auto psFloat = Compile(L"engine\\gfx\\d3d12_shaders\\points.hlsl","PSMain","ps_5_1");
+        // 编译 half版（独立文件 points_half.hlsl，用 uint2 -> four fp16 解码）
+        auto vsHalf = Compile(L"engine\\gfx\\d3d12_shaders\\points_half.hlsl","VSMain","vs_5_1");
+        auto psHalf = Compile(L"engine\\gfx\\d3d12_shaders\\points_half.hlsl","PSMain","ps_5_1");
 
-        Microsoft::WRL::ComPtr<ID3D12PipelineState> psoPoints;
-        if(rsGfx && vs && ps){
+        m_psoPointsFloat.Reset();
+        m_psoPointsHalf.Reset();
+        if(rsGfx && vsFloat && psFloat){
             DXGI_FORMAT rtFmt = m_device.currentBackbuffer()->GetDesc().Format;
             D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
             pso.pRootSignature = rsGfx.Get();
-            pso.VS = { vs->GetBufferPointer(), vs->GetBufferSize() };
-            pso.PS = { ps->GetBufferPointer(), ps->GetBufferSize() };
+            pso.VS = { vsFloat->GetBufferPointer(), vsFloat->GetBufferSize() };
+            pso.PS = { psFloat->GetBufferPointer(), psFloat->GetBufferSize() };
             pso.BlendState = AlphaBlendDesc();
             pso.SampleMask = UINT_MAX;
             pso.RasterizerState = DefaultRasterizerNoCull();
@@ -380,13 +385,30 @@ namespace gfx {
             pso.DepthStencilState.StencilEnable = FALSE;
             pso.InputLayout = { nullptr,0 };
             pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-            pso.NumRenderTargets = 1;
+            pso.NumRenderTargets =1;
             pso.RTVFormats[0] = rtFmt;
-            pso.SampleDesc.Count = 1;
-            if(FAILED(m_device.device()->CreateGraphicsPipelineState(&pso,IID_PPV_ARGS(&psoPoints)))){
-                psoPoints.Reset();
-                OutputDebugStringA("[PSO] Failed points pipeline.\n");
-            }
+            pso.SampleDesc.Count =1;
+            if (SUCCEEDED(m_device.device()->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&m_psoPointsFloat))))
+                OutputDebugStringA("[PSO] Created float points pipeline.\n");
+        }
+        if(rsGfx && vsHalf && psHalf){
+            DXGI_FORMAT rtFmt = m_device.currentBackbuffer()->GetDesc().Format;
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
+            pso.pRootSignature = rsGfx.Get();
+            pso.VS = { vsHalf->GetBufferPointer(), vsHalf->GetBufferSize() };
+            pso.PS = { psHalf->GetBufferPointer(), psHalf->GetBufferSize() };
+            pso.BlendState = AlphaBlendDesc();
+            pso.SampleMask = UINT_MAX;
+            pso.RasterizerState = DefaultRasterizerNoCull();
+            pso.DepthStencilState.DepthEnable = FALSE;
+            pso.DepthStencilState.StencilEnable = FALSE;
+            pso.InputLayout = { nullptr,0 };
+            pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+            pso.NumRenderTargets =1;
+            pso.RTVFormats[0] = rtFmt;
+            pso.SampleDesc.Count =1;
+            if (SUCCEEDED(m_device.device()->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&m_psoPointsHalf))))
+                OutputDebugStringA("[PSO] Created half points pipeline.\n");
         }
 
         core::PassDesc clear{}; clear.name="clear";
@@ -398,70 +420,48 @@ namespace gfx {
         };
         m_fg.addPass(clear);
 
-        if(rsGfx && psoPoints){
-            core::PassDesc points{}; points.name="points";
-            points.execute = [this, rsGfx, psoPoints](){
+        // 替换旧 points pass，选择 PSO
+        if(rsGfx && (m_psoPointsFloat || m_psoPointsHalf)){
+            core::PassDesc points{}; points.name = "points";
+            points.execute = [this, rsGfx]() {
                 auto* cl = m_device.cmdList();
                 auto rtvHandle = m_device.currentRTV();
                 cl->OMSetRenderTargets(1,&rtvHandle,FALSE,nullptr);
-
                 D3D12_VIEWPORT vp{0.f,0.f,(float)m_device.width(),(float)m_device.height(),0.f,1.f};
                 D3D12_RECT sc{0,0,(LONG)m_device.width(),(LONG)m_device.height()};
-                cl->RSSetViewports(1,&vp);
-                cl->RSSetScissorRects(1,&sc);
-
-                ID3D12DescriptorHeap* heaps[] = { m_device.srvHeap() };
-                cl->SetDescriptorHeaps(1, heaps);
+                cl->RSSetViewports(1,&vp); cl->RSSetScissorRects(1,&sc);
+                ID3D12DescriptorHeap* heaps[] = { m_device.srvHeap() }; cl->SetDescriptorHeaps(1, heaps);
                 cl->SetGraphicsRootSignature(rsGfx.Get());
-                cl->SetPipelineState(psoPoints.Get());
+                bool useHalf = m_useHalfRender && m_psoPointsHalf; //运行时标志
+                cl->SetPipelineState(useHalf ? m_psoPointsHalf.Get() : m_psoPointsFloat.Get());
                 cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-                if(m_sharedParticleBuffer){
-                    D3D12_RESOURCE_BARRIER b{};
-                    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                if (m_sharedParticleBuffer){
+                    D3D12_RESOURCE_BARRIER b{}; b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
                     b.Transition.pResource = m_sharedParticleBuffer.Get();
                     b.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
-                    b.Transition.StateAfter  = D3D12_RESOURCE_STATE_GENERIC_READ;
+                    b.Transition.StateAfter = D3D12_RESOURCE_STATE_GENERIC_READ;
                     b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
                     cl->ResourceBarrier(1,&b);
                 }
-
-                PerFrameCB cb{};
-                float3 eye=m_camera.eye, at=m_camera.at, up=m_camera.up;
-                Mat4 V=lookAtRH(eye,at,up);
-                float aspect = (m_device.height()>0)? (float)m_device.width()/(float)m_device.height():1.0f;
+                PerFrameCB cb{}; float3 eye=m_camera.eye, at=m_camera.at, up=m_camera.up;
+                Mat4 V=lookAtRH(eye,at,up); float aspect=(m_device.height()>0)?(float)m_device.width()/(float)m_device.height():1.0f;
                 Mat4 P=perspectiveFovRH_ZO(Deg2Rad(m_camera.fovYDeg),aspect,m_camera.nearZ,m_camera.farZ);
-                Mat4 VP=mul(P,V);
-                std::memcpy(cb.viewProj,VP.m,sizeof(cb.viewProj));
-                cb.screenSize[0]=(float)m_device.width();
-                cb.screenSize[1]=(float)m_device.height();
-                cb.particleRadiusPx = m_visual.particleRadiusPx;
-                cb.thicknessScale   = m_visual.thicknessScale;
-                cb.groups = m_groups;
-                cb.particlesPerGroup = m_particlesPerGroup;
+                Mat4 VP=mul(P,V); std::memcpy(cb.viewProj,VP.m,sizeof(cb.viewProj));
+                cb.screenSize[0]=(float)m_device.width(); cb.screenSize[1]=(float)m_device.height();
+                cb.particleRadiusPx=m_visual.particleRadiusPx; cb.thicknessScale=m_visual.thicknessScale;
+                cb.groups=m_groups; cb.particlesPerGroup=m_particlesPerGroup;
                 cl->SetGraphicsRoot32BitConstants(0,sizeof(PerFrameCB)/4,&cb,0);
-
-                if(m_particleSrvIndex>=0 && m_particleCount>0){
-                    auto gpuPos = m_device.srvGpuHandleAt((uint32_t)m_particleSrvIndex);
-                    cl->SetGraphicsRootDescriptorTable(1, gpuPos);
-                }
-                if(m_paletteSrvIndex>=0){
-                    auto gpuPal = m_device.srvGpuHandleAt((uint32_t)m_paletteSrvIndex);
-                    cl->SetGraphicsRootDescriptorTable(2, gpuPal);
-                }
-                UINT instanceCount = m_particleCount;
-                if(instanceCount>0) cl->DrawInstanced(6, instanceCount, 0, 0);
-
-                if(m_sharedParticleBuffer){
-                    D3D12_RESOURCE_BARRIER b{};
-                    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                if(m_particleSrvIndex>=0 && m_particleCount>0){ auto gpuPos=m_device.srvGpuHandleAt((uint32_t)m_particleSrvIndex); cl->SetGraphicsRootDescriptorTable(1,gpuPos); }
+                if(m_paletteSrvIndex>=0){ auto gpuPal=m_device.srvGpuHandleAt((uint32_t)m_paletteSrvIndex); cl->SetGraphicsRootDescriptorTable(2,gpuPal); }
+                UINT instanceCount=m_particleCount; if(instanceCount>0) cl->DrawInstanced(6,instanceCount,0,0);
+                if (m_sharedParticleBuffer){
+                    D3D12_RESOURCE_BARRIER b{}; b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
                     b.Transition.pResource = m_sharedParticleBuffer.Get();
                     b.Transition.StateBefore = D3D12_RESOURCE_STATE_GENERIC_READ;
-                    b.Transition.StateAfter  = D3D12_RESOURCE_STATE_COMMON;
+                    b.Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
                     b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
                     cl->ResourceBarrier(1,&b);
                 }
-
                 m_device.writeTimestamp();
             };
             m_fg.addPass(points);
@@ -474,27 +474,27 @@ namespace gfx {
         m_fg.compile();
     }
 
-    void RendererD3D12::RenderFrame(core::Profiler& profiler){
+    void RendererD3D12::RenderFrame(core::Profiler& profiler) {
         prof::Range r("Renderer.RenderFrame", prof::Color(0x40, 0x90, 0x50));
+        // 保持 m_useHalfRender（由资源导入或外部接口控制）
         std::vector<double> gpuMs;
-        m_fg.execute([&](const std::string& name,double ms){ profiler.addRow(name, ms); });
-        if(m_device.readbackPassTimesMs(gpuMs)){
-            for(size_t i=0;i<gpuMs.size();++i) profiler.addRow(std::string("gpu_")+std::to_string(i), gpuMs[i]);
-        }
+        m_fg.execute([&](const std::string& name, double ms) { profiler.addRow(name, ms); });
+        if (m_device.readbackPassTimesMs(gpuMs))
+            for (size_t i = 0; i < gpuMs.size(); ++i) profiler.addRow(std::string("gpu_") + std::to_string(i), gpuMs[i]);
     }
 
     bool RendererD3D12::ImportSharedBufferAsSRV(HANDLE sharedHandle, uint32_t numElements, uint32_t strideBytes, int& outSrvIndex) {
         ID3D12Resource* res = nullptr;
         if (!m_device.openSharedResource(sharedHandle, __uuidof(ID3D12Resource), (void**)&res)) return false;
-        Microsoft::WRL::ComPtr<ID3D12Resource> local;
-        local.Attach(res);
+        Microsoft::WRL::ComPtr<ID3D12Resource> local; local.Attach(res);
         int srvIndex = m_device.createBufferSRV(local.Get(), numElements, strideBytes);
-        if (srvIndex < 0) return false;
-        // 默认作为单缓冲旧路径
+        if (srvIndex <0) return false;
         m_sharedParticleBuffer = local;
         m_particleSrvIndex = srvIndex;
         m_particleCount = numElements;
         outSrvIndex = srvIndex;
+        // 根据 strideBytes 判断是否为 half 压缩（8 字节）
+        if (strideBytes ==8) m_useHalfRender = true; //资源导入驱动 half
         return true;
     }
 

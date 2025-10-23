@@ -9,6 +9,8 @@ namespace sim {
     __device__ float4* g_pos_pred = nullptr;
     __device__ float4* g_delta = nullptr;
     __device__ float* g_lambda = nullptr;
+    // 新增：幽灵粒子计数
+    __device__ uint32_t g_ghostCount = 0;
 
     static void CopyPtrToSymbol(float4* const* hPtr, float4** symbol) {
         // 这里的 symbol 是编译期常量符号地址；cudaMemcpyToSymbol 目的参数必须是符号名，不是运行时值
@@ -34,6 +36,11 @@ namespace sim {
             bufs.d_pos_next,
             bufs.d_delta,
             bufs.d_lambda);
+    }
+
+    // 新增：上传幽灵粒子数
+    void UploadGhostCount(uint32_t ghostCount) {
+        cudaMemcpyToSymbol(g_ghostCount, &ghostCount, sizeof(uint32_t));
     }
 
 } // namespace sim

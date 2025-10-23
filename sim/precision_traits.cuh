@@ -14,12 +14,14 @@ namespace sim {
         uint8_t useHalfLambda; // 新增
         uint8_t useHalfDensity; // 新增
         uint8_t useHalfAux; // 新增
+        uint8_t useHalfRender; // 新增：渲染半精位置
         const Half4* d_pos_h4;
         const Half4* d_vel_h4;
         const Half4* d_pos_pred_h4;
         const __half* d_lambda_h; // 新增
         const __half* d_density_h; // 新增
         const __half* d_aux_h; // 新增
+        const Half4* d_render_pos_h4; // 新增
         //预留：后续可加入 lambda/density half 指针
     };
 
@@ -111,6 +113,10 @@ namespace sim {
             uint32_t i) {
             if (g_precisionView.useHalfAux && d_aux_h) return __half2float(d_aux_h[i]);
             return d_aux_fp32[i];
+        }
+        __device__ static inline float4 loadPosForRender(const float4* d_pos_fp32, const Half4* d_render_h4, uint32_t i){
+            if(g_precisionView.useHalfRender && d_render_h4){ Half4 h = d_render_h4[i]; return make_float4(__half2float(h.x),__half2float(h.y),__half2float(h.z),__half2float(h.w)); }
+            return d_pos_fp32[i];
         }
         __device__ static inline void storeVel(float4* d_vel_fp32,
             uint32_t i,

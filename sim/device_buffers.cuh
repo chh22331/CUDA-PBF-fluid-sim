@@ -40,6 +40,8 @@ namespace sim {
         Half4* d_pos_pred_h4 = nullptr; // alias of d_pos_next mirror
         Half4* d_delta_h4 = nullptr;
         Half4* d_prev_pos_h4 = nullptr;
+        // 新增：渲染半精镜像（若 positionStore不是 half但 renderTransfer 要求 half）
+        Half4* d_render_pos_h4 = nullptr;
 
         // 半精镜像（标量）
         __half* d_lambda_h = nullptr;
@@ -57,11 +59,12 @@ namespace sim {
         bool useLambdaHalf = false;
         bool useDensityHalf = false;
         bool useAuxHalf = false;
+        bool useRenderHalf = false; // 新增
 
         uint32_t guardA = 0xA11CE5u;
         uint32_t guardB = 0xBEEFBEEFu;
 
-        bool anyHalf() const { return usePosHalf || useVelHalf || usePosPredHalf || useLambdaHalf || useDensityHalf || useAuxHalf; }
+        bool anyHalf() const { return usePosHalf || useVelHalf || usePosPredHalf || useLambdaHalf || useDensityHalf || useAuxHalf || useRenderHalf; }
         bool hasPrevSnapshot() const { return d_prev_pos_h4 != nullptr; }
        
         void ensurePrevSnapshot() { if (d_prev_pos_h4) { cudaFree(d_prev_pos_h4); d_prev_pos_h4 = nullptr; } if (capacity > 0) cudaMalloc((void**)&d_prev_pos_h4, sizeof(sim::Half4) * capacity); }
@@ -86,6 +89,8 @@ namespace sim {
                 { d_aux,      d_aux_h,        useAuxHalf      && d_aux      && d_aux_h }
             };
             for (auto& it : sitems) if (it.enabled) PackFloatToHalf(it.src, it.dst, N, s);
+            // 渲染位置（独立镜像，仅当 positionStore不是 half 且 renderTransfer half）
+            if (useRenderHalf && d_render_pos_h4 && d_pos_curr) PackFloat4ToHalf4(d_pos_curr, d_render_pos_h4, N, s);
         }
         void unpackAllFromHalf(uint32_t N, cudaStream_t s) {
             if (!anyHalf() || N == 0) return;
@@ -106,6 +111,10 @@ namespace sim {
             for (auto& it : sitems) if (it.enabled) UnpackHalfToFloat(it.src, it.dst, N, s);
         }
 
+        // 单独渲染打包（避免与通用 packAll 混淆）
+        void packRenderToHalf(uint32_t N, cudaStream_t s) {
+            if (!useRenderHalf || !d_render_pos_h4 || !d_pos_curr) return; PackFloat4ToHalf4(d_pos_curr, d_render_pos_h4, N, s); }
+
         // 内部分配
         void allocate(uint32_t cap) {
             allocateInternal(cap, false, false, false, false, false, false);
@@ -119,7 +128,13 @@ namespace sim {
             bool lambdaH = (prec.lambdaStore == sim::NumericType::FP16_Packed || prec.lambdaStore == sim::NumericType::FP16);
             bool densityH = (prec.densityStore == sim::NumericType::FP16_Packed || prec.densityStore == sim::NumericType::FP16);
             bool auxH = (prec.auxStore == sim::NumericType::FP16_Packed || prec.auxStore == sim::NumericType::FP16);
+            // 渲染半精：若 renderTransfer 是 half 且 positionStore不是 half，单独分配
+            bool renderH = ((prec.renderTransfer == sim::NumericType::FP16_Packed || prec.renderTransfer == sim::NumericType::FP16) && !posH);
             allocateInternal(cap, posH, velH, predH, lambdaH, densityH, auxH);
+            useRenderHalf = renderH;
+            if (useRenderHalf) {
+                cudaMalloc((void**)&d_render_pos_h4, sizeof(Half4) * capacity);
+            }
             ensurePrevSnapshot();
             BindDeviceGlobalsFrom(*this);
         }
@@ -272,6 +287,7 @@ namespace sim {
         fre(d_lambda); fre(d_delta); fre(d_density); fre(d_aux);
         fre(d_pos_h4); fre(d_vel_h4); fre(d_pos_pred_h4); fre(d_delta_h4); fre(d_prev_pos_h4);
         fre(d_lambda_h); fre(d_density_h); fre(d_aux_h);
+        fre(d_render_pos_h4);
         capacity = 0; posPredExternal = false; externalPingPong = false; ownsPosBuffers = true;
         checkGuards("release.after");
         usePosHalf = useVelHalf = usePosPredHalf = useLambdaHalf = useDensityHalf = useAuxHalf = false;

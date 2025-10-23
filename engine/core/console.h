@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include <cstdint>
 #include <string>
+#include <vector>
 #include <cuda_runtime.h> // for float3/make_float3, int3/make_int3
 #include "../../sim/parameters.h"
 #include "../../engine/gfx/renderer.h"
@@ -40,7 +41,7 @@ namespace console {
         NumericType lambdaStore = NumericType::FP32; // PBF λ（约束求解敏感，初期保持 FP32）
         NumericType densityStore = NumericType::FP32;
         NumericType auxStore = NumericType::FP32; // 临时/梯度/累加器等
-        NumericType renderTransfer = NumericType::FP32; // 提交渲染的转换目标（保留 float3 默认）
+        NumericType renderTransfer = NumericType::FP16_Packed; // 提交渲染的转换目标（保留 float3 默认）
 
         // ---------------- 核心计算精度（全局默认） ----------------
         NumericType coreCompute = NumericType::FP16; // 主环（邻居/密度/λ/积分）
@@ -282,6 +283,24 @@ namespace console {
             uint32_t cube_particles_per_group = 0;
             PrecisionConfig precision{};
 
+            // ======= 新增：静态幽灵 / 边界采样粒子配置 =======
+            struct BoundaryGhostConfig {
+                bool enable = true;
+                int layers = 2;
+                float spacing_factor_h = 1.0f;
+                bool place_outside = false;
+                float layer_offset_bias = 0.5f;
+                bool jitter_enable = false;
+                float jitter_scale_h = 0.05f;
+                uint32_t jitter_seed = 0xA11CEu;
+                bool mass_uniform_lattice = true; float mass_scale = 1.0f;
+                bool contribute_density = true; bool contribute_lambda = false; bool contribute_xsph = false;
+                bool shepard_normalize = true; float shepard_threshold = 0.7f; float shepard_max_scale = 1.5f; bool shepard_debug_log = false;
+                bool lambda_attenuate = true; float lambda_atten_h = 1.0f; float lambda_min_scale = 0.2f; bool lambda_atten_debug = false;
+                bool log_stats = false; uint32_t max_ghost_particles = 200000; uint32_t ghost_count_runtime = 0; //运行时填充
+            } boundaryGhost;
+
+
             // ======= 新增：针对高 dt 的稳定性增强开关 =======
             // 半隐式积分：true 使用 v(t+dt)=v(t)+g*dt 然后 x(t+dt)=x(t)+v(t+dt)*dt
             bool     integrate_semi_implicit = true;
@@ -361,5 +380,8 @@ namespace console {
     // —— 新增：生成立方体中心列表（供播种使用，与 PrepareCubeMix 保持一致） —— //
     void GenerateCubeMixCenters(const RuntimeConsole& c, std::vector<float3>& outCenters);
 
+    // —— 新增：生成静态幽灵边界粒子 —— //
+    void GenerateBoundaryGhostParticles(const RuntimeConsole& c, const sim::SimParams& sp, std::vector<float3>& outPositions);
+    void LogBoundaryGhostStats(const RuntimeConsole& c, uint32_t fluidCount, uint32_t ghostCount);
 
 } // namespace console

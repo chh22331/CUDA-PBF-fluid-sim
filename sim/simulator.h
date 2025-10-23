@@ -54,6 +54,11 @@ namespace sim {
         bool bindTimelineFence(HANDLE sharedFenceHandle);
         uint64_t lastSimFenceValue() const { return m_simFenceValue; } // 最近一次模拟完成的奇数值
 
+        // 半精渲染共享：导入 D3D12 half 压缩位置缓冲，并在每帧发布
+        bool importRenderHalfBuffer(void* sharedHandleWin32, size_t bytes);
+        void publishRenderHalf(uint32_t count);
+        void releaseRenderHalfExternal();
+
     private:
         friend class GraphBuilder;
 
@@ -145,6 +150,11 @@ namespace sim {
 
         // External semaphore for timeline fence
         cudaExternalSemaphore_t m_extTimelineSem = nullptr;
-        uint64_t m_simFenceValue = 0; // monotonically increasing simulation completion value
+        uint64_t m_simFenceValue =0; // monotonically increasing simulation completion value
+
+        // 渲染半精外部缓冲
+        cudaExternalMemory_t m_extRenderHalf = nullptr;
+        void* m_renderHalfMappedPtr = nullptr; // 指向 D3D12 half (uint2)资源的设备指针
+        size_t m_renderHalfBytes =0;
     };
 } // namespace sim

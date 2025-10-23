@@ -128,6 +128,9 @@ namespace sim {
 
         // ========== 新增：映射后的精度配置（供设备侧使用）==========
         SimPrecision precision{};
+
+        // ======== 新增：幽灵边界粒子计数（静态，设备侧用于邻域贡献，不参与积分） ========
+        uint32_t ghostParticleCount = 0; // 由 Simulator 在生成后填充
     };
 
     struct DeviceParams {

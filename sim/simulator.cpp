@@ -122,6 +122,60 @@ extern "C" void* GetRecycleKernelPtr();
 namespace sim {
     uint64_t g_simFrameIndex = 0;
 
+    // 新增：渲染半精外部缓冲导入
+    bool Simulator::importRenderHalfBuffer(void* sharedHandleWin32, size_t bytes) {
+        if (!sharedHandleWin32 || bytes ==0) return false;
+        if (m_extRenderHalf) {
+            cudaDestroyExternalMemory(m_extRenderHalf);
+            m_extRenderHalf = nullptr;
+            m_renderHalfMappedPtr = nullptr;
+            m_renderHalfBytes =0;
+        }
+        cudaExternalMemoryHandleDesc memDesc{};
+        memDesc.type = cudaExternalMemoryHandleTypeD3D12Resource;
+        memDesc.handle.win32.handle = sharedHandleWin32;
+        memDesc.size = bytes;
+        memDesc.flags = cudaExternalMemoryDedicated;
+        if (cudaImportExternalMemory(&m_extRenderHalf, &memDesc) != cudaSuccess) {
+            std::fprintf(stderr, "[RenderHalf][Import] failed handle=%p bytes=%zu\n", sharedHandleWin32, bytes);
+            return false;
+        }
+        cudaExternalMemoryBufferDesc bufDesc{}; bufDesc.offset =0; bufDesc.size = bytes;
+        void* devPtr = nullptr;
+        if (cudaExternalMemoryGetMappedBuffer(&devPtr, m_extRenderHalf, &bufDesc) != cudaSuccess) {
+            std::fprintf(stderr, "[RenderHalf][Map] failed\n");
+            cudaDestroyExternalMemory(m_extRenderHalf); m_extRenderHalf = nullptr; return false;
+        }
+        m_renderHalfMappedPtr = devPtr;
+        m_renderHalfBytes = bytes;
+        std::fprintf(stderr, "[RenderHalf][Ready] mappedPtr=%p bytes=%zu\n", m_renderHalfMappedPtr, m_renderHalfBytes);
+        return true;
+    }
+
+    void Simulator::publishRenderHalf(uint32_t count) {
+        if (!m_renderHalfMappedPtr || !m_extRenderHalf || count ==0) return;
+        // 若需要半精发布但还没有内部半精镜像，直接跳过
+        if (!m_bufs.useRenderHalf || !m_bufs.d_render_pos_h4) return;
+        // 将当前 curr 位置打包到内部 half4 镜像
+        m_bufs.packRenderToHalf(count, m_stream);
+        size_t needBytes = size_t(count) * sizeof(sim::Half4);
+        if (needBytes > m_renderHalfBytes) {
+            std::fprintf(stderr, "[RenderHalf][Warn] external buffer too small need=%zu have=%zu\n", needBytes, m_renderHalfBytes);
+            return;
+        }
+        //设备到设备拷贝（Half4 与 uint2视为同8 字节结构）
+        CUDA_LOGGED_MEMCPY_D2D_ASYNC("RenderHalf.Publish", m_renderHalfMappedPtr, m_bufs.d_render_pos_h4, needBytes, m_stream);
+    }
+
+    void Simulator::releaseRenderHalfExternal() {
+        if (m_extRenderHalf) {
+            cudaDestroyExternalMemory(m_extRenderHalf);
+            m_extRenderHalf = nullptr;
+        }
+        m_renderHalfMappedPtr = nullptr;
+        m_renderHalfBytes =0;
+    }
+
     // Add helper to patch kernel node params with new position pointers
     void sim::Simulator::patchGraphPositionPointers(bool fullGraph,
         float4* oldCurr,
@@ -370,6 +424,11 @@ namespace sim {
             cudaDestroyExternalMemory(m_extPosPred);
             m_extPosPred = nullptr;
             m_bufs.detachExternalPosPred();
+        }
+
+        if (m_extRenderHalf) {
+            cudaDestroyExternalMemory(m_extRenderHalf);
+            m_extRenderHalf = nullptr;
         }
 
         m_grid.releaseAll();
@@ -925,6 +984,8 @@ namespace sim {
         }
 
         signalSimFence();
+        // 新增：同步幽灵粒子计数到设备常量（若使用）
+        if(p.ghostParticleCount !=0){ UploadGhostCount(p.ghostParticleCount); }
 
         if (doTiming) {
             if (m_evEnd[cur]) CUDA_CHECK(cudaEventRecord(m_evEnd[cur], m_stream));
@@ -938,6 +999,9 @@ namespace sim {
         }
 
         ++m_frameIndex;
+        // 渲染半精发布：在 fence signal 后。用户需保证导入外部 half buffer。
+        if(m_params.precision.renderTransfer == NumericType::FP16_Packed || m_params.precision.renderTransfer == NumericType::FP16){ publishRenderHalf(m_params.numParticles); }
+
         return true;
     }
 

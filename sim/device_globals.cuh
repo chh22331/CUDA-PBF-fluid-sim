@@ -11,6 +11,7 @@ namespace sim {
     extern __device__ float4* g_pos_pred;
     extern __device__ float4* g_delta;
     extern __device__ float* g_lambda;
+    extern __device__ uint32_t g_ghostCount; // 新增：幽灵粒子计数（用于核内跳过积分等）
 
     // 绑定（Host 调用）：把当前缓冲区指针写入上述符号。
     // 只在 allocate 后或 ping-pong swap 后调用一次即可。
@@ -24,5 +25,7 @@ namespace sim {
     struct DeviceBuffers; // 前置声明
     void BindDeviceGlobalsFrom(const DeviceBuffers& bufs);
 
+    // 新增：绑定幽灵粒子数
+    void UploadGhostCount(uint32_t ghostCount);
+
 } // namespace sim
- 
