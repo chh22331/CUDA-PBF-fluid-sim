@@ -4,10 +4,13 @@
 #include "parameters.h"
 #include "cuda_vec_math.cuh"
 #include "cuda_grid_utils.cuh"
+#include "precision_traits.cuh" // 新增：统一读半/原生
 
 namespace {
 
-    __global__ void KLambda(float* lambda, const float4* pos_pred,
+    __global__ void KLambda(float* lambda,
+        const float4* pos_pred_fp32,
+        const sim::Half4* pos_pred_h4,
         const uint32_t* indicesSorted,
         const uint32_t* keysSorted,
         const uint32_t* cellStart, const uint32_t* cellEnd,
@@ -22,7 +25,8 @@ namespace {
         const sim::PbfTuning& pbf = dp.pbf;
 
         uint32_t i = indicesSorted[sortedIdx];
-        float3 pi = to_float3(pos_pred[i]);
+        float4 pi4 = sim::PrecisionTraits::loadPosPred(pos_pred_fp32, pos_pred_h4, i);
+        float3 pi = make_float3(pi4.x, pi4.y, pi4.z);
 
         // 由 key 还原单元
         const uint32_t key = keysSorted[sortedIdx];
@@ -60,7 +64,8 @@ namespace {
                         if (hasCap && neighborContrib >= cap) break;
                         uint32_t j = indicesSorted[k];
                         if (j == i) continue;
-                        float3 pj = to_float3(pos_pred[j]);
+                        float4 pj4 = sim::PrecisionTraits::loadPosPred(pos_pred_fp32, pos_pred_h4, j);
+                        float3 pj = make_float3(pj4.x, pj4.y, pj4.z);
                         float3 rij = make_float3(pi.x - pj.x, pi.y - pj.y, pi.z - pj.z);
                         float r2 = rij.x * rij.x + rij.y * rij.y + rij.z * rij.z;
                         if (r2 > kc.h2) continue;
@@ -116,7 +121,8 @@ namespace {
     // —— 压缩段表版本 —— 
     __global__ void KLambdaCompact(
         float* __restrict__ lambda,
-        const float4* __restrict__ pos_pred,
+        const float4* __restrict__ pos_pred_fp32,
+        const sim::Half4* __restrict__ pos_pred_h4,
         const uint32_t* __restrict__ indicesSorted,
         const uint32_t* __restrict__ keysSorted,
         const uint32_t* __restrict__ uniqueKeys,
@@ -136,7 +142,8 @@ namespace {
 
         const uint32_t M = *compactCount;
         uint32_t i = indicesSorted[sortedIdx];
-        float3 pi = to_float3(pos_pred[i]);
+        float4 pi4 = sim::PrecisionTraits::loadPosPred(pos_pred_fp32, pos_pred_h4, i);
+        float3 pi = make_float3(pi4.x, pi4.y, pi4.z);
 
         // 粒子自身所在单元（由 key 还原）
         const uint32_t key = keysSorted[sortedIdx];
@@ -173,7 +180,8 @@ namespace {
                         uint32_t j = indicesSorted[k];
                         if (j == i) continue;
 
-                        float3 pj = to_float3(pos_pred[j]);
+                        float4 pj4 = sim::PrecisionTraits::loadPosPred(pos_pred_fp32, pos_pred_h4, j);
+                        float3 pj = make_float3(pj4.x, pj4.y, pj4.z);
                         float3 rij = make_float3(pi.x - pj.x, pi.y - pj.y, pi.z - pj.z);
                         float r2 = rij.x * rij.x + rij.y * rij.y + rij.z * rij.z;
                         if (r2 > kc.h2) continue;
@@ -232,7 +240,7 @@ extern "C" void LaunchLambda(float* lambda, const float4* pos_pred, const uint32
     uint32_t N, cudaStream_t s) {
     const int BS = 256;
     dim3 block(BS), gridDim((N + BS - 1) / BS);
-    KLambda << <gridDim, block, 0, s >> > (lambda, pos_pred, indicesSorted, keysSorted, cellStart, cellEnd, dp, N);
+    KLambda << <gridDim, block, 0, s >> > (lambda, pos_pred, nullptr, indicesSorted, keysSorted, cellStart, cellEnd, dp, N);
 }
 
 extern "C" void LaunchLambdaCompact(
@@ -250,6 +258,6 @@ extern "C" void LaunchLambdaCompact(
     const int BS = 256;
     dim3 block(BS), gridDim((N + BS - 1) / BS);
     KLambdaCompact<<<gridDim, block, 0, s>>>(
-        lambda, pos_pred, indicesSorted, keysSorted,
+        lambda, pos_pred, nullptr, indicesSorted, keysSorted,
         uniqueKeys, offsets, compactCount, dp, N);
 }

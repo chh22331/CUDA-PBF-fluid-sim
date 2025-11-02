@@ -59,14 +59,17 @@ namespace sim {
     inline bool UseHalfForPosition(const SimParams& p, Stage s, const class DeviceBuffers& bufs) {
         if (!StageWantsHalfLoad(p, s)) return false;
         if (p.precision.positionStore != NumericType::FP16_Packed &&
-            p.precision.predictedPosStore != NumericType::FP16_Packed) return false;
+            p.precision.positionStore != NumericType::FP16 &&
+            p.precision.predictedPosStore != NumericType::FP16_Packed &&
+            p.precision.predictedPosStore != NumericType::FP16) return false;
         if (!bufs.d_pos_h4 && !bufs.d_pos_pred_h4) return false;
         return true;
     }
 
     inline bool UseHalfForVelocity(const SimParams& p, Stage s, const class DeviceBuffers& bufs) {
         if (!StageWantsHalfLoad(p, s)) return false;
-        if (p.precision.velocityStore != NumericType::FP16_Packed) return false;
+        if (p.precision.velocityStore != NumericType::FP16_Packed &&
+            p.precision.velocityStore != NumericType::FP16) return false;
         if (!bufs.d_vel_h4) return false;
         return true;
     }

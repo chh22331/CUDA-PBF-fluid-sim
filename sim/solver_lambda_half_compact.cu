@@ -122,11 +122,12 @@ __global__ void KLambdaHalfCompact(
 
 template<typename DummyA, typename DummyB>
 __global__ void KDeltaApplyHalfCompact(
-    float4* __restrict__ d_pos_pred,
+    float4* __restrict__ d_pos_pred_fp32,
+    Half4* __restrict__ d_pos_pred_h4,
     float4* __restrict__ d_delta,
     const float* __restrict__ d_lambda,
-    const float4* __restrict__ d_pos_pred_fp32,
-    const Half4* __restrict__ d_pos_pred_h4,
+    const float4* __restrict__ d_pos_pred_src_fp32,
+    const Half4* __restrict__ d_pos_pred_src_h4,
     const uint32_t* __restrict__ indicesSorted,
     const uint32_t* __restrict__ keysSorted,
     const uint32_t* __restrict__ uniqueKeys,
@@ -140,7 +141,7 @@ __global__ void KDeltaApplyHalfCompact(
     uint32_t pid = indicesSorted[kSelf];
     float lambda_i = d_lambda[pid];
 
-    float4 pi4 = PrecisionTraits::loadPosPred(d_pos_pred_fp32, d_pos_pred_h4, pid);
+    float4 pi4 = PrecisionTraits::loadPosPred(d_pos_pred_src_fp32, d_pos_pred_src_h4, pid);
     float3 pi = make_float3(pi4.x, pi4.y, pi4.z);
     uint32_t keySelf = keysSorted[kSelf];
 
@@ -151,7 +152,7 @@ __global__ void KDeltaApplyHalfCompact(
     const KernelCoeffs kc = dp.kernel;
     const float h2 = kc.h2;
     const float mass = dp.particleMass;
-    const float invRest = (dp.restDensity > 0.f) ? (1.f / dp.restDensity) : 0.f;
+    const float invRest = dp.restDensity > 0.f ? (1.f / dp.restDensity) : 0.f;
 
     float3 disp = make_float3(0, 0, 0);
     for (int dz = -1; dz <= 1; ++dz) {
@@ -167,7 +168,7 @@ __global__ void KDeltaApplyHalfCompact(
                 for (uint32_t k = s; k < e; ++k) {
                     uint32_t pj = indicesSorted[k];
                     if (pj == pid) continue;
-                    float4 pj4 = PrecisionTraits::loadPosPred(d_pos_pred_fp32, d_pos_pred_h4, pj);
+                    float4 pj4 = PrecisionTraits::loadPosPred(d_pos_pred_src_fp32, d_pos_pred_src_h4, pj);
                     float3 pjv = make_float3(pj4.x, pj4.y, pj4.z);
                     float3 rij = make_float3(pi.x - pjv.x, pi.y - pjv.y, pi.z - pjv.z);
                     float r2 = rij.x * rij.x + rij.y * rij.y + rij.z * rij.z;
@@ -196,9 +197,9 @@ __global__ void KDeltaApplyHalfCompact(
             disp.x *= s; disp.y *= s; disp.z *= s;
         }
     }
-    float4 outP = d_pos_pred[pid];
-    outP.x += disp.x; outP.y += disp.y; outP.z += disp.z;
-    d_pos_pred[pid] = outP;
+    float4 outP = PrecisionTraits::loadPosPred(d_pos_pred_fp32, d_pos_pred_h4, pid);
+    float3 newP = make_float3(outP.x + disp.x, outP.y + disp.y, outP.z + disp.z);
+    PrecisionTraits::storePosPred(d_pos_pred_fp32, d_pos_pred_h4, pid, newP, outP.w);
     if (d_delta) d_delta[pid] = make_float4(disp.x, disp.y, disp.z, 0.f);
 }
 

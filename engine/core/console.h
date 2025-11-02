@@ -8,8 +8,8 @@
 #include "../../sim/emit_params.h"
 
 namespace console {
-    // ================== 数值精度枚举与配置（增量：不影响现有 FP32 逻辑） ================== //
-    // 存储 / 计算可选类型；后续可在构建 SimParams 时映射到具体 kernel/缓冲分配
+    // ================== 数值精度枚举与配置（增量：不影响现有 FP32逻辑） ================== //
+    // 存储 /计算可选类型；后续可在构建 SimParams 时映射到具体 kernel/缓冲分配
     enum class NumericType : uint8_t {
         FP32 = 0,        // 默认：float
         FP16 = 1,        // __half (标量或 SoA)
@@ -71,6 +71,9 @@ namespace console {
 
         // ---------------- 与旧字段兼容的默认映射策略（无需使用时保持 false） ----------------
         bool        autoMapFromLegacyMixedFlag = false;  // 若 Simulation::useMixedPrecision = true 且用户未手动更改，则可在 BuildSimParams 中做默认映射
+
+        // ---------------- 原生半精存储优选（方案D 前置开关） ----------------
+        bool        nativeHalfPrefer = false; // true: 若 position/velocity/predicted 全为 FP16_Packed 则尝试直接使用原生 half4 存储（后续阶段实现）
     };
     // 统一的运行时控制台（集中所有可调参数）
     struct RuntimeConsole {
@@ -285,7 +288,7 @@ namespace console {
 
             // ======= 新增：静态幽灵 / 边界采样粒子配置 =======
             struct BoundaryGhostConfig {
-                bool enable = true;
+                bool enable = false;
                 int layers = 2;
                 float spacing_factor_h = 1.0f;
                 bool place_outside = false;

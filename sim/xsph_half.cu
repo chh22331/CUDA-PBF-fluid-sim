@@ -7,9 +7,9 @@
 using namespace sim;
 
 __device__ inline float W_poly6_x(const KernelCoeffs& kc, float r2) {
-    if (r2 >= kc.h2) return 0.f;
-    float t = kc.h2 - r2;
-    return kc.poly6 * t * t * t;
+ if (r2 >= kc.h2) return 0.f;
+ float t = kc.h2 - r2;
+ return kc.poly6 * t * t * t;
 }
 
 // ============ 公共辅助（Compact 版需要） ============ //

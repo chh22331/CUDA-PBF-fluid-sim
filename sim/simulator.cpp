@@ -154,17 +154,18 @@ namespace sim {
 
     void Simulator::publishRenderHalf(uint32_t count) {
         if (!m_renderHalfMappedPtr || !m_extRenderHalf || count ==0) return;
-        // 若需要半精发布但还没有内部半精镜像，直接跳过
         if (!m_bufs.useRenderHalf || !m_bufs.d_render_pos_h4) return;
-        // 将当前 curr 位置打包到内部 half4 镜像
-        m_bufs.packRenderToHalf(count, m_stream);
         size_t needBytes = size_t(count) * sizeof(sim::Half4);
         if (needBytes > m_renderHalfBytes) {
-            std::fprintf(stderr, "[RenderHalf][Warn] external buffer too small need=%zu have=%zu\n", needBytes, m_renderHalfBytes);
-            return;
+            std::fprintf(stderr, "[RenderHalf][Warn] external buffer too small need=%zu have=%zu\n", needBytes, m_renderHalfBytes); return; }
+        if (m_bufs.nativeHalfActive) {
+            // 原生 half 主存储：直接从当前 half4 指针复制（curr）
+            CUDA_LOGGED_MEMCPY_D2D_ASYNC("RenderHalf.Publish.Native", m_renderHalfMappedPtr, m_bufs.d_pos_h4, needBytes, m_stream);
+        } else {
+            // 非原生：需要先 pack 当前 curr 到渲染镜像
+            m_bufs.packRenderToHalf(count, m_stream);
+            CUDA_LOGGED_MEMCPY_D2D_ASYNC("RenderHalf.Publish", m_renderHalfMappedPtr, m_bufs.d_render_pos_h4, needBytes, m_stream);
         }
-        //设备到设备拷贝（Half4 与 uint2视为同8 字节结构）
-        CUDA_LOGGED_MEMCPY_D2D_ASYNC("RenderHalf.Publish", m_renderHalfMappedPtr, m_bufs.d_render_pos_h4, needBytes, m_stream);
     }
 
     void Simulator::releaseRenderHalfExternal() {
@@ -527,7 +528,16 @@ namespace sim {
                 if (!kp.kernelParams) continue;
                 void** params = (void**)kp.kernelParams;
                 std::unordered_set<const void*> watchVel{ (const void*)m_bufs.d_vel, (const void*)m_bufs.d_delta };
-                std::unordered_set<const void*> watchPos{ (const void*)m_bufs.d_pos, (const void*)m_bufs.d_pos_next };
+                std::unordered_set<const void*> watchPos; // 支持原生 half 模式
+                if (m_bufs.nativeHalfActive) {
+                    if (m_bufs.d_pos_h4) watchPos.insert((const void*)m_bufs.d_pos_h4);
+                    if (m_bufs.d_pos_pred_h4) watchPos.insert((const void*)m_bufs.d_pos_pred_h4);
+                } else {
+                    if (m_bufs.d_pos_curr) watchPos.insert((const void*)m_bufs.d_pos_curr);
+                    if (m_bufs.d_pos_next) watchPos.insert((const void*)m_bufs.d_pos_next);
+                    if (m_bufs.d_pos) watchPos.insert((const void*)m_bufs.d_pos);
+                    if (m_bufs.d_pos_pred) watchPos.insert((const void*)m_bufs.d_pos_pred);
+                }
                 bool hasVel = false, hasPos = false;
                 for (int i = 0; i < 32; ++i) {
                     void* slot = params[i];
@@ -953,24 +963,29 @@ namespace sim {
         }
 
         // 帧尾：ping-pong 交换，无 Pred->Next 拷贝
-        if (m_ctx.pingPongPos && m_bufs.externalPingPong && m_params.numParticles > 0) {
+        if (m_ctx.pingPongPos && m_bufs.externalPingPong && m_params.numParticles >0) {
             float4* oldCurr = m_bufs.d_pos_curr;
             float4* oldNext = m_bufs.d_pos_next;
             float4* oldPred = m_bufs.d_pos_pred; // alias
 
             m_bufs.swapPositionPingPong();
             m_swappedThisFrame = true;
-
-            // 维护 alias：pred 始终指向最新 next
             m_bufs.d_pos_pred = m_bufs.d_pos_next;
-
-            // [SchemeC] 用设备常量表 → 重新上传一次（O(1)）即可，无需 Graph node patch
             UploadSimPosTableConst(m_bufs.d_pos_curr, m_bufs.d_pos_next);
- 
-            if (console::Instance().perf.use_cuda_graphs &&
-                console::Instance().perf.graph_hot_update_enable) {
-                patchGraphPositionPointers(true,  oldCurr, oldNext, oldPred);
+            if (console::Instance().perf.use_cuda_graphs && console::Instance().perf.graph_hot_update_enable) {
+                patchGraphPositionPointers(true, oldCurr, oldNext, oldPred);
                 patchGraphPositionPointers(false, oldCurr, oldNext, oldPred);
+            }
+        } else if (m_bufs.nativeHalfActive && m_ctx.pingPongPos && m_params.numParticles >0) {
+            // 原生 half 主存储 ping-pong（只交换 half4 指针）
+            sim::Half4* oldCurrH = m_bufs.d_pos_h4; // 当前别名
+            sim::Half4* oldNextH = m_bufs.d_pos_pred_h4;
+            m_bufs.swapPositionPingPong();
+            m_swappedThisFrame = true;
+            UploadSimPosTableConst((float4*)nullptr, (float4*)nullptr); // FP32 常量表无效，但仍调用以保持流程
+            if (console::Instance().perf.use_cuda_graphs && console::Instance().perf.graph_hot_update_enable) {
+                patchGraphHalfPositionPointers(true, oldCurrH, oldNextH);
+                patchGraphHalfPositionPointers(false, oldCurrH, oldNextH);
             }
         } else {
             if (console::Instance().debug.printHints) {
@@ -1412,6 +1427,48 @@ namespace sim {
                 "[Graph][VelPatch] full=%d from=%p to=%p patched=%d\n",
                 fullGraph ? 1 : 0,
                 (const void*)fromPtr, (const void*)toPtr, patched);
+        }
+    }
+
+    void Simulator::patchGraphHalfPositionPointers(bool fullGraph, sim::Half4* oldCurrH, sim::Half4* oldNextH) {
+        const auto& c = console::Instance();
+        if (!c.perf.graph_hot_update_enable) return;
+        if (!m_bufs.nativeHalfActive) return; //仅原生 half 模式需要
+        if (!oldCurrH || !oldNextH) return;
+        cudaGraphExec_t exec = fullGraph ? m_graphExecFull : m_graphExecCheap;
+        if (!exec) return;
+        auto& nodes = fullGraph ? m_posNodesFull : m_posNodesCheap;
+        if (nodes.empty()) return;
+        int userLimit = c.perf.graph_hot_update_scan_limit;
+        int scanLimit = (userLimit >0 && userLimit <=4096) ? userLimit :512;
+        int patchedPtr =0; int patchedGrid =0;
+        for (auto nd : nodes) {
+            cudaKernelNodeParams kp{};
+            if (cudaGraphKernelNodeGetParams(nd, &kp) != cudaSuccess) continue;
+            if (!kp.kernelParams) continue;
+            // 动态 gridDim 更新
+            uint32_t blocks = (m_params.numParticles +255u) /256u; if (blocks ==0) blocks =1;
+            if (kp.gridDim.x != blocks) { kp.gridDim.x = blocks; ++patchedGrid; }
+            void** params = (void**)kp.kernelParams; bool modified = false;
+            for (int i =0; i < scanLimit; ++i) {
+                void* slot = params[i]; if (!slot) break; if (!hostPtrReadable(slot)) break;
+                void* inner = *(void**)slot; if (!inner) continue;
+                // 匹配旧 half 指针并替换
+                if (inner == (void*)oldCurrH) { *(void**)slot = (void*)m_bufs.d_pos_h4; modified = true; }
+                else if (inner == (void*)oldNextH) { *(void**)slot = (void*)m_bufs.d_pos_pred_h4; modified = true; }
+            }
+            if (modified || patchedGrid) {
+                if (cudaGraphExecKernelNodeSetParams(exec, nd, &kp) == cudaSuccess) {
+                    if (modified) ++patchedPtr;
+                }
+            }
+        }
+        if ((patchedPtr || patchedGrid) && c.debug.printHints) {
+            std::fprintf(stderr,
+                "[Graph][HalfPosPatch] full=%d patchedPtr=%d patchedGrid=%d currH=%p nextH=%p newCurrH=%p newNextH=%p\n",
+                fullGraph ?1 :0, patchedPtr, patchedGrid,
+                (void*)oldCurrH, (void*)oldNextH,
+                (void*)m_bufs.d_pos_h4, (void*)m_bufs.d_pos_pred_h4);
         }
     }
 } // namespace sim

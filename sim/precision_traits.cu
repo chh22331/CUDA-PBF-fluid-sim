@@ -19,6 +19,7 @@ namespace sim {
         h.useHalfDensity = (isPackedHalf(pr.densityStore) && bufs.d_density_h) ? 1 : 0;
         h.useHalfAux = (isPackedHalf(pr.auxStore) && bufs.d_aux_h) ? 1 : 0;
         h.useHalfRender = (isPackedHalf(pr.renderTransfer) && bufs.d_render_pos_h4) ? 1 : 0; // 新增
+        h.nativeHalfActive = pr.nativeHalfActive ? 1 : 0; // 新增
 
         h.d_pos_h4 = bufs.d_pos_h4;
         h.d_vel_h4 = bufs.d_vel_h4;

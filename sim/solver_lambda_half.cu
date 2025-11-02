@@ -156,12 +156,13 @@ __global__ void KLambdaHalfFloatAccum(
 }
 
 __global__ void KDeltaApplyHalfGeneric(
-    float4* __restrict__ d_pos_pred,
+    float4* __restrict__ d_pos_pred_fp32,
+    Half4* __restrict__ d_pos_pred_h4,
     float4* __restrict__ d_delta,
     const float* __restrict__ d_lambda_fp32,
     const __half* __restrict__ d_lambda_h,
-    const float4* __restrict__ d_pos_pred_fp32,
-    const Half4* __restrict__ d_pos_pred_h4,
+    const float4* __restrict__ d_pos_pred_src_fp32,
+    const Half4* __restrict__ d_pos_pred_src_h4,
     const uint32_t* __restrict__ indicesSorted,
     const uint32_t* __restrict__ keysSorted,
     const uint32_t* __restrict__ cellStart,
@@ -175,7 +176,7 @@ __global__ void KDeltaApplyHalfGeneric(
 
     float lambda_i = PrecisionTraits::loadLambda(d_lambda_fp32, d_lambda_h, pid);
 
-    float4 pi4 = PrecisionTraits::loadPosPred(d_pos_pred_fp32, d_pos_pred_h4, pid);
+    float4 pi4 = PrecisionTraits::loadPosPred(d_pos_pred_src_fp32, d_pos_pred_src_h4, pid);
     float3 pi = make_float3(pi4.x, pi4.y, pi4.z);
 
     uint32_t key = keysSorted[iSorted];
@@ -206,7 +207,7 @@ __global__ void KDeltaApplyHalfGeneric(
                 for (uint32_t k = s; k < e; ++k) {
                     uint32_t pj = indicesSorted[k];
                     if (pj == pid) continue;
-                    float4 pj4 = PrecisionTraits::loadPosPred(d_pos_pred_fp32, d_pos_pred_h4, pj);
+                    float4 pj4 = PrecisionTraits::loadPosPred(d_pos_pred_src_fp32, d_pos_pred_src_h4, pj);
                     float3 pjv = make_float3(pj4.x, pj4.y, pj4.z);
                     float3 rij = make_float3(pi.x - pjv.x, pi.y - pjv.y, pi.z - pjv.z);
                     float r2 = rij.x * rij.x + rij.y * rij.y + rij.z * rij.z;
@@ -236,9 +237,9 @@ __global__ void KDeltaApplyHalfGeneric(
             disp.x *= s; disp.y *= s; disp.z *= s;
         }
     }
-    float4 outP = d_pos_pred[pid];
-    outP.x += disp.x; outP.y += disp.y; outP.z += disp.z;
-    d_pos_pred[pid] = outP;
+    float4 outP = PrecisionTraits::loadPosPred(d_pos_pred_fp32, d_pos_pred_h4, pid);
+    float3 newP = make_float3(outP.x + disp.x, outP.y + disp.y, outP.z + disp.z);
+    PrecisionTraits::storePosPred(d_pos_pred_fp32, d_pos_pred_h4, pid, newP, outP.w);
     if (d_delta) d_delta[pid] = make_float4(disp.x, disp.y, disp.z, 0.f);
 }
 
@@ -285,9 +286,10 @@ extern "C" void LaunchDeltaApplyHalf(
 {
     if (N == 0) return;
     bool halfAccum = !forceFp32Accum;
+    (void)halfAccum;
     KDeltaApplyHalfGeneric << <gridFor(N), 256, 0, s >> > (
-        pos_pred, delta, lambda_fp32, lambda_h,
+        pos_pred, (Half4*)nullptr, delta, lambda_fp32, lambda_h,
         pos_pred_fp32, pos_pred_h4,
         indicesSorted, keysSorted, cellStart, cellEnd,
-        dp, N, halfAccum);
+        dp, N);
 }

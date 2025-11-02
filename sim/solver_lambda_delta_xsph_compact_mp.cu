@@ -133,11 +133,12 @@ extern "C" {
 
     // ========== Delta Apply (Compact MP) ========== //
     __global__ void KDeltaApplyCompactMP(
-        float4* __restrict__ d_pos_pred,
+        float4* __restrict__ d_pos_pred_fp32,
+        Half4* __restrict__ d_pos_pred_h4,
         float4* __restrict__ d_delta,
         const float* __restrict__ d_lambda,
-        const float4* __restrict__ d_pos_pred_fp32,
-        const Half4* __restrict__ d_pos_pred_h4,
+        const float4* __restrict__ d_pos_pred_src_fp32,
+        const Half4* __restrict__ d_pos_pred_src_h4,
         const uint32_t* __restrict__ indicesSorted,
         const uint32_t* __restrict__ keysSorted,
         const uint32_t* __restrict__ uniqueKeys,
@@ -152,10 +153,10 @@ extern "C" {
         uint32_t pid = indicesSorted[kSelf];
         float lambda_i = d_lambda[pid];
 
-        float4 pi4 = PrecisionTraits::loadPosPred(d_pos_pred_fp32, d_pos_pred_h4, pid);
+        float4 pi4 = PrecisionTraits::loadPosPred(d_pos_pred_src_fp32, d_pos_pred_src_h4, pid);
         float3 pi = make_float3(pi4.x, pi4.y, pi4.z);
-
         uint32_t keySelf = keysSorted[kSelf];
+
         int3 dim = dp.grid.dim;
         int cx, cy, cz;
         decodeCell(keySelf, dim, cx, cy, cz);
@@ -183,7 +184,7 @@ extern "C" {
                     for (uint32_t k = start; k < end; ++k) {
                         uint32_t pjId = indicesSorted[k];
                         if (pjId == pid) continue;
-                        float4 pj4 = PrecisionTraits::loadPosPred(d_pos_pred_fp32, d_pos_pred_h4, pjId);
+                        float4 pj4 = PrecisionTraits::loadPosPred(d_pos_pred_src_fp32, d_pos_pred_src_h4, pjId);
                         float3 pj = make_float3(pj4.x, pj4.y, pj4.z);
                         float3 rij = make_float3(pi.x - pj.x, pi.y - pj.y, pi.z - pj.z);
                         float r2 = rij.x * rij.x + rij.y * rij.y + rij.z * rij.z;
@@ -214,15 +215,16 @@ extern "C" {
             }
         }
 
-        float4 outP = d_pos_pred[pid];
-        outP.x += disp.x; outP.y += disp.y; outP.z += disp.z;
-        d_pos_pred[pid] = outP;
+        float4 outP = PrecisionTraits::loadPosPred(d_pos_pred_fp32, d_pos_pred_h4, pid);
+        float3 newP = make_float3(outP.x + disp.x, outP.y + disp.y, outP.z + disp.z);
+        PrecisionTraits::storePosPred(d_pos_pred_fp32, d_pos_pred_h4, pid, newP, outP.w);
         if (d_delta) d_delta[pid] = make_float4(disp.x, disp.y, disp.z, 0.f);
     }
 
     // ========== XSPH (Compact MP) ========== //
     __global__ void KXSPHCompactMP(
-        float4* __restrict__ vel_out,
+        float4* __restrict__ vel_out_fp32,
+        Half4* __restrict__ vel_out_h4,
         const float4* __restrict__ vel_in_fp32,
         const Half4* __restrict__ vel_in_h4,
         const float4* __restrict__ pos_pred_fp32,
@@ -241,7 +243,7 @@ extern "C" {
 
         float4 vi4 = PrecisionTraits::loadVel(vel_in_fp32, vel_in_h4, pid);
         if (dp.xsph_c <= 0.f) {
-            vel_out[pid] = vi4;
+            PrecisionTraits::storeVel(vel_out_fp32, vel_out_h4, pid, make_float3(vi4.x, vi4.y, vi4.z));
             return;
         }
 
@@ -294,8 +296,8 @@ extern "C" {
             }
         }
 
-        vi4.x += acc.x; vi4.y += acc.y; vi4.z += acc.z;
-        vel_out[pid] = vi4;
+        float3 vnew = make_float3(vi.x + acc.x, vi.y + acc.y, vi.z + acc.z);
+        PrecisionTraits::storeVel(vel_out_fp32, vel_out_h4, pid, vnew);
     }
 
     // ========== Host Launch 封装 ========== //
@@ -339,7 +341,7 @@ extern "C" {
     {
         if (N == 0) return;
         KDeltaApplyCompactMP << <gridFor(N), 256, 0, s >> > (
-            pos_pred, delta, lambda,
+            pos_pred, (Half4*)nullptr, delta, lambda,
             pos_pred_fp32, pos_pred_h4,
             indicesSorted, keysSorted,
             uniqueKeys, offsets, compactCount,
@@ -363,7 +365,7 @@ extern "C" {
     {
         if (N == 0) return;
         KXSPHCompactMP << <gridFor(N), 256, 0, s >> > (
-            vel_out,
+            vel_out, (Half4*)nullptr,
             vel_in_fp32, vel_in_h4,
             pos_pred_fp32, pos_pred_h4,
             indicesSorted, keysSorted,

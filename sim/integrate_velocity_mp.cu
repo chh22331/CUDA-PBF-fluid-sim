@@ -3,6 +3,7 @@
 #include "precision_traits.cuh"
 #include "device_buffers.cuh"
 #include "parameters.h"
+#include "device_globals.cuh" // 新增：可访问 g_pos_h4 等
 
 extern "C" {
 
@@ -25,11 +26,13 @@ extern "C" {
         float3 v   = make_float3(v4.x, v4.y, v4.z);
         float3 pos = make_float3(p.x, p.y, p.z);
 
-        pos.x += v.x * dt + gravity.x * dt;
-        pos.y += v.y * dt + gravity.y * dt;
-        pos.z += v.z * dt + gravity.z * dt;
+        v.x += gravity.x * dt;
+        v.y += gravity.y * dt;
+        v.z += gravity.z * dt;
 
-        d_pos_pred_fp32[i] = make_float4(pos.x, pos.y, pos.z, p.w);
+        float3 pp = make_float3(pos.x + v.x * dt, pos.y + v.y * dt, pos.z + v.z * dt);
+        // 原生 half 模式下 PrecisionTraits 会内部写 g_precisionView.d_pos_pred_h4,这里传 nullptr 避免误将 d_pos_h4作为 pred 缓冲
+        sim::PrecisionTraits::storePosPred(d_pos_pred_fp32, (sim::Half4*)nullptr, i, pp, p.w);
     }
 
     __global__ void KVelocityMP(float4* __restrict__ d_vel_fp32,
@@ -51,7 +54,7 @@ extern "C" {
         v.y = (p1.y - p0.y) * inv_dt;
         v.z = (p1.z - p0.z) * inv_dt;
 
-        sim::PrecisionTraits::storeVel(d_vel_fp32, i, v);
+        sim::PrecisionTraits::storeVel(d_vel_fp32, (sim::Half4*)nullptr, i, v); //统一路径（nativeHalfActive时内部重定向）
     }
 
     void LaunchIntegratePredMP(const float4* d_pos,
@@ -64,12 +67,10 @@ extern "C" {
         uint32_t N,
         cudaStream_t s)
     {
-        if (N == 0) return;
-        uint32_t threads = 256;
-        uint32_t blocks  = (N + threads - 1) / threads;
-        KIntegratePredMP<<<blocks, threads, 0, s>>>(d_pos, d_vel, d_pos_pred,
-            d_pos_h4, d_vel_h4,
-            gravity, dt, N);
+        if (N ==0) return;
+        uint32_t threads =256;
+        uint32_t blocks = (N + threads -1) / threads;
+        KIntegratePredMP<<<blocks, threads,0, s>>>(d_pos, d_vel, d_pos_pred, d_pos_h4, d_vel_h4, gravity, dt, N);
     }
 
     void LaunchVelocityMP(float4* d_vel,
@@ -81,16 +82,10 @@ extern "C" {
         uint32_t N,
         cudaStream_t s)
     {
-        if (N == 0) return;
-        uint32_t threads = 256;
-        uint32_t blocks  = (N + threads - 1) / threads;
-        KVelocityMP<<<blocks, threads, 0, s>>>(d_vel,
-            d_pos,
-            d_pos_pred,
-            d_pos_h4,
-            d_pos_pred_h4,
-            inv_dt,
-            N);
+        if (N ==0) return;
+        uint32_t threads =256;
+        uint32_t blocks = (N + threads -1) / threads;
+        KVelocityMP<<<blocks, threads,0, s>>>(d_vel, d_pos, d_pos_pred, d_pos_h4, d_pos_pred_h4, inv_dt, N);
     }
 
 } // extern "C"

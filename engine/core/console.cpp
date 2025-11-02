@@ -230,6 +230,16 @@ void BuildSimParams(const RuntimeConsole& c, sim::SimParams& out) {
  //现有 out.precision 已写入
  // 添加：幽灵粒子数占位（生成逻辑稍后调用 GenerateBoundaryGhostParticles 后填充）
  out.ghostParticleCount = c.sim.boundaryGhost.ghost_count_runtime;
+
+ // ===== 原生 half 主存储激活判定 =====
+ if (src.nativeHalfPrefer) {
+ bool posHalf = (out.precision.positionStore == sim::NumericType::FP16_Packed);
+ bool velHalf = (out.precision.velocityStore == sim::NumericType::FP16_Packed);
+ bool predHalf = (out.precision.predictedPosStore == sim::NumericType::FP16_Packed);
+ if (posHalf && velHalf && predHalf) {
+ out.precision.nativeHalfActive = true; //由 allocator选择 allocateNativeHalfPrimary
+ }
+ }
 }
 
 void BuildDeviceParams(const RuntimeConsole& c, sim::DeviceParams& out) {

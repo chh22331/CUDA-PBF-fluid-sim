@@ -52,6 +52,8 @@ namespace sim {
         NumericType _adaptive_pos_prev = NumericType::InvalidSentinel;
         NumericType _adaptive_vel_prev = NumericType::InvalidSentinel;
         NumericType _adaptive_pos_pred_prev = NumericType::InvalidSentinel;
+
+        bool nativeHalfActive = false; // 新增：原生 half4 主存储激活
     };
 
     struct KernelCoeffs {

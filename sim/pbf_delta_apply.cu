@@ -3,12 +3,14 @@
 #include "parameters.h"
 #include "cuda_vec_math.cuh"
 #include "cuda_grid_utils.cuh"
+#include "precision_traits.cuh"
 
 namespace {
 
     __global__ void KDeltaCompute(
         float4* __restrict__ delta,
-        const float4* __restrict__ pos_pred,
+        const float4* __restrict__ pos_pred_fp32,
+        const sim::Half4* __restrict__ pos_pred_h4,
         const float* __restrict__ lambda,
         const uint32_t* __restrict__ indicesSorted,
         const uint32_t* __restrict__ keysSorted,
@@ -25,7 +27,8 @@ namespace {
         const sim::PbfTuning& pbf = dp.pbf;
 
         uint32_t i = indicesSorted[sortedIdx];
-        float3 pi = to_float3(pos_pred[i]);
+        float4 pi4 = sim::PrecisionTraits::loadPosPred(pos_pred_fp32, pos_pred_h4, i);
+        float3 pi = make_float3(pi4.x, pi4.y, pi4.z);
 
         // 由 key 还原单元
         const uint32_t key = keysSorted[sortedIdx];
@@ -60,7 +63,8 @@ namespace {
                         uint32_t j = indicesSorted[k];
                         if (j == i) continue;
 
-                        float3 pj = to_float3(pos_pred[j]);
+                        float4 pj4 = sim::PrecisionTraits::loadPosPred(pos_pred_fp32, pos_pred_h4, j);
+                        float3 pj = make_float3(pj4.x, pj4.y, pj4.z);
                         float3 rij = make_float3(pi.x - pj.x, pi.y - pj.y, pi.z - pj.z);
                         float r2 = rij.x * rij.x + rij.y * rij.y + rij.z * rij.z;
                         if (r2 > kc.h2) continue;
@@ -117,7 +121,8 @@ namespace {
 
     __global__ void KDeltaComputeCompact(
         float4* __restrict__ delta,
-        const float4* __restrict__ pos_pred,
+        const float4* __restrict__ pos_pred_fp32,
+        const sim::Half4* __restrict__ pos_pred_h4,
         const float* __restrict__ lambda,
         const uint32_t* __restrict__ indicesSorted,
         const uint32_t* __restrict__ keysSorted,
@@ -137,7 +142,8 @@ namespace {
         const uint32_t M = *compactCount;
 
         uint32_t i = indicesSorted[sortedIdx];
-        float3 pi = to_float3(pos_pred[i]);
+        float4 pi4 = sim::PrecisionTraits::loadPosPred(pos_pred_fp32, pos_pred_h4, i);
+        float3 pi = make_float3(pi4.x, pi4.y, pi4.z);
 
         const uint32_t key = keysSorted[sortedIdx];
         int3 ci;
@@ -170,7 +176,8 @@ namespace {
                         uint32_t j = indicesSorted[k];
                         if (j == i) continue;
 
-                        float3 pj = to_float3(pos_pred[j]);
+                        float4 pj4 = sim::PrecisionTraits::loadPosPred(pos_pred_fp32, pos_pred_h4, j);
+                        float3 pj = make_float3(pj4.x, pj4.y, pj4.z);
                         float3 rij = make_float3(pi.x - pj.x, pi.y - pj.y, pi.z - pj.z);
                         float r2 = rij.x * rij.x + rij.y * rij.y + rij.z * rij.z;
                         if (r2 > kc.h2) continue;
@@ -222,7 +229,9 @@ namespace {
         delta[i] = make_float4(di.x, di.y, di.z, 0.0f);
     }
 
-    __global__ void KApplyDelta(float4* __restrict__ pos_pred,
+    __global__ void KApplyDelta(
+        float4* __restrict__ pos_pred_fp32,
+        sim::Half4* __restrict__ pos_pred_h4,
         const float4* __restrict__ delta,
         const uint32_t* __restrict__ indicesSorted,
         uint32_t N)
@@ -231,9 +240,10 @@ namespace {
         if (sortedIdx >= N) return;
 
         uint32_t i = indicesSorted[sortedIdx];
-        float4 pi4 = pos_pred[i];
         float4 di4 = delta[i];
-        pos_pred[i] = make_float4(pi4.x + di4.x, pi4.y + di4.y, pi4.z + di4.z, 1.0f);
+        float4 base = sim::PrecisionTraits::loadPosPred(pos_pred_fp32, pos_pred_h4, i);
+        float3 newP = make_float3(base.x + di4.x, base.y + di4.y, base.z + di4.z);
+        sim::PrecisionTraits::storePosPred(pos_pred_fp32, pos_pred_h4, i, newP, 1.0f);
     }
 
 } // anon
@@ -253,8 +263,9 @@ extern "C" void LaunchDeltaApply(
     const int BS = 256;
     dim3 block(BS), gridDim((N + BS - 1) / BS);
 
-    KDeltaCompute << <gridDim, block, 0, s >> > (delta, pos_pred, lambda, indicesSorted, keysSorted, cellStart, cellEnd, dp, N);
-    KApplyDelta << <gridDim, block, 0, s >> > (pos_pred, delta, indicesSorted, N);
+    KDeltaCompute<<<gridDim, block, 0, s>>>(
+        delta, pos_pred, nullptr, lambda, indicesSorted, keysSorted, cellStart, cellEnd, dp, N);
+    KApplyDelta<<<gridDim, block, 0, s>>>(pos_pred, nullptr, delta, indicesSorted, N);
 }
 
 extern "C" void LaunchDeltaApplyCompact(
@@ -274,9 +285,6 @@ extern "C" void LaunchDeltaApplyCompact(
     dim3 block(BS), gridDim((N + BS - 1) / BS);
 
     KDeltaComputeCompact<<<gridDim, block, 0, s>>>(
-        delta, pos_pred, lambda,
-        indicesSorted, keysSorted,
-        uniqueKeys, offsets, compactCount,
-        dp, N);
-    KApplyDelta<<<gridDim, block, 0, s>>>(pos_pred, delta, indicesSorted, N);
+        delta, pos_pred, nullptr, lambda, indicesSorted, keysSorted, uniqueKeys, offsets, compactCount, dp, N);
+    KApplyDelta<<<gridDim, block, 0, s>>>(pos_pred, nullptr, delta, indicesSorted, N);
 }

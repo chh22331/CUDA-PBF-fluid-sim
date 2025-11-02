@@ -79,7 +79,9 @@ namespace sim {
         bool cacheGraphNodes();
         void patchGraphPositionPointers(bool fullGraph,float4* oldCurr,float4* oldNext,float4* oldPred);        
         void patchGraphVelocityPointers(bool fullGraph, const float4* fromPtr, const float4* toPtr);
-        void signalSimFence(); // 末尾 signal external semaphore
+        // 新增：原生 half 主存储模式下的指针热更新（针对 Half4*）
+        void patchGraphHalfPositionPointers(bool fullGraph, sim::Half4* oldCurrH, sim::Half4* oldNextH);
+        void signalSimFence(); //末尾 signal external semaphore
 
     private:
         SimParams m_params{};
