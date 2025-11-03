@@ -3,6 +3,8 @@
 #include "precision_traits.cuh"
 #include "parameters.h"
 #include "device_buffers.cuh"
+#include "device_globals.cuh" // 新增：XSPH诊断符号
+namespace sim { extern __device__ uint32_t g_xsphNaNCount; extern __device__ uint32_t g_xsphAnomalyCount; }
 
 using namespace sim;
 
@@ -53,10 +55,21 @@ __global__ void KXSPHHalfDense(
     if (iSorted >= N) return;
     uint32_t pid = indicesSorted[iSorted];
 
+    // ===== Ghost filtering =====
+    uint32_t ghostCount = dp.ghostCount;
+    uint32_t fluidCount = (ghostCount <= N) ? (N - ghostCount) : N;
+    bool isGhost = (pid >= fluidCount);
+    if (isGhost && !dp.ghostContribXsph) {
+        // passthrough (copy input half velocity to fp32 out)
+        Half4 vi_h = vel_in_h4[pid];
+        vel_out[pid] = make_float4(__half2float(vi_h.x), __half2float(vi_h.y), __half2float(vi_h.z), __half2float(vi_h.w));
+        return;
+    }
+
     Half4 vi_h = vel_in_h4[pid];
     Half4 pi_h = pos_pred_h4[pid];
 
-    if (dp.xsph_c <= 0.f) {
+    if (dp.xsph_c <=0.f) {
         vel_out[pid] = make_float4(__half2float(vi_h.x), __half2float(vi_h.y), __half2float(vi_h.z), __half2float(vi_h.w));
         return;
     }
@@ -64,42 +77,44 @@ __global__ void KXSPHHalfDense(
     float3 pi = make_float3(__half2float(pi_h.x), __half2float(pi_h.y), __half2float(pi_h.z));
     float3 vi = make_float3(__half2float(vi_h.x), __half2float(vi_h.y), __half2float(vi_h.z));
 
-#if __CUDA_ARCH__ >= 530
+#if __CUDA_ARCH__ >=530
     __half ax = __float2half(0.f);
     __half ay = __float2half(0.f);
     __half az = __float2half(0.f);
 #endif
-    float3 acc_f = make_float3(0, 0, 0);
+    float3 acc_f = make_float3(0,0,0);
+    int neighborCount =0;
 
     const KernelCoeffs kc = dp.kernel;
     const float h2 = kc.h2;
     const float mass = dp.particleMass;
-    const float invRest = (dp.restDensity > 0.f) ? (1.f / dp.restDensity) : 0.f;
-    const float coeff = dp.xsph_c * mass * invRest;
+    const float invRest = (dp.restDensity >0.f) ? (1.f / dp.restDensity) :0.f;
+    const float coeff = dp.xsph_c * mass * invRest; // same as mass_over_rest * xsph_c
 
-    // decode 当前粒子所在 cell key
-    // 我们需要其 key：通过 pos -> cell
+    // decode cell of particle i
     int3 dim = dp.grid.dim;
-    float invCell = 1.0f / dp.grid.cellSize;
+    float invCell =1.0f / dp.grid.cellSize;
     int cx = (int)floorf((pi.x - dp.grid.mins.x) * invCell);
     int cy = (int)floorf((pi.y - dp.grid.mins.y) * invCell);
     int cz = (int)floorf((pi.z - dp.grid.mins.z) * invCell);
-    cx = max(0, min(dim.x - 1, cx));
-    cy = max(0, min(dim.y - 1, cy));
-    cz = max(0, min(dim.z - 1, cz));
+    cx = max(0, min(dim.x -1, cx));
+    cy = max(0, min(dim.y -1, cy));
+    cz = max(0, min(dim.z -1, cz));
 
-    for (int dz = -1; dz <= 1; ++dz) {
-        int z = cz + dz; if (z < 0 || z >= dim.z) continue;
-        for (int dy = -1; dy <= 1; ++dy) {
-            int y = cy + dy; if (y < 0 || y >= dim.y) continue;
-            for (int dx = -1; dx <= 1; ++dx) {
-                int x = cx + dx; if (x < 0 || x >= dim.x) continue;
+    for (int dz = -1; dz <=1; ++dz) {
+        int z = cz + dz; if (z <0 || z >= dim.z) continue;
+        for (int dy = -1; dy <=1; ++dy) {
+            int y = cy + dy; if (y <0 || y >= dim.y) continue;
+            for (int dx = -1; dx <=1; ++dx) {
+                int x = cx + dx; if (x <0 || x >= dim.x) continue;
                 uint32_t nKey = (uint32_t)((z * dim.y + y) * dim.x + x);
                 uint32_t s = cellStart[nKey];
                 uint32_t e = cellEnd[nKey];
-                if (s == 0xFFFFFFFFu || e == 0xFFFFFFFFu || e <= s) continue;
+                if (s ==0xFFFFFFFFu || e ==0xFFFFFFFFu || e <= s) continue;
                 for (uint32_t k = s; k < e; ++k) {
                     uint32_t pj = indicesSorted[k];
+                    bool jGhost = (pj >= fluidCount);
+                    if (jGhost && !dp.ghostContribXsph) continue;
                     if (pj == pid) continue;
                     Half4 pj_h = pos_pred_h4[pj];
                     float3 pjv = make_float3(__half2float(pj_h.x), __half2float(pj_h.y), __half2float(pj_h.z));
@@ -114,20 +129,17 @@ __global__ void KXSPHHalfDense(
                     float dyv = (vj.y - vi.y) * scale;
                     float dzv = (vj.z - vi.z) * scale;
                     if (forceFp32Accum) {
-                        acc_f.x += dxv;
-                        acc_f.y += dyv;
-                        acc_f.z += dzv;
+                        acc_f.x += dxv; acc_f.y += dyv; acc_f.z += dzv;
                     } else {
-#if __CUDA_ARCH__ >= 530
+#if __CUDA_ARCH__ >=530
                         ax = __hadd(ax, __float2half(dxv));
                         ay = __hadd(ay, __float2half(dyv));
                         az = __hadd(az, __float2half(dzv));
 #else
-                        acc_f.x += dxv;
-                        acc_f.y += dyv;
-                        acc_f.z += dzv;
+                        acc_f.x += dxv; acc_f.y += dyv; acc_f.z += dzv;
 #endif
                     }
+                    ++neighborCount;
                 }
             }
         }
@@ -137,17 +149,40 @@ __global__ void KXSPHHalfDense(
     if (forceFp32Accum) {
         accFinal = acc_f;
     } else {
-#if __CUDA_ARCH__ >= 530
+#if __CUDA_ARCH__ >=530
         accFinal = make_float3(__half2float(ax), __half2float(ay), __half2float(az));
 #else
         accFinal = acc_f;
 #endif
     }
 
+    // Neighbor gating identical to FP32 path
+    float gate =1.0f;
+    if (dp.pbf.xsph_gate_enable) {
+        int nMin = max(0, dp.pbf.xsph_n_min);
+        int nMax = max(nMin +1, dp.pbf.xsph_n_max);
+        float t = (float(neighborCount) - float(nMin)) / float(nMax - nMin);
+        gate = fminf(1.f, fmaxf(0.f, t));
+    }
+
+    float3 dvApplied = accFinal;
+    float maxAbs = fmaxf(fmaxf(fabsf(dvApplied.x), fabsf(dvApplied.y)), fabsf(dvApplied.z));
+    if (!isGhost) {
+    if (!(maxAbs <=1e6f) || isnan(dvApplied.x) || isnan(dvApplied.y) || isnan(dvApplied.z)) {
+ atomicAdd(&g_xsphNaNCount,1u);
+ dvApplied = make_float3(0,0,0);
+ } else if (maxAbs >5.0f * kc.h / fmaxf(1e-6f, dp.dt)) {
+ atomicAdd(&g_xsphAnomalyCount,1u);
+ float scale = (5.0f * kc.h / fmaxf(1e-6f, dp.dt)) / maxAbs;
+ dvApplied.x *= scale; dvApplied.y *= scale; dvApplied.z *= scale;
+ }
+ }
+ accFinal = dvApplied;
+
     float4 outV;
-    outV.x = vi.x + accFinal.x;
-    outV.y = vi.y + accFinal.y;
-    outV.z = vi.z + accFinal.z;
+    outV.x = vi.x + gate * accFinal.x;
+    outV.y = vi.y + gate * accFinal.y;
+    outV.z = vi.z + gate * accFinal.z;
     outV.w = __half2float(vi_h.w);
     vel_out[pid] = outV;
 }
@@ -170,10 +205,19 @@ __global__ void KXSPHHalfCompact(
     if (kSelf >= N) return;
 
     uint32_t pid = indicesSorted[kSelf];
+    uint32_t ghostCount = dp.ghostCount;
+    uint32_t fluidCount = (ghostCount <= N) ? (N - ghostCount) : N;
+    bool isGhost = (pid >= fluidCount);
+    if (isGhost && !dp.ghostContribXsph) {
+        Half4 vi_h_passthrough = vel_in_h4[pid];
+        vel_out[pid] = make_float4(__half2float(vi_h_passthrough.x), __half2float(vi_h_passthrough.y), __half2float(vi_h_passthrough.z), __half2float(vi_h_passthrough.w));
+        return;
+    }
+
     Half4 vi_h = vel_in_h4[pid];
     Half4 pi_h = pos_pred_h4[pid];
 
-    if (dp.xsph_c <= 0.f) {
+    if (dp.xsph_c <=0.f) {
         vel_out[pid] = make_float4(__half2float(vi_h.x), __half2float(vi_h.y), __half2float(vi_h.z), __half2float(vi_h.w));
         return;
     }
@@ -181,12 +225,13 @@ __global__ void KXSPHHalfCompact(
     float3 pi = make_float3(__half2float(pi_h.x), __half2float(pi_h.y), __half2float(pi_h.z));
     float3 vi = make_float3(__half2float(vi_h.x), __half2float(vi_h.y), __half2float(vi_h.z));
 
-#if __CUDA_ARCH__ >= 530
+#if __CUDA_ARCH__ >=530
     __half ax = __float2half(0.f);
     __half ay = __float2half(0.f);
     __half az = __float2half(0.f);
 #endif
-    float3 acc_f = make_float3(0, 0, 0);
+    float3 acc_f = make_float3(0,0,0);
+    int neighborCount =0;
 
     uint32_t keySelf = keysSorted[kSelf];
     int3 dim = dp.grid.dim;
@@ -198,22 +243,24 @@ __global__ void KXSPHHalfCompact(
     const KernelCoeffs kc = dp.kernel;
     const float h2 = kc.h2;
     const float mass = dp.particleMass;
-    const float invRest = (dp.restDensity > 0.f) ? (1.f / dp.restDensity) : 0.f;
+    const float invRest = (dp.restDensity >0.f) ? (1.f / dp.restDensity) :0.f;
     const float coeff = dp.xsph_c * mass * invRest;
 
-    for (int dz = -1; dz <= 1; ++dz) {
-        int z = cz + dz; if (z < 0 || z >= dim.z) continue;
-        for (int dy = -1; dy <= 1; ++dy) {
-            int y = cy + dy; if (y < 0 || y >= dim.y) continue;
-            for (int dx = -1; dx <= 1; ++dx) {
-                int x = cx + dx; if (x < 0 || x >= dim.x) continue;
+    for (int dz = -1; dz <=1; ++dz) {
+        int z = cz + dz; if (z <0 || z >= dim.z) continue;
+        for (int dy = -1; dy <=1; ++dy) {
+            int y = cy + dy; if (y <0 || y >= dim.y) continue;
+            for (int dx = -1; dx <=1; ++dx) {
+                int x = cx + dx; if (x <0 || x >= dim.x) continue;
                 uint32_t nKey = makeKey(x, y, z, dim);
                 int idxCell = binSearchKey(uniqueKeys, M, nKey);
-                if (idxCell < 0) continue;
+                if (idxCell <0) continue;
                 uint32_t s = offsets[idxCell];
-                uint32_t e = offsets[idxCell + 1];
+                uint32_t e = offsets[idxCell +1];
                 for (uint32_t k = s; k < e; ++k) {
                     uint32_t pj = indicesSorted[k];
+                    bool jGhost = (pj >= fluidCount);
+                    if (jGhost && !dp.ghostContribXsph) continue;
                     if (pj == pid) continue;
                     Half4 pj_h = pos_pred_h4[pj];
                     float3 pjv = make_float3(__half2float(pj_h.x), __half2float(pj_h.y), __half2float(pj_h.z));
@@ -228,20 +275,17 @@ __global__ void KXSPHHalfCompact(
                     float dyv = (vj.y - vi.y) * scale;
                     float dzv = (vj.z - vi.z) * scale;
                     if (forceFp32Accum) {
-                        acc_f.x += dxv;
-                        acc_f.y += dyv;
-                        acc_f.z += dzv;
+                        acc_f.x += dxv; acc_f.y += dyv; acc_f.z += dzv;
                     } else {
-#if __CUDA_ARCH__ >= 530
+#if __CUDA_ARCH__ >=530
                         ax = __hadd(ax, __float2half(dxv));
                         ay = __hadd(ay, __float2half(dyv));
                         az = __hadd(az, __float2half(dzv));
 #else
-                        acc_f.x += dxv;
-                        acc_f.y += dyv;
-                        acc_f.z += dzv;
+                        acc_f.x += dxv; acc_f.y += dyv; acc_f.z += dzv;
 #endif
                     }
+                    ++neighborCount;
                 }
             }
         }
@@ -251,16 +295,39 @@ __global__ void KXSPHHalfCompact(
     if (forceFp32Accum) {
         accFinal = acc_f;
     } else {
-#if __CUDA_ARCH__ >= 530
+#if __CUDA_ARCH__ >=530
         accFinal = make_float3(__half2float(ax), __half2float(ay), __half2float(az));
 #else
         accFinal = acc_f;
 #endif
     }
+
+    float gate =1.0f;
+    if (dp.pbf.xsph_gate_enable) {
+        int nMin = max(0, dp.pbf.xsph_n_min);
+        int nMax = max(nMin +1, dp.pbf.xsph_n_max);
+        float t = (float(neighborCount) - float(nMin)) / float(nMax - nMin);
+        gate = fminf(1.f, fmaxf(0.f, t));
+    }
+
+    float3 dvApplied = accFinal;
+    float maxAbs = fmaxf(fmaxf(fabsf(dvApplied.x), fabsf(dvApplied.y)), fabsf(dvApplied.z));
+    if (!isGhost) {
+    if (!(maxAbs <=1e6f) || isnan(dvApplied.x) || isnan(dvApplied.y) || isnan(dvApplied.z)) {
+ atomicAdd(&g_xsphNaNCount,1u);
+ dvApplied = make_float3(0,0,0);
+ } else if (maxAbs >5.0f * kc.h / fmaxf(1e-6f, dp.dt)) {
+ atomicAdd(&g_xsphAnomalyCount,1u);
+ float scale = (5.0f * kc.h / fmaxf(1e-6f, dp.dt)) / maxAbs;
+ dvApplied.x *= scale; dvApplied.y *= scale; dvApplied.z *= scale;
+ }
+ }
+ accFinal = dvApplied;
+
     float4 outV;
-    outV.x = vi.x + accFinal.x;
-    outV.y = vi.y + accFinal.y;
-    outV.z = vi.z + accFinal.z;
+    outV.x = vi.x + gate * accFinal.x;
+    outV.y = vi.y + gate * accFinal.y;
+    outV.z = vi.z + gate * accFinal.z;
     outV.w = __half2float(vi_h.w);
     vel_out[pid] = outV;
 }

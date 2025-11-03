@@ -6,7 +6,7 @@
 #include <cstring>
 #include <vector>
 #include "../../sim/numeric_utils.h"
-#include "../../sim/logging.h" // 新增：统一日志接口
+#include "../../sim/logging.h"
 
 namespace {
 
@@ -230,6 +230,9 @@ void BuildSimParams(const RuntimeConsole& c, sim::SimParams& out) {
  //现有 out.precision 已写入
  // 添加：幽灵粒子数占位（生成逻辑稍后调用 GenerateBoundaryGhostParticles 后填充）
  out.ghostParticleCount = c.sim.boundaryGhost.ghost_count_runtime;
+ out.ghostContribDensity = c.sim.boundaryGhost.contribute_density ?1:0;
+ out.ghostContribLambda = c.sim.boundaryGhost.contribute_lambda ?1:0;
+ out.ghostContribXsph = c.sim.boundaryGhost.contribute_xsph ?1:0;
 
  // ===== 原生 half 主存储激活判定 =====
  if (src.nativeHalfPrefer) {
@@ -238,6 +241,42 @@ void BuildSimParams(const RuntimeConsole& c, sim::SimParams& out) {
  bool predHalf = (out.precision.predictedPosStore == sim::NumericType::FP16_Packed);
  if (posHalf && velHalf && predHalf) {
  out.precision.nativeHalfActive = true; //由 allocator选择 allocateNativeHalfPrimary
+ }
+ }
+
+ // ========== 新增：PredHalf 配置诊断日志（节流：配置变化时打印） ==========
+ if (c.debug.printDiagnostics) {
+ static sim::SimPrecision s_prev{}; // 初始 FP32 默认
+ auto diff = [&](){
+ return s_prev.positionStore != out.precision.positionStore ||
+ s_prev.velocityStore != out.precision.velocityStore ||
+ s_prev.predictedPosStore != out.precision.predictedPosStore ||
+ s_prev.nativeHalfActive != out.precision.nativeHalfActive ||
+ s_prev.forceFp32Accumulate != out.precision.forceFp32Accumulate ||
+ s_prev.useStageOverrides != out.precision.useStageOverrides ||
+ s_prev.integrateCompute != out.precision.integrateCompute ||
+ s_prev.velocityCompute != out.precision.velocityCompute ||
+ s_prev.boundaryCompute != out.precision.boundaryCompute ||
+ s_prev.xsphCompute != out.precision.xsphCompute; };
+ if (diff()) {
+ std::fprintf(stderr,
+ "[PredHalf.Config] pos=%u vel=%u pred=%u native=%d forceAcc=%d stageOv=%d integ=%u velC=%u bnd=%u xsph=%u aux=%u lambda=%u density=%u render=%u fp16Mask=0x%X\n",
+ (unsigned)out.precision.positionStore,
+ (unsigned)out.precision.velocityStore,
+ (unsigned)out.precision.predictedPosStore,
+ (int)out.precision.nativeHalfActive,
+ (int)out.precision.forceFp32Accumulate,
+ (int)out.precision.useStageOverrides,
+ (unsigned)out.precision.integrateCompute,
+ (unsigned)out.precision.velocityCompute,
+ (unsigned)out.precision.boundaryCompute,
+ (unsigned)out.precision.xsphCompute,
+ (unsigned)out.precision.auxStore,
+ (unsigned)out.precision.lambdaStore,
+ (unsigned)out.precision.densityStore,
+ (unsigned)out.precision.renderTransfer,
+ out.precision.fp16StageMask);
+ s_prev = out.precision;
  }
  }
 }

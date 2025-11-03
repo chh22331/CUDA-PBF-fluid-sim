@@ -4,14 +4,16 @@
 
 namespace sim {
 
-    __global__ void kPackFloat4ToHalf4(const float4* src, Half4* dst, uint32_t N) {
+    __global__ void kPackFloat4ToHalf4(const float4* src, sim::Half4* dst, uint32_t N) {
         uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
         if (i >= N) return;
         float4 v = src[i];
-        dst[i].x = __float2half(v.x);
-        dst[i].y = __float2half(v.y);
-        dst[i].z = __float2half(v.z);
-        dst[i].w = __float2half(v.w);
+        sim::Half4 h;
+        h.x = __float2half(v.x);
+        h.y = __float2half(v.y);
+        h.z = __float2half(v.z);
+        h.w = __float2half(v.w);
+        dst[i] = h;
     }
 
     __global__ void kUnpackHalf4ToFloat4(const Half4* src, float4* dst, uint32_t N) {

@@ -12,9 +12,7 @@ namespace sim {
         bool               useHashedGrid = false;
         IGridStrategy* gridStrategy = nullptr;
         KernelDispatcher* dispatcher = nullptr;
-        // Post-ops mutable state
-        float4* effectiveVel = nullptr;
-        bool               xsphApplied = false;
+        // Ping-pong mutable state
         bool               pingPongPos = true; // new: runtime flag
         // Graph / pipeline capture helpers
         bool               sortTempPreEnsured = false; // true 时 PhaseGridBuildFull 跳过 Query

@@ -40,17 +40,14 @@ __global__ void KIntegratePredHalf(
         float vz = __half2float(hv.z);
 
         if (semiImplicit) {
-            // v(t+dt) = v + g*dt
             vx += gravity.x * dt;
             vy += gravity.y * dt;
             vz += gravity.z * dt;
-            // x(t+dt) = x + v(t+dt)*dt
             px += vx * dt;
             py += vy * dt;
             pz += vz * dt;
         }
         else {
-            // 显式原逻辑：x += v*dt + g*dt
             px += vx * dt + gravity.x * dt;
             py += vy * dt + gravity.y * dt;
             pz += vz * dt + gravity.z * dt;
@@ -70,11 +67,9 @@ __global__ void KIntegratePredHalf(
         __half vz = hv.z;
 
         if (semiImplicit) {
-            // v += g*dt
             vx = __hadd(vx, __hmul(gx, hdt));
             vy = __hadd(vy, __hmul(gy, hdt));
             vz = __hadd(vz, __hmul(gz, hdt));
-            // x += v*dt
             __half dx = __hmul(vx, hdt);
             __half dy = __hmul(vy, hdt);
             __half dz = __hmul(vz, hdt);
@@ -84,7 +79,6 @@ __global__ void KIntegratePredHalf(
             pos_pred_out[i] = make_out(__half2float(dx), __half2float(dy), __half2float(dz), __half2float(hp.w));
         }
         else {
-            // 显式：x += v*dt + g*dt
             __half dx = __hmul(vx, hdt);
             __half dy = __hmul(vy, hdt);
             __half dz = __hmul(vz, hdt);
@@ -120,60 +114,10 @@ __global__ void KIntegratePredHalf(
     }
 }
 
-// ============== Velocity (Half Arithmetic) ============= //
-// 由 (pos_pred - pos) * inv_dt 推导速度
-__global__ void KVelocityHalf(
-    float4* __restrict__ vel_out,   // FP32 输出
-    const Half4* __restrict__ pos_h4,
-    const Half4* __restrict__ pos_pred_h4,
-    float inv_dt,
-    uint32_t N,
-    int forceFp32Accum)
-{
-    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= N) return;
-
-    Half4 p0 = pos_h4[i];
-    Half4 p1 = pos_pred_h4[i];
-
-    if (forceFp32Accum) {
-        float x0 = __half2float(p0.x), y0 = __half2float(p0.y), z0 = __half2float(p0.z);
-        float x1 = __half2float(p1.x), y1 = __half2float(p1.y), z1 = __half2float(p1.z);
-        float vx = (x1 - x0) * inv_dt;
-        float vy = (y1 - y0) * inv_dt;
-        float vz = (z1 - z0) * inv_dt;
-        float4 v = vel_out[i];
-        v.x = vx; v.y = vy; v.z = vz;
-        vel_out[i] = v;
-    }
-    else {
-#if __CUDA_ARCH__ >= 530
-        __half hinv = __float2half(inv_dt);
-        __half dx = __hsub(p1.x, p0.x);
-        __half dy = __hsub(p1.y, p0.y);
-        __half dz = __hsub(p1.z, p0.z);
-
-        dx = __hmul(dx, hinv);
-        dy = __hmul(dy, hinv);
-        dz = __hmul(dz, hinv);
-
-        float4 v = vel_out[i];
-        v.x = __half2float(dx);
-        v.y = __half2float(dy);
-        v.z = __half2float(dz);
-        vel_out[i] = v;
-#else
-        float x0 = __half2float(p0.x), y0 = __half2float(p0.y), z0 = __half2float(p0.z);
-        float x1 = __half2float(p1.x), y1 = __half2float(p1.y), z1 = __half2float(p1.z);
-        float vx = (x1 - x0) * inv_dt;
-        float vy = (y1 - y0) * inv_dt;
-        float vz = (z1 - z0) * inv_dt;
-        float4 v = vel_out[i];
-        v.x = vx; v.y = vy; v.z = vz;
-        vel_out[i] = v;
-#endif
-    }
-}
+// 说明：原文件中还定义了一个 extern "C" LaunchVelocityHalf，与 sim/velocity_half.cu 中改进版同名但签名不同。
+// 为消除 LNK2005 重复定义错误，已移除该旧版本实现，请统一使用 sim/velocity_half.cu 中的
+// LaunchVelocityHalf(float4*, sim::Half4*, const sim::Half4*, const sim::Half4*, float, uint32_t, bool, cudaStream_t)
+// 若需要旧的精简签名，可在其他 TU 中新增一个包装函数调用改进版。
 
 static inline uint32_t gridFor(uint32_t N) { return (N + 255u) / 256u; }
 
@@ -189,25 +133,9 @@ extern "C" void LaunchIntegratePredHalf(
     cudaStream_t s)
 {
     if (!pos_h4 || !vel_h4 || N == 0) return;
-    KIntegratePredHalf << <gridFor(N), 256, 0, s >> > (
+    KIntegratePredHalf<<<gridFor(N), 256, 0, s>>>(
         pos_h4, vel_h4, pos_pred_out,
         gravity, dt, N,
         forceFp32Accum ? 1 : 0,
         semiImplicit ? 1 : 0);
-}
-
-extern "C" void LaunchVelocityHalf(
-    float4* vel_out,
-    const Half4* pos_h4,
-    const Half4* pos_pred_h4,
-    float inv_dt,
-    uint32_t N,
-    bool forceFp32Accum,
-    cudaStream_t s)
-{
-    if (!pos_h4 || !pos_pred_h4 || !vel_out || N == 0) return;
-    KVelocityHalf << <gridFor(N), 256, 0, s >> > (
-        vel_out, pos_h4, pos_pred_h4,
-        inv_dt, N,
-        forceFp32Accum ? 1 : 0);
 }

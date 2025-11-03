@@ -71,7 +71,8 @@ __global__ void KLambdaHalfFloatAccum(
     uint32_t is = blockIdx.x * blockDim.x + threadIdx.x;
     if (is >= N) return;
 
-    uint32_t pid = indicesSorted[is];
+    uint32_t ghostCount = dp.ghostCount; uint32_t fluidCount = (ghostCount <= N)? (N - ghostCount): N;
+    uint32_t pid = indicesSorted[is]; bool isGhost = (pid >= fluidCount); if (isGhost && !dp.ghostContribLambda){ d_lambda[pid]=0.f; return; }
 
     // 读上一迭代 / 上一帧 λ（用于 XPBD）
     float lambda_prev = PrecisionTraits::loadLambda(d_lambda_fp32, d_lambda_h, pid);
@@ -106,6 +107,7 @@ __global__ void KLambdaHalfFloatAccum(
                 if (s == 0xFFFFFFFFu || e == 0xFFFFFFFFu || e <= s) continue;
                 for (uint32_t k = s; k < e; ++k) {
                     uint32_t pj = indicesSorted[k];
+                    bool pjGhost = (pj >= fluidCount); if (pjGhost && !dp.ghostContribLambda) continue;
                     float4 pj4 = PrecisionTraits::loadPosPred(d_pos_pred_fp32, d_pos_pred_h4, pj);
                     float3 pjv = make_float3(pj4.x, pj4.y, pj4.z);
                     float3 rij = make_float3(pi.x - pjv.x, pi.y - pjv.y, pi.z - pjv.z);
@@ -172,7 +174,7 @@ __global__ void KDeltaApplyHalfGeneric(
 {
     uint32_t iSorted = blockIdx.x * blockDim.x + threadIdx.x;
     if (iSorted >= N) return;
-    uint32_t pid = indicesSorted[iSorted];
+    uint32_t ghostCount = dp.ghostCount; uint32_t fluidCount = (ghostCount <= N)? (N - ghostCount): N; uint32_t pid = indicesSorted[iSorted]; bool isGhost=(pid>=fluidCount); if (isGhost && !dp.ghostContribLambda){ if(d_delta) d_delta[pid]=make_float4(0,0,0,0); return; }
 
     float lambda_i = PrecisionTraits::loadLambda(d_lambda_fp32, d_lambda_h, pid);
 
@@ -206,7 +208,7 @@ __global__ void KDeltaApplyHalfGeneric(
                 if (s == 0xFFFFFFFFu || e == 0xFFFFFFFFu || e <= s) continue;
                 for (uint32_t k = s; k < e; ++k) {
                     uint32_t pj = indicesSorted[k];
-                    if (pj == pid) continue;
+                    bool pjGhost=(pj>=fluidCount); if (pjGhost && !dp.ghostContribLambda) continue; if (pj == pid) continue;
                     float4 pj4 = PrecisionTraits::loadPosPred(d_pos_pred_src_fp32, d_pos_pred_src_h4, pj);
                     float3 pjv = make_float3(pj4.x, pj4.y, pj4.z);
                     float3 rij = make_float3(pi.x - pjv.x, pi.y - pjv.y, pi.z - pjv.z);

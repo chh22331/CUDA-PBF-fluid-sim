@@ -35,12 +35,12 @@ namespace console {
     // 统一数值精度配置（作为 Simulation 的子成员），仅定义开关，无副作用
     struct PrecisionConfig {
         // ---------------- 存储精度（粒子主数据与辅助缓冲） ----------------
-        NumericType positionStore = NumericType::FP16;
-        NumericType velocityStore = NumericType::FP32;
-        NumericType predictedPosStore = NumericType::FP32; // PBF 预测位置（若使用）
-        NumericType lambdaStore = NumericType::FP32; // PBF λ（约束求解敏感，初期保持 FP32）
-        NumericType densityStore = NumericType::FP32;
-        NumericType auxStore = NumericType::FP32; // 临时/梯度/累加器等
+        NumericType positionStore = NumericType::FP16_Packed;
+        NumericType velocityStore = NumericType::FP16_Packed;
+        NumericType predictedPosStore = NumericType::FP16_Packed; // PBF 预测位置（若使用）
+        NumericType lambdaStore = NumericType::FP16_Packed; // PBF λ
+        NumericType densityStore = NumericType::FP16_Packed;
+        NumericType auxStore = NumericType::FP16_Packed; // 临时/梯度/累加器等
         NumericType renderTransfer = NumericType::FP16_Packed; // 提交渲染的转换目标（保留 float3 默认）
 
         // ---------------- 核心计算精度（全局默认） ----------------
@@ -50,7 +50,7 @@ namespace console {
 
         // ---------------- 分阶段覆盖（若 useStageOverrides = true 生效） ----------------
         bool        useStageOverrides = true;
-        NumericType emissionCompute = NumericType::FP16;
+        NumericType emissionCompute = NumericType::FP32;
         NumericType gridBuildCompute = NumericType::FP32;
         NumericType neighborCompute = NumericType::FP32;
         NumericType densityCompute = NumericType::FP32;
@@ -109,7 +109,7 @@ namespace console {
 
         // Debug/控制（新增）
         struct Debug {
-            bool enabled = false;        // 开启 Debug 模式
+            bool enabled = true;        // 开启 Debug 模式
             bool pauseOnStart = true;   // 启动即暂停在第 1 帧
             // 采用 Windows VK 与 ASCII 兼容编码（无需包含 windows.h）
             int  keyStep = 32;          // 空格：推进一帧
@@ -142,12 +142,18 @@ namespace console {
             bool logXSphEffect = false;        // 占位：XSPH 平滑实际效果估算（未来扩展）
 
             // —— 新增：统一约束零散日志的分类开关 —__
-            bool printDiagnostics = false;     // [Diag] 诊断与网格占用直方等
+            bool printDiagnostics = true;     // [Diag] 诊断与网格占用直方等
             bool printHints = false;           // [Hint] 启发式建议
             bool printErrors = true;           // 错误/致命提示（默认开）
 
             // 新增：诊断/统计的大频率节流（帧）；0/负值表示禁用
             int  diag_every_n = 0;
+
+            // ---- 新增：Velocity 半精诊断专用开关与参数 ----
+            bool logVelocityEffect = true; // 开启速度更新误差/回滚诊断
+            float velocityRollbackRatioMax =0.8f; // 比例阈值：dvL1/prevL1 超过回滚
+            float velocityNaNGuardMax =1e6f; // 分量绝对值上限（超过视为异常并置零）
+            bool velocityEnableNvtx = true; // 为不同分支加 NVTX 标记
         } debug;
 
         // 仿真配置（集中所有物理与发射/域参数）
@@ -229,14 +235,14 @@ namespace console {
             // 是否根据 numParticles 自动分解为 cube_group_count * (cube_edge_particles^3)
             bool     cube_auto_partition = false;
             // 手动指定立方体数量（粒子团数量），仅在 cube_auto_partition=false 时使用
-            uint32_t cube_group_count = 128;
+            uint32_t cube_group_count = 16;
             // 单个立方体边长（按粒子数，边上粒子个数）；用于 cube_edge_particles^3
             uint32_t cube_edge_particles = 25;
             // 最大允许粒子团数量（用于颜色数组与安全限制）
             static constexpr uint32_t cube_group_count_max = 512;
 
             // 立方体层数（垂直分层放置）。若 cube_group_count=32 且 cube_layers=2 -> 每层16个
-            uint32_t cube_layers = 2;
+            uint32_t cube_layers = 1;
 
             // 立方体中心之间的水平间距（世界单位，沿 X/Z）
             float    cube_group_spacing_world = 100.0f;
