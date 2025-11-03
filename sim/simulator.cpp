@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <random>
+#include <cuda_fp16.h>
 #include <algorithm>
 #include <cuda_runtime.h>
 #include <unordered_set>
@@ -1028,6 +1029,25 @@ extern "C" void LaunchRecycleToNozzleConst(float4*, float4*, float4*, sim::GridB
                 patchGraphHalfPositionPointers(false, oldCurrH, oldNextH);
             }
         }
+        else if (m_ctx.pingPongPos && !m_bufs.externalPingPong && !m_bufs.nativeHalfActive && m_params.numParticles > 0) {
+            float4* oldCurr = m_bufs.d_pos_curr;
+            float4* oldNext = m_bufs.d_pos_next;
+            float4* oldPred = m_bufs.d_pos_pred;
+            m_bufs.swapPositionPingPong();
+            m_swappedThisFrame = true;
+            m_bufs.d_pos_pred = m_bufs.d_pos_next; // 继续 alias next 作为 predicted
+            UploadSimPosTableConst(m_bufs.d_pos_curr, m_bufs.d_pos_next);
+            UpdateDevicePrecisionView(m_bufs, m_params.precision);
+            if (console::Instance().perf.use_cuda_graphs && console::Instance().perf.graph_hot_update_enable) {
+                patchGraphPositionPointers(true, oldCurr, oldNext, oldPred);
+                patchGraphPositionPointers(false, oldCurr, oldNext, oldPred);
+            }
+            if (console::Instance().debug.printHints) {
+                std::fprintf(stderr, "[PingPong][InternalSwap] frame=%llu curr=%p next=%p pred=%p\n",
+                    (unsigned long long)m_frameIndex,
+                    (void*)m_bufs.d_pos_curr, (void*)m_bufs.d_pos_next, (void*)m_bufs.d_pos_pred);
+            }
+        }
         else {
             if (console::Instance().debug.printHints) {
                 std::fprintf(stderr,
@@ -1057,7 +1077,7 @@ extern "C" void LaunchRecycleToNozzleConst(float4*, float4*, float4*, sim::GridB
         ++m_frameIndex;
         // 渲染半精发布：在 fence signal 后。用户需保证导入外部 half buffer。
         if(m_params.precision.renderTransfer == NumericType::FP16_Packed || m_params.precision.renderTransfer == NumericType::FP16){ publishRenderHalf(m_params.numParticles); }
-
+        debugLogPredictedPosHalf(m_params);
         return true;
     }
 
@@ -1111,22 +1131,25 @@ extern "C" void LaunchRecycleToNozzleConst(float4*, float4*, float4*, sim::GridB
     }
 
     bool Simulator::bindExternalPosPingPong(void* sharedHandleA, size_t bytesA,
-                                            void* sharedHandleB, size_t bytesB) {
+        void* sharedHandleB, size_t bytesB) {
         if (!sharedHandleA || !sharedHandleB || bytesA == 0 || bytesB == 0) {
             std::fprintf(stderr, "[ExternalPosPP][Error] invalid handles or sizes\n");
             return false;
         }
+        // 确保已创建 CUDA 上下文（防止首次 D3D12 共享映射后立即 D2D 拷贝出现 invalid value）
+        cudaFree(0);
+
         cudaExternalMemory_t extA = nullptr, extB = nullptr;
         cudaExternalMemoryHandleDesc descA{};
         descA.type = cudaExternalMemoryHandleTypeD3D12Resource;
         descA.handle.win32.handle = sharedHandleA;
-        descA.size  = bytesA;
+        descA.size = bytesA;
         descA.flags = cudaExternalMemoryDedicated;
 
         cudaExternalMemoryHandleDesc descB{};
         descB.type = cudaExternalMemoryHandleTypeD3D12Resource;
         descB.handle.win32.handle = sharedHandleB;
-        descB.size  = bytesB;
+        descB.size = bytesB;
         descB.flags = cudaExternalMemoryDedicated;
 
         if (cudaImportExternalMemory(&extA, &descA) != cudaSuccess) {
@@ -1157,7 +1180,7 @@ extern "C" void LaunchRecycleToNozzleConst(float4*, float4*, float4*, sim::GridB
 
         uint32_t capA = static_cast<uint32_t>(bytesA / sizeof(float4));
         uint32_t capB = static_cast<uint32_t>(bytesB / sizeof(float4));
-        uint32_t cap  = (capA < capB) ? capA : capB;
+        uint32_t cap = (capA < capB) ? capA : capB;
         if (cap == 0) {
             std::fprintf(stderr, "[ExternalPosPP][Error] capacity zero\n");
             cudaDestroyExternalMemory(extA);
@@ -1169,6 +1192,10 @@ extern "C" void LaunchRecycleToNozzleConst(float4*, float4*, float4*, sim::GridB
         m_extPosPred = extA;
         m_extraExternalMemB = extB;
 
+        // 保存旧内部指针
+        float4* oldCurr = m_bufs.d_pos_curr;
+        float4* oldNext = m_bufs.d_pos_next;
+
         bool wantHalfMirror = (m_params.precision.positionStore == NumericType::FP16_Packed ||
             m_params.precision.predictedPosStore == NumericType::FP16_Packed);
         m_bufs.bindExternalPosPingPong(reinterpret_cast<float4*>(devPtrA),
@@ -1178,10 +1205,66 @@ extern "C" void LaunchRecycleToNozzleConst(float4*, float4*, float4*, sim::GridB
         m_bufs.d_pos_pred = m_bufs.d_pos_next;
         m_canPingPongPos = true;
         m_ctx.pingPongPos = true;
+
+        // === 初始化外部缓冲内容（安全拷贝） ===
+        uint32_t N = m_params.numParticles;
+        if (N > 0 && oldCurr && oldNext) {
+            size_t bytesCopy = size_t(N) * sizeof(float4);
+
+            auto safeDeviceCopy = [&](const char* tag, void* dst, const void* src, size_t bytes) {
+                // 属性检测：确认 dst/src 均为设备指针
+                cudaPointerAttributes aDst{}, aSrc{};
+                bool dstDev = (cudaPointerGetAttributes(&aDst, dst) == cudaSuccess) && (aDst.type == cudaMemoryTypeDevice);
+                bool srcDev = (cudaPointerGetAttributes(&aSrc, src) == cudaSuccess) && (aSrc.type == cudaMemoryTypeDevice);
+
+                cudaError_t err = cudaSuccess;
+                if (dstDev && srcDev) {
+                    err = cudaMemcpyAsync(dst, src, bytes, cudaMemcpyDeviceToDevice, m_stream);
+                }
+                else {
+                    // 回退：Host staging
+                    std::vector<float4> staging(N);
+                    cudaError_t e1 = cudaMemcpy(staging.data(), src, bytes, cudaMemcpyDeviceToHost);
+                    cudaError_t e2 = cudaMemcpy(dst, staging.data(), bytes, cudaMemcpyHostToDevice);
+                    err = (e1 != cudaSuccess) ? e1 : e2;
+                }
+
+                if (err != cudaSuccess) {
+                    std::fprintf(stderr,
+                        "[ExternalPosPP][Warn] %s initial copy failed err=%d (%s) fallbackUsed=%d\n",
+                        tag, int(err), cudaGetErrorString(err), (!dstDev || !srcDev));
+                }
+                else {
+                    if (sim::ShouldLogD2D())
+                        std::fprintf(stderr,
+                            "[D2D-Memcpy] frame=%llu tag=%s bytes=%zu dst=%p src=%p async=%d\n",
+                            (unsigned long long)sim::g_simFrameIndex, tag, bytes, dst, src, (dstDev && srcDev) ? 1 : 0);
+                }
+                };
+
+            safeDeviceCopy("ExternalPosPP.InitCopyCurr", m_bufs.d_pos_curr, oldCurr, bytesCopy);
+            safeDeviceCopy("ExternalPosPP.InitCopyNext", m_bufs.d_pos_next, oldNext, bytesCopy);
+        }
+        else if (N > 0) {
+            // 无旧数据：填充域中心
+            float3 center = make_float3((m_params.grid.mins.x + m_params.grid.maxs.x) * 0.5f,
+                (m_params.grid.mins.y + m_params.grid.maxs.y) * 0.5f,
+                (m_params.grid.mins.z + m_params.grid.maxs.z) * 0.5f);
+            std::vector<float4> h_init(N, make_float4(center.x, center.y, center.z, 1.0f));
+            CUDA_CHECK(cudaMemcpy(m_bufs.d_pos_curr, h_init.data(), sizeof(float4) * N, cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(m_bufs.d_pos_next, h_init.data(), sizeof(float4) * N, cudaMemcpyHostToDevice));
+        }
+
+        // 半精镜像同步
+        if (N > 0 && (m_bufs.usePosHalf || m_bufs.usePosPredHalf)) {
+            m_bufs.packAllToHalf(N, m_stream);
+        }
+
         std::fprintf(stderr,
-            "[ExternalPosPP][Ready][SchemeB] curr=%p next=%p pred(alias)=%p cap=%u\n",
+            "[ExternalPosPP][Ready][Init] curr=%p next=%p pred(alias)=%p cap=%u N=%u initDone=1\n",
             (void*)m_bufs.d_pos_curr, (void*)m_bufs.d_pos_next,
-            (void*)m_bufs.d_pos_pred, cap);
+            (void*)m_bufs.d_pos_pred, cap, N);
+
         return true;
     }
 
@@ -1565,6 +1648,272 @@ extern "C" void LaunchRecycleToNozzleConst(float4*, float4*, float4*, sim::GridB
                 fullGraph ?1 :0, patchedPtr, patchedGrid,
                 (void*)oldCurrH, (void*)oldNextH,
                 (void*)m_bufs.d_pos_h4, (void*)m_bufs.d_pos_pred_h4);
+        }
+    }
+    void Simulator::debugLogPredictedPosHalf(const SimParams& p) {
+        const auto& cc = console::Instance();
+        const auto& dbg = cc.debug;
+        if (!dbg.logPredictedPosHalf) return;
+        if (p.numParticles == 0) return;
+
+        bool halfPred = (p.precision.predictedPosStore == NumericType::FP16 ||
+            p.precision.predictedPosStore == NumericType::FP16_Packed);
+        if (!halfPred) return;
+        if (!m_bufs.nativeHalfActive && (!m_bufs.usePosPredHalf || !m_bufs.d_pos_pred_h4)) return;
+        if (m_bufs.nativeHalfActive && !m_bufs.d_pos_pred_h4) return;
+
+        int every = (dbg.logPredictedPosEveryN <= 0 ? 1 : dbg.logPredictedPosEveryN);
+        if ((m_frameIndex % every) != 0) return;
+
+        uint32_t N = p.numParticles;
+        uint32_t stride = (dbg.logPredictedPosSampleStride == 0 ? 1u : (uint32_t)dbg.logPredictedPosSampleStride);
+        uint32_t maxPrint = (dbg.logPredictedPosMaxPrint < 0 ? 0u : (uint32_t)dbg.logPredictedPosMaxPrint);
+
+        // 抽样结构
+        struct Sample {
+            uint32_t i;
+            float predHx, predHy, predHz; // half 解包预测
+            float predFx, predFy, predFz; // float 预测（d_pos_pred）
+            float currx, curry, currz;    // 当前
+            float physDx, physDy, physDz; // float 预测 - 当前
+            float quantDx, quantDy, quantDz; // half 解包 - float 预测
+        };
+        std::vector<Sample> samples;
+        samples.reserve(maxPrint);
+
+        // 指针属性验证（只打印一次，避免额外开销）
+#if CUDART_VERSION >= 10000
+        auto ptrDiag = [&](const char* tag, const void* ptr) {
+            cudaPointerAttributes a{};
+            if (cudaPointerGetAttributes(&a, ptr) != cudaSuccess) {
+                if (dbg.printWarnings)
+                    std::fprintf(stderr, "[PredPosHalf.Diag] %s getAttr failed ptr=%p\n", tag, ptr);
+            }
+            else {
+                if (dbg.printDiagnostics)
+                    std::fprintf(stderr, "[PredPosHalf.Diag] %s type=%d dev=%d ptr=%p\n",
+                        tag, (int)a.type, a.device,  ptr);
+            }
+            };
+        ptrDiag("curr", m_bufs.d_pos_curr);
+        ptrDiag("pred_h4", m_bufs.d_pos_pred_h4);
+        ptrDiag("pred_f", m_bufs.d_pos_pred);
+#endif
+
+        // 累计统计
+        double sumPhysX = 0, sumPhysY = 0, sumPhysZ = 0;
+        double sumPhysAbsX = 0, sumPhysAbsY = 0, sumPhysAbsZ = 0;
+        double sumQuantX = 0, sumQuantY = 0, sumQuantZ = 0;
+        double sumQuantAbsX = 0, sumQuantAbsY = 0, sumQuantAbsZ = 0;
+
+        double sumPhysSqX = 0, sumPhysSqY = 0, sumPhysSqZ = 0;
+        double sumQuantSqX = 0, sumQuantSqY = 0, sumQuantSqZ = 0;
+
+        float minPhysX = FLT_MAX, minPhysY = FLT_MAX, minPhysZ = FLT_MAX;
+        float maxPhysX = -FLT_MAX, maxPhysY = -FLT_MAX, maxPhysZ = -FLT_MAX;
+        float minQuantX = FLT_MAX, minQuantY = FLT_MAX, minQuantZ = FLT_MAX;
+        float maxQuantX = -FLT_MAX, maxQuantY = -FLT_MAX, maxQuantZ = -FLT_MAX;
+
+        int abnormalCount = 0, nanCount = 0;
+        int quantULP_GE1 = 0, quantULP_GE2 = 0, quantULP_GE4 = 0;
+        int physStallCount = 0;          // 物理位移近似停滞
+        int quantNonZeroWithPhysZero = 0;// 量化存在但物理位移近零
+        int identicalHalfRepeat = 0;     // half 预测与前一个完全相同
+
+        sim::Half4 hPred;
+        float4 hCurr{}, hPredF{};
+        bool haveFloatPred = (m_bufs.d_pos_pred != nullptr); // float 预测缓冲（alias next）
+        sim::Half4 prevHPred{};
+        bool prevValid = false;
+
+        auto halfToF3 = [](const sim::Half4& h) {
+            return make_float3(__half2float(h.x),
+                __half2float(h.y),
+                __half2float(h.z));
+            };
+
+        // half ULP 估算函数
+        auto estimateHalfULP = [](float v)->float {
+            float av = fabsf(v);
+            if (av == 0.f) return __half2float((__half)1) * 0.f + 1.0f / 65536.0f;
+            int exp2 = (int)floorf(log2f(av));
+            // half mantissa bits =10 -> ULP=2^(exp-10)
+            float ulp = powf(2.f, (float)(exp2 - 10));
+            if (ulp < 1.0f / 65536.0f) ulp = 1.0f / 65536.0f;
+            return ulp;
+            };
+
+        uint32_t visited = 0;
+        for (uint32_t i = 0; i < N; i += stride) {
+            ++visited;
+            if (cudaMemcpy(&hPred, m_bufs.d_pos_pred_h4 + i, sizeof(sim::Half4), cudaMemcpyDeviceToHost) != cudaSuccess) break;
+            if (m_bufs.d_pos_curr) {
+                if (cudaMemcpy(&hCurr, m_bufs.d_pos_curr + i, sizeof(float4), cudaMemcpyDeviceToHost) != cudaSuccess) break;
+            }
+            else {
+                hCurr = make_float4(0, 0, 0, 0);
+            }
+            if (haveFloatPred) {
+                if (cudaMemcpy(&hPredF, m_bufs.d_pos_pred + i, sizeof(float4), cudaMemcpyDeviceToHost) != cudaSuccess) break;
+            }
+            else {
+                hPredF = hCurr;
+            }
+
+            float3 predHalf3 = halfToF3(hPred);
+            float physDx = hPredF.x - hCurr.x;
+            float physDy = hPredF.y - hCurr.y;
+            float physDz = hPredF.z - hCurr.z;
+
+            float quantDx = predHalf3.x - hPredF.x;
+            float quantDy = predHalf3.y - hPredF.y;
+            float quantDz = predHalf3.z - hPredF.z;
+
+            bool isNan = (!std::isfinite(predHalf3.x) || !std::isfinite(predHalf3.y) || !std::isfinite(predHalf3.z));
+            if (isNan) ++nanCount;
+
+            bool abnormal = (fabsf(predHalf3.x) > dbg.logPredictedPosAbsMax ||
+                fabsf(predHalf3.y) > dbg.logPredictedPosAbsMax ||
+                fabsf(predHalf3.z) > dbg.logPredictedPosAbsMax ||
+                !std::isfinite(physDx) || !std::isfinite(physDy) || !std::isfinite(physDz) ||
+                !std::isfinite(quantDx) || !std::isfinite(quantDy) || !std::isfinite(quantDz));
+            if (abnormal) ++abnormalCount;
+
+            // 统计
+            sumPhysX += physDx; sumPhysY += physDy; sumPhysZ += physDz;
+            sumPhysAbsX += fabs(physDx); sumPhysAbsY += fabs(physDy); sumPhysAbsZ += fabs(physDz);
+            sumPhysSqX += physDx * physDx; sumPhysSqY += physDy * physDy; sumPhysSqZ += physDz * physDz;
+
+            sumQuantX += quantDx; sumQuantY += quantDy; sumQuantZ += quantDz;
+            sumQuantAbsX += fabs(quantDx); sumQuantAbsY += fabs(quantDy); sumQuantAbsZ += fabs(quantDz);
+            sumQuantSqX += quantDx * quantDx; sumQuantSqY += quantDy * quantDy; sumQuantSqZ += quantDz * quantDz;
+
+            minPhysX = fminf(minPhysX, physDx); maxPhysX = fmaxf(maxPhysX, physDx);
+            minPhysY = fminf(minPhysY, physDy); maxPhysY = fmaxf(maxPhysY, physDy);
+            minPhysZ = fminf(minPhysZ, physDz); maxPhysZ = fmaxf(maxPhysZ, physDz);
+
+            minQuantX = fminf(minQuantX, quantDx); maxQuantX = fmaxf(maxQuantX, quantDx);
+            minQuantY = fminf(minQuantY, quantDy); maxQuantY = fmaxf(maxQuantY, quantDy);
+            minQuantZ = fminf(minQuantZ, quantDz); maxQuantZ = fmaxf(maxQuantZ, quantDz);
+
+            // 颤动检测：物理位移极小但量化非零
+            const float physEps = 1e-5f;
+            bool physStall = (fabsf(physDx) < physEps && fabsf(physDy) < physEps && fabsf(physDz) < physEps);
+            if (physStall) ++physStallCount;
+            if (physStall && (fabsf(quantDx) > 0 || fabsf(quantDy) > 0 || fabsf(quantDz) > 0))
+                ++quantNonZeroWithPhysZero;
+
+            // 重复 half 预测
+            if (prevValid &&
+                hPred.x == prevHPred.x &&
+                hPred.y == prevHPred.y &&
+                hPred.z == prevHPred.z)
+                ++identicalHalfRepeat;
+            prevHPred = hPred; prevValid = true;
+
+            // ULP 量化级别
+            float ulpX = estimateHalfULP(hPredF.x);
+            float ulpY = estimateHalfULP(hPredF.y);
+            float ulpZ = estimateHalfULP(hPredF.z);
+            auto countUlp = [&](float q, float ulp) {
+                float aq = fabsf(q);
+                if (aq >= ulp) ++quantULP_GE1;
+                if (aq >= 2 * ulp) ++quantULP_GE2;
+                if (aq >= 4 * ulp) ++quantULP_GE4;
+                };
+            countUlp(quantDx, ulpX);
+            countUlp(quantDy, ulpY);
+            countUlp(quantDz, ulpZ);
+
+            if (samples.size() < maxPrint) {
+                samples.push_back({ i,
+                    predHalf3.x, predHalf3.y, predHalf3.z,
+                    hPredF.x, hPredF.y, hPredF.z,
+                    hCurr.x, hCurr.y, hCurr.z,
+                    physDx, physDy, physDz,
+                    quantDx, quantDy, quantDz });
+            }
+        }
+
+        uint32_t sampleCount = visited;
+
+        // 计算平均与 RMS
+        auto avg = [&](double s) { return sampleCount ? (s / sampleCount) : 0.0; };
+        auto rms = [&](double sq) { return sampleCount ? sqrt(sq / sampleCount) : 0.0; };
+
+        double avgPhysX = avg(sumPhysX), avgPhysY = avg(sumPhysY), avgPhysZ = avg(sumPhysZ);
+        double avgPhysAbsX = avg(sumPhysAbsX), avgPhysAbsY = avg(sumPhysAbsY), avgPhysAbsZ = avg(sumPhysAbsZ);
+        double rmsPhysX = rms(sumPhysSqX), rmsPhysY = rms(sumPhysSqY), rmsPhysZ = rms(sumPhysSqZ);
+
+        double avgQuantX = avg(sumQuantX), avgQuantY = avg(sumQuantY), avgQuantZ = avg(sumQuantZ);
+        double avgQuantAbsX = avg(sumQuantAbsX), avgQuantAbsY = avg(sumQuantAbsY), avgQuantAbsZ = avg(sumQuantAbsZ);
+        double rmsQuantX = rms(sumQuantSqX), rmsQuantY = rms(sumQuantSqY), rmsQuantZ = rms(sumQuantSqZ);
+
+        // 比例
+        double stallRatio = sampleCount ? (double)physStallCount / sampleCount : 0.0;
+        double quantWhileStallRatio = sampleCount ? (double)quantNonZeroWithPhysZero / sampleCount : 0.0;
+        double identicalRatio = sampleCount ? (double)identicalHalfRepeat / sampleCount : 0.0;
+
+        if (dbg.logPredictedPosPrintHeader) {
+            std::fprintf(stderr,
+                "[PredPosHalf+][frame=%d] N=%u stride=%u samples=%u printed=%zu "
+                "nan=%d abnormal=%d stall=%d(%.2f%%) q&stall=%d(%.2f%%) repeatHalf=%d(%.2f%%)\n"
+                "  physΔ avg=(%.6e,%.6e,%.6e) avg|Δ|=(%.6e,%.6e,%.6e) rms=(%.6e,%.6e,%.6e) min=(%.6e,%.6e,%.6e) max=(%.6e,%.6e,%.6e)\n"
+                "  quantΔ avg=(%.6e,%.6e,%.6e) avg|Δ|=(%.6e,%.6e,%.6e) rms=(%.6e,%.6e,%.6e) min=(%.6e,%.6e,%.6e) max=(%.6e,%.6e,%.6e)\n"
+                "  quantULP>=1=%d quantULP>=2=%d quantULP>=4=%d storeType=%u native=%d curr=%p pred_f=%p pred_h4=%p\n",
+                m_frameIndex, N, stride, sampleCount, samples.size(),
+                nanCount, abnormalCount,
+                physStallCount, stallRatio * 100.0,
+                quantNonZeroWithPhysZero, quantWhileStallRatio * 100.0,
+                identicalHalfRepeat, identicalRatio * 100.0,
+                avgPhysX, avgPhysY, avgPhysZ,
+                avgPhysAbsX, avgPhysAbsY, avgPhysAbsZ,
+                rmsPhysX, rmsPhysY, rmsPhysZ,
+                minPhysX, minPhysY, minPhysZ,
+                maxPhysX, maxPhysY, maxPhysZ,
+                avgQuantX, avgQuantY, avgQuantZ,
+                avgQuantAbsX, avgQuantAbsY, avgQuantAbsZ,
+                rmsQuantX, rmsQuantY, rmsQuantZ,
+                minQuantX, minQuantY, minQuantZ,
+                maxQuantX, maxQuantY, maxQuantZ,
+                quantULP_GE1, quantULP_GE2, quantULP_GE4,
+                (unsigned)p.precision.predictedPosStore,
+                (int)m_bufs.nativeHalfActive,
+                (void*)m_bufs.d_pos_curr,
+                (void*)m_bufs.d_pos_pred,
+                (void*)m_bufs.d_pos_pred_h4);
+        }
+
+        for (auto& s : samples) {
+            std::fprintf(stderr,
+                "[PredPosHalf.Sample] i=%u predH=(%.6f,%.6f,%.6f) predF=(%.6f,%.6f,%.6f) curr=(%.6f,%.6f,%.6f) "
+                "physΔ=(%.6e,%.6e,%.6e) quantΔ=(%.6e,%.6e,%.6e)\n",
+                s.i,
+                s.predHx, s.predHy, s.predHz,
+                s.predFx, s.predFy, s.predFz,
+                s.currx, s.curry, s.currz,
+                s.physDx, s.physDy, s.physDz,
+                s.quantDx, s.quantDy, s.quantDz);
+        }
+
+        // 额外提示
+        if (stallRatio > 0.5 && quantWhileStallRatio > 0.2 && cc.debug.printHints) {
+            std::fprintf(stderr,
+                "[PredPosHalf+][Hint] 超过 50%% 样本物理位移近零但量化误差存在 (%u/%u)。可能求解迭代未更新 float 预测或半精镜像过度重复 pack。\n",
+                quantNonZeroWithPhysZero, sampleCount);
+        }
+        if (identicalRatio > 0.8 && cc.debug.printHints) {
+            std::fprintf(stderr,
+                "[PredPosHalf+][Hint] 超过 80%% 样本 half 预测与上一次完全一致，可能未刷新半精镜像（缺少 pack 触发）。\n");
+        }
+        if (nanCount > 0 && cc.debug.printErrors) {
+            std::fprintf(stderr,
+                "[PredPosHalf+][Error] 检测到 %d 个 NaN half 预测样本。检查外部缓冲初始化 / 写越界。\n", nanCount);
+        }
+        if (abnormalCount > 0 && cc.debug.printWarnings) {
+            std::fprintf(stderr,
+                "[PredPosHalf+][Warn] 异常样本=%d (%.2f%%)。阈值=%.3e。\n",
+                abnormalCount, sampleCount ? (100.0 * abnormalCount / sampleCount) : 0.0, dbg.logPredictedPosAbsMax);
         }
     }
 } // namespace sim

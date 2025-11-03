@@ -82,6 +82,7 @@ namespace sim {
         // 新增：原生 half 主存储模式下的指针热更新（针对 Half4*）
         void patchGraphHalfPositionPointers(bool fullGraph, sim::Half4* oldCurrH, sim::Half4* oldNextH);
         void signalSimFence(); //末尾 signal external semaphore
+        void debugLogPredictedPosHalf(const SimParams& p);
 
     private:
         SimParams m_params{};

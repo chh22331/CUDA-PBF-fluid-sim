@@ -35,18 +35,18 @@ namespace console {
     // 统一数值精度配置（作为 Simulation 的子成员），仅定义开关，无副作用
     struct PrecisionConfig {
         // ---------------- 存储精度（粒子主数据与辅助缓冲） ----------------
-        NumericType positionStore = NumericType::FP16_Packed;
-        NumericType velocityStore = NumericType::FP16_Packed;
-        NumericType predictedPosStore = NumericType::FP16_Packed; // PBF 预测位置（若使用）
-        NumericType lambdaStore = NumericType::FP16_Packed; // PBF λ
-        NumericType densityStore = NumericType::FP16_Packed;
-        NumericType auxStore = NumericType::FP16_Packed; // 临时/梯度/累加器等
-        NumericType renderTransfer = NumericType::FP16_Packed; // 提交渲染的转换目标（保留 float3 默认）
+        NumericType positionStore = NumericType::FP32;
+        NumericType velocityStore = NumericType::FP32;
+        NumericType predictedPosStore = NumericType::FP32; // PBF 预测位置（若使用）
+        NumericType lambdaStore = NumericType::FP32; // PBF λ
+        NumericType densityStore = NumericType::FP32;
+        NumericType auxStore = NumericType::FP32; // 临时/梯度/累加器等
+        NumericType renderTransfer = NumericType::FP32; // 提交渲染的转换目标（保留 float3 默认）
 
         // ---------------- 核心计算精度（全局默认） ----------------
         NumericType coreCompute = NumericType::FP16; // 主环（邻居/密度/λ/积分）
         bool        forceFp32Accumulate = false;             // 归约/累加是否强制 FP32（数值稳定）
-        bool        enableHalfIntrinsics = true;           // 是否启用半精 intrinsic (__hadd2 等)，需架构支持
+        bool        enableHalfIntrinsics = false;           // 是否启用半精 intrinsic (__hadd2 等)，需架构支持
 
         // ---------------- 分阶段覆盖（若 useStageOverrides = true 生效） ----------------
         bool        useStageOverrides = true;
@@ -109,7 +109,7 @@ namespace console {
 
         // Debug/控制（新增）
         struct Debug {
-            bool enabled = true;        // 开启 Debug 模式
+            bool enabled = false;        // 开启 Debug 模式
             bool pauseOnStart = true;   // 启动即暂停在第 1 帧
             // 采用 Windows VK 与 ASCII 兼容编码（无需包含 windows.h）
             int  keyStep = 32;          // 空格：推进一帧
@@ -154,6 +154,16 @@ namespace console {
             float velocityRollbackRatioMax =0.8f; // 比例阈值：dvL1/prevL1 超过回滚
             float velocityNaNGuardMax =1e6f; // 分量绝对值上限（超过视为异常并置零）
             bool velocityEnableNvtx = true; // 为不同分支加 NVTX 标记
+
+            // ==== 新增：FP16 预测位置抽样日志 ====
+           // 开启后，当 precision.predictedPosStore 为 FP16 / FP16_Packed 且存在半精镜像，将周期抽样打印
+            bool logPredictedPosHalf = true;           // 总开关
+            int  logPredictedPosEveryN = 1;           // 每多少帧打印一次（>=1）
+            int  logPredictedPosSampleStride = 4096;    // 抽样步长（>=1）
+            int  logPredictedPosMaxPrint = 16;          // 每次最多打印多少条粒子样本行
+            float logPredictedPosAbsMax = 1e7f;         // 分量绝对值异常阈值
+            bool  logPredictedPosPrintHeader = true;    // 是否打印头部统计行
+
         } debug;
 
         // 仿真配置（集中所有物理与发射/域参数）
@@ -235,19 +245,19 @@ namespace console {
             // 是否根据 numParticles 自动分解为 cube_group_count * (cube_edge_particles^3)
             bool     cube_auto_partition = false;
             // 手动指定立方体数量（粒子团数量），仅在 cube_auto_partition=false 时使用
-            uint32_t cube_group_count = 16;
+            uint32_t cube_group_count = 128;
             // 单个立方体边长（按粒子数，边上粒子个数）；用于 cube_edge_particles^3
-            uint32_t cube_edge_particles = 25;
+            uint32_t cube_edge_particles = 20;
             // 最大允许粒子团数量（用于颜色数组与安全限制）
             static constexpr uint32_t cube_group_count_max = 512;
 
             // 立方体层数（垂直分层放置）。若 cube_group_count=32 且 cube_layers=2 -> 每层16个
-            uint32_t cube_layers = 1;
+            uint32_t cube_layers = 8;
 
             // 立方体中心之间的水平间距（世界单位，沿 X/Z）
-            float    cube_group_spacing_world = 100.0f;
+            float    cube_group_spacing_world = 60.0f;
             // 层之间的垂直间距（世界单位，立方体 Y 方向层距）
-            float    cube_layer_spacing_world = 200.0f;
+            float    cube_layer_spacing_world = 100.0f;
 
             // 立方体底层离地高度（世界坐标 Y）
             float    cube_base_height = 100.0f;

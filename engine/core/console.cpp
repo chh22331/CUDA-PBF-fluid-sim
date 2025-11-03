@@ -1,5 +1,6 @@
 ﻿#define NOMINMAX
 #include "console.h"
+#include "precision_mapping.h" // Phase2: extracted precision mapping
 #include <cmath>
 #include <random>
 #include <algorithm>
@@ -44,26 +45,6 @@ RuntimeConsole& Instance() {
  return g_console;
 }
 
-static bool ShouldAutoMapMixed(const RuntimeConsole::Simulation& s) {
- // 满足条件：开启 useMixedPrecision 且 precision 保持默认 FP32 且允许 autoMap
- const auto& pc = s.precision;
- if (!s.useMixedPrecision) return false;
- if (!pc.autoMapFromLegacyMixedFlag) return false;
- // 用户若已经修改（出现任何非 FP32 或阶段覆盖）则不自动映射
- bool allDefault =
- pc.positionStore == NumericType::FP32 &&
- pc.velocityStore == NumericType::FP32 &&
- pc.predictedPosStore == NumericType::FP32 &&
- pc.lambdaStore == NumericType::FP32 &&
- pc.densityStore == NumericType::FP32 &&
- pc.auxStore == NumericType::FP32 &&
- pc.renderTransfer == NumericType::FP32 &&
- pc.coreCompute == NumericType::FP32 &&
- !pc.useStageOverrides &&
- pc.fp16StageMask ==0;
- return allDefault;
-}
-
 void BuildSimParams(const RuntimeConsole& c, sim::SimParams& out) {
  // 原有赋值保持
  out.numParticles = c.sim.numParticles;
@@ -86,7 +67,6 @@ void BuildSimParams(const RuntimeConsole& c, sim::SimParams& out) {
  out.pbf.lambda_warm_start_enable = c.sim.lambda_warm_start_enable ?1 :0;
  out.pbf.lambda_warm_start_decay = c.sim.lambda_warm_start_decay;
  out.pbf.semi_implicit_integration_enable = c.sim.integrate_semi_implicit ?1 :0;
-
 
  float h = (c.sim.smoothingRadius >0.f) ? c.sim.smoothingRadius :0.02f;
  if (c.sim.deriveHFromRadius) {
@@ -134,151 +114,14 @@ void BuildSimParams(const RuntimeConsole& c, sim::SimParams& out) {
  int dz = clamp_ge1((int)std::ceil(size.z / cell));
  out.grid.dim = make_int3(dx, dy, dz);
 
- // ========== 新增：混合精度映射 ==========
- out.precision = {}; //先用默认值
- const auto& src = c.sim.precision;
+ // ========== 精度映射：调用抽取模块 ==========
+ out.precision = MapPrecision(c.sim);
 
- if (ShouldAutoMapMixed(c.sim)) {
- // 默认策略：仅位置/速度/预测位置使用 FP16_Packed；核心计算仍 FP32
- out.precision.positionStore = sim::NumericType::FP16_Packed;
- out.precision.velocityStore = sim::NumericType::FP16_Packed;
- out.precision.predictedPosStore = sim::NumericType::FP16_Packed;
- out.precision.lambdaStore = sim::NumericType::FP32; // 保持稳定
- out.precision.densityStore = sim::NumericType::FP32; // 保持稳定
- out.precision.auxStore = sim::NumericType::FP16_Packed; // 新增：aux 可半精镜像
- out.precision.renderTransfer = sim::NumericType::FP32;
- out.precision.coreCompute = sim::NumericType::FP32;
- out.precision.forceFp32Accumulate = true;
- }
- else {
- // 用户已提供配置：逐字段复制
- auto mapNt = [](console::NumericType t) -> sim::NumericType {
- return static_cast<sim::NumericType>(static_cast<uint8_t>(t));
- };
- out.precision.positionStore = mapNt(src.positionStore);
- out.precision.velocityStore = mapNt(src.velocityStore);
- out.precision.predictedPosStore = mapNt(src.predictedPosStore);
- out.precision.lambdaStore = mapNt(src.lambdaStore);
- out.precision.densityStore = mapNt(src.densityStore);
- out.precision.auxStore = mapNt(src.auxStore);
- out.precision.renderTransfer = mapNt(src.renderTransfer);
- out.precision.coreCompute = mapNt(src.coreCompute);
- out.precision.forceFp32Accumulate = src.forceFp32Accumulate;
- out.precision.enableHalfIntrinsics = src.enableHalfIntrinsics;
- out.precision.useStageOverrides = src.useStageOverrides;
- out.precision.emissionCompute = mapNt(src.emissionCompute);
- out.precision.gridBuildCompute = mapNt(src.gridBuildCompute);
- out.precision.neighborCompute = mapNt(src.neighborCompute);
- out.precision.densityCompute = mapNt(src.densityCompute);
- out.precision.lambdaCompute = mapNt(src.lambdaCompute);
- out.precision.integrateCompute = mapNt(src.integrateCompute);
- out.precision.velocityCompute = mapNt(src.velocityCompute);
- out.precision.boundaryCompute = mapNt(src.boundaryCompute);
- out.precision.xsphCompute = mapNt(src.xsphCompute);
- out.precision.fp16StageMask = src.fp16StageMask;
- out.precision.adaptivePrecision = src.adaptivePrecision;
- out.precision.densityErrorTolerance = src.densityErrorTolerance;
- out.precision.lambdaVarianceTolerance = src.lambdaVarianceTolerance;
- out.precision.adaptCheckEveryN = src.adaptCheckEveryN;
- // 若用户使用 FP16 (非 Packed)，统一升级为 FP16_Packed（向量或标量镜像都可复用）
- auto upgradeIfPlainHalf = [](sim::NumericType& t){ if (t == sim::NumericType::FP16) t = sim::NumericType::FP16_Packed; };
- upgradeIfPlainHalf(out.precision.positionStore);
- upgradeIfPlainHalf(out.precision.velocityStore);
- upgradeIfPlainHalf(out.precision.predictedPosStore);
- upgradeIfPlainHalf(out.precision.auxStore);
- // lambda / density仍可保持 FP16（不强制打包标志），此处只镜像 Packed视图：
- if (out.precision.lambdaStore == sim::NumericType::FP16) out.precision.lambdaStore = sim::NumericType::FP16; // 保持标量 half语义
- if (out.precision.densityStore == sim::NumericType::FP16) out.precision.densityStore = sim::NumericType::FP16; // 保持标量 half语义
- }
- //现有 out.precision 基础字段已写入，此处补充阶段覆盖与 fp16StageMask逻辑
- const auto& pc = c.sim.precision;
- auto mapNt = [](console::NumericType t)->sim::NumericType {
- return static_cast<sim::NumericType>(static_cast<uint8_t>(t));
- };
-
- if (pc.useStageOverrides) {
- out.precision.emissionCompute = mapNt(pc.emissionCompute);
- out.precision.gridBuildCompute = mapNt(pc.gridBuildCompute);
- out.precision.neighborCompute = mapNt(pc.neighborCompute);
- out.precision.densityCompute = mapNt(pc.densityCompute);
- out.precision.lambdaCompute = mapNt(pc.lambdaCompute);
- out.precision.integrateCompute = mapNt(pc.integrateCompute);
- out.precision.velocityCompute = mapNt(pc.velocityCompute);
- out.precision.boundaryCompute = mapNt(pc.boundaryCompute);
- out.precision.xsphCompute = mapNt(pc.xsphCompute);
- }
- else {
- //统一用 coreCompute，若 fp16StageMask 指定位启用 FP16（Packed 未必保证，仍依赖存储类型）
- sim::NumericType coreT = mapNt(pc.coreCompute);
- auto wantFp16 = [&](uint32_t bit) {
- return (pc.fp16StageMask & bit) !=0;
- };
- auto choose = [&](uint32_t bit)->sim::NumericType {
- return wantFp16(bit) ? sim::NumericType::FP16 : coreT;
- };
- using B = console::ComputeStageBits;
- out.precision.emissionCompute = choose(B::Stage_Emission);
- out.precision.gridBuildCompute = choose(B::Stage_GridBuild);
- out.precision.neighborCompute = choose(B::Stage_NeighborGather);
- out.precision.densityCompute = choose(B::Stage_Density);
- out.precision.lambdaCompute = choose(B::Stage_LambdaSolve);
- out.precision.integrateCompute = choose(B::Stage_Integration);
- out.precision.velocityCompute = choose(B::Stage_VelocityUpdate);
- out.precision.boundaryCompute = choose(B::Stage_Boundary);
- out.precision.xsphCompute = choose(B::Stage_XSPH);
- }
- //现有 out.precision 已写入
- // 添加：幽灵粒子数占位（生成逻辑稍后调用 GenerateBoundaryGhostParticles 后填充）
+ // 幽灵粒子占位（由 GenerateBoundaryGhostParticles 更新 runtime计数后重新 BuildSimParams 可刷新）
  out.ghostParticleCount = c.sim.boundaryGhost.ghost_count_runtime;
  out.ghostContribDensity = c.sim.boundaryGhost.contribute_density ?1:0;
  out.ghostContribLambda = c.sim.boundaryGhost.contribute_lambda ?1:0;
  out.ghostContribXsph = c.sim.boundaryGhost.contribute_xsph ?1:0;
-
- // ===== 原生 half 主存储激活判定 =====
- if (src.nativeHalfPrefer) {
- bool posHalf = (out.precision.positionStore == sim::NumericType::FP16_Packed);
- bool velHalf = (out.precision.velocityStore == sim::NumericType::FP16_Packed);
- bool predHalf = (out.precision.predictedPosStore == sim::NumericType::FP16_Packed);
- if (posHalf && velHalf && predHalf) {
- out.precision.nativeHalfActive = true; //由 allocator选择 allocateNativeHalfPrimary
- }
- }
-
- // ========== 新增：PredHalf 配置诊断日志（节流：配置变化时打印） ==========
- if (c.debug.printDiagnostics) {
- static sim::SimPrecision s_prev{}; // 初始 FP32 默认
- auto diff = [&](){
- return s_prev.positionStore != out.precision.positionStore ||
- s_prev.velocityStore != out.precision.velocityStore ||
- s_prev.predictedPosStore != out.precision.predictedPosStore ||
- s_prev.nativeHalfActive != out.precision.nativeHalfActive ||
- s_prev.forceFp32Accumulate != out.precision.forceFp32Accumulate ||
- s_prev.useStageOverrides != out.precision.useStageOverrides ||
- s_prev.integrateCompute != out.precision.integrateCompute ||
- s_prev.velocityCompute != out.precision.velocityCompute ||
- s_prev.boundaryCompute != out.precision.boundaryCompute ||
- s_prev.xsphCompute != out.precision.xsphCompute; };
- if (diff()) {
- std::fprintf(stderr,
- "[PredHalf.Config] pos=%u vel=%u pred=%u native=%d forceAcc=%d stageOv=%d integ=%u velC=%u bnd=%u xsph=%u aux=%u lambda=%u density=%u render=%u fp16Mask=0x%X\n",
- (unsigned)out.precision.positionStore,
- (unsigned)out.precision.velocityStore,
- (unsigned)out.precision.predictedPosStore,
- (int)out.precision.nativeHalfActive,
- (int)out.precision.forceFp32Accumulate,
- (int)out.precision.useStageOverrides,
- (unsigned)out.precision.integrateCompute,
- (unsigned)out.precision.velocityCompute,
- (unsigned)out.precision.boundaryCompute,
- (unsigned)out.precision.xsphCompute,
- (unsigned)out.precision.auxStore,
- (unsigned)out.precision.lambdaStore,
- (unsigned)out.precision.densityStore,
- (unsigned)out.precision.renderTransfer,
- out.precision.fp16StageMask);
- s_prev = out.precision;
- }
- }
 }
 
 void BuildDeviceParams(const RuntimeConsole& c, sim::DeviceParams& out) {
@@ -298,12 +141,9 @@ void BuildEmitParams(const RuntimeConsole& c, sim::EmitParams& out) {
 
 void GenerateCubeMixCenters(const RuntimeConsole& c, std::vector<float3>& outCenters) {
  outCenters.clear();
-
  if (c.sim.demoMode != RuntimeConsole::Simulation::DemoMode::CubeMix)
  return;
-
  const auto& s = c.sim;
-
  // 每层的团数（与 PrepareCubeMix逻辑一致）
  std::vector<uint32_t> layerCounts;
  layerCounts.resize(s.cube_layers,0);
@@ -316,19 +156,14 @@ void GenerateCubeMixCenters(const RuntimeConsole& c, std::vector<float3>& outCen
  remaining -= toAssign;
  }
  }
-
  const float h = (((1e-6f) > (s.smoothingRadius)) ? (1e-6f) : (s.smoothingRadius));
-
  outCenters.reserve(s.cube_group_count);
-
  uint32_t gCursor =0;
  for (uint32_t layer =0; layer < s.cube_layers && gCursor < s.cube_group_count; ++layer) {
  uint32_t groupsInLayer = layerCounts[layer];
  uint32_t nx = (uint32_t)std::ceil(std::sqrt(double(groupsInLayer)));
  uint32_t nz = (uint32_t)std::ceil(double(groupsInLayer) / std::max<uint32_t>(1u, nx));
  float layerY = s.cube_base_height + layer * s.cube_layer_spacing_world;
-
- // 层扰动
  if (s.cube_layer_jitter_enable) {
  std::mt19937 lrng(s.cube_layer_jitter_seed ^ layer);
  std::uniform_real_distribution<float> U(-1.f,1.f);
@@ -336,14 +171,12 @@ void GenerateCubeMixCenters(const RuntimeConsole& c, std::vector<float3>& outCen
  float dy = U(lrng) * amp;
  layerY += dy;
  }
-
  for (uint32_t k =0; k < groupsInLayer && gCursor < s.cube_group_count; ++k) {
  uint32_t ix = k % nx;
  uint32_t iz = k / nx;
  float cx = ix * s.cube_group_spacing_world;
  float cz = iz * s.cube_group_spacing_world;
  float cy = layerY;
-
  outCenters.push_back(make_float3(cx, cy, cz));
  ++gCursor;
  }
@@ -356,18 +189,16 @@ void BuildRenderInitParams(const RuntimeConsole& c, gfx::RenderInitParams& out) 
  out.vsync = c.app.vsync;
 }
 
-// 简单三次根近似四舍五入
 static inline uint32_t round_cuberoot(uint64_t v) {
  if (v ==0) return 0;
  double r = std::cbrt(double(v));
  return (uint32_t)std::max<int64_t>(1, (int64_t)llround(r));
 }
 
-//生成亮色并与邻接团颜色保持距离
 static bool GenDistinctColor(std::mt19937& rng,
  float minComp,
  float minDist,
- const std::vector<int>& adjacency, // indices 已有颜色的邻接节点
+ const std::vector<int>& adjacency,
  const std::vector<std::array<float,3>>& colors,
  int groupIndex,
  std::array<float,3>& outColor,
@@ -376,7 +207,6 @@ static bool GenDistinctColor(std::mt19937& rng,
  std::uniform_real_distribution<float> U(minComp,1.0f);
  for (int attempt =0; attempt < retryMax; ++attempt) {
  std::array<float,3> c{ U(rng), U(rng), U(rng) };
- // 简单归一亮度（可选）
  float len = std::sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
  if (len >1e-6f) {
  float s =1.0f / len;
@@ -394,193 +224,123 @@ static bool GenDistinctColor(std::mt19937& rng,
  }
  if (ok) { outColor = c; return true; }
  }
- //失败退化：使用随机色不再强制距离
  outColor = { U(rng), U(rng), U(rng) };
  return false;
 }
 
-// 自动分解 & 域拟合 &颜色生成
 void PrepareCubeMix(RuntimeConsole& c) {
  if (c.sim.demoMode != RuntimeConsole::Simulation::DemoMode::CubeMix)
  return;
-
  auto& s = c.sim;
-
- // —— 自动分解 —— //
  if (s.cube_auto_partition) {
  uint64_t target = (uint64_t)std::max<uint32_t>(1u, s.numParticles);
- // 初始估计：边长 L 和组数 G
  uint32_t L = round_cuberoot(target);
  if (L ==0) L =1;
  uint64_t per = (uint64_t)L * (uint64_t)L * (uint64_t)L;
  uint32_t G = (uint32_t)std::max<uint64_t>(1ull, target / per);
  if (G ==0) G =1;
- // 调整 L使 G*L^3 尽量接近 target
- while ((uint64_t)G * (uint64_t)L * (uint64_t)L * (uint64_t)L > target && L >1) {
- --L;
- }
- while ((uint64_t)G * (uint64_t)(L +1) * (uint64_t)(L +1) * (uint64_t)(L +1) <= target) {
- ++L;
- }
- // 若总数仍不足，可尝试增大 G
+ while ((uint64_t)G * (uint64_t)L * (uint64_t)L * (uint64_t)L > target && L >1) { --L; }
+ while ((uint64_t)G * (uint64_t)(L +1) * (uint64_t)(L +1) * (uint64_t)(L +1) <= target) { ++L; }
  per = (uint64_t)L * (uint64_t)L * (uint64_t)L;
- while ((uint64_t)(G +1) * per <= target && (G +1) <= s.cube_group_count_max) {
- ++G;
- }
-
+ while ((uint64_t)(G +1) * per <= target && (G +1) <= s.cube_group_count_max) { ++G; }
  s.cube_edge_particles = L;
  s.cube_group_count = std::min<uint32_t>(G, s.cube_group_count_max);
  s.cube_particles_per_group = L * L * L;
  s.numParticles = s.cube_group_count * s.cube_particles_per_group;
- }
- else {
+ } else {
  s.cube_particles_per_group = s.cube_edge_particles * s.cube_edge_particles * s.cube_edge_particles;
  s.numParticles = s.cube_group_count * s.cube_particles_per_group;
  }
-
  if (s.cube_layers <1) s.cube_layers =1;
  if (s.cube_layers > s.cube_group_count) s.cube_layers = s.cube_group_count;
-
- // —— 布局 —— //
- // 每层的团数（最后一层可能少）
  std::vector<uint32_t> layerCounts;
  layerCounts.resize(s.cube_layers,0);
  {
  uint32_t remaining = s.cube_group_count;
  for (uint32_t L =0; L < s.cube_layers; ++L) {
- uint32_t toAssign = remaining / (s.cube_layers - L); // 平均分配
+ uint32_t toAssign = remaining / (s.cube_layers - L);
  if (toAssign ==0) toAssign =1;
  layerCounts[L] = toAssign;
  remaining -= toAssign;
  }
  }
-
  const float h = (((1e-6f) > (s.smoothingRadius)) ? (1e-6f) : (s.smoothingRadius));
  const float spacing = h * s.cube_lattice_spacing_factor_h;
  const float cubeSideWorld = spacing * s.cube_edge_particles;
-
- // 临时记录每团的网格坐标（ix, iz, layer）用于相邻判断
  struct GroupLayout { int layer; int ix; int iz; };
- std::vector<GroupLayout> layouts;
- layouts.reserve(s.cube_group_count);
-
- //计算整体包围盒（不含 margin）
+ std::vector<GroupLayout> layouts; layouts.reserve(s.cube_group_count);
  float minX =1e30f, maxX = -1e30f;
  float minY =1e30f, maxY = -1e30f;
  float minZ =1e30f, maxZ = -1e30f;
-
  uint32_t gCursor =0;
  for (uint32_t layer =0; layer < s.cube_layers; ++layer) {
  uint32_t groupsInLayer = layerCounts[layer];
- //近似正方分布
  uint32_t nx = (uint32_t)std::ceil(std::sqrt(double(groupsInLayer)));
  uint32_t nz = (uint32_t)std::ceil(double(groupsInLayer) / std::max<uint32_t>(1u, nx));
  float layerY = s.cube_base_height + layer * s.cube_layer_spacing_world;
-
- // 层扰动（可选）
  if (s.cube_layer_jitter_enable) {
  std::mt19937 lrng(s.cube_layer_jitter_seed ^ layer);
  std::uniform_real_distribution<float> U(-1.f,1.f);
  float amp = s.cube_layer_jitter_scale_h * h;
- float dy = U(lrng) * amp;
- layerY += dy;
+ float dy = U(lrng) * amp; layerY += dy;
  }
-
  for (uint32_t k =0; k < groupsInLayer && gCursor < s.cube_group_count; ++k) {
- uint32_t ix = k % nx;
- uint32_t iz = k / nx;
+ uint32_t ix = k % nx; uint32_t iz = k / nx;
  float cx = ix * s.cube_group_spacing_world;
  float cz = iz * s.cube_group_spacing_world;
  float cy = layerY;
-
- // 更新包围盒
- minX = (((minX) < (cx - cubeSideWorld *0.5f)) ? (minX) : (cx - cubeSideWorld *0.5f));
- maxX = (((maxX) > (cx + cubeSideWorld *0.5f)) ? (maxX) : (cx + cubeSideWorld *0.5f));
- minY = (((minY) < (cy - cubeSideWorld *0.5f)) ? (minY) : (cy - cubeSideWorld *0.5f));
- maxY = (((maxY) > (cy + cubeSideWorld *0.5f)) ? (maxY) : (cy + cubeSideWorld *0.5f));
- minZ = (((minZ) < (cz - cubeSideWorld *0.5f)) ? (minZ) : (cz - cubeSideWorld *0.5f));
- maxZ = (((maxZ) > (cz + cubeSideWorld *0.5f)) ? (maxZ) : (cz + cubeSideWorld *0.5f));
-
+ minX = std::min(minX, cx - cubeSideWorld *0.5f);
+ maxX = std::max(maxX, cx + cubeSideWorld *0.5f);
+ minY = std::min(minY, cy - cubeSideWorld *0.5f);
+ maxY = std::max(maxY, cy + cubeSideWorld *0.5f);
+ minZ = std::min(minZ, cz - cubeSideWorld *0.5f);
+ maxZ = std::max(maxZ, cz + cubeSideWorld *0.5f);
  layouts.push_back({ (int)layer, (int)ix, (int)iz });
  ++gCursor;
  }
  }
-
  if (layouts.empty()) {
- //兜底：至少一个
  layouts.push_back({0,0,0 });
- minX = minY = minZ =0.f;
- maxX = maxY = maxZ = cubeSideWorld;
+ minX = minY = minZ =0.f; maxX = maxY = maxZ = cubeSideWorld;
  }
-
- // —— 域拟合 —— //
  if (s.cube_auto_fit_domain) {
  float3 size = make_float3(maxX - minX, maxY - minY, maxZ - minZ);
  float3 mins = make_float3(minX, (((0.f) < (minY - cubeSideWorld *0.5f)) ? (0.f) : (minY - cubeSideWorld *0.5f)), minZ);
  float3 maxs = make_float3(minX + size.x, minY + size.y, minZ + size.z);
-
- // 放大 margin
- float3 center = make_float3((mins.x + maxs.x) *0.5f,
- (mins.y + maxs.y) *0.5f,
- (mins.z + maxs.z) *0.5f);
+ float3 center = make_float3((mins.x + maxs.x) *0.5f,(mins.y + maxs.y) *0.5f,(mins.z + maxs.z) *0.5f);
  float scale = (((1.0f) > (s.cube_domain_margin_scale)) ? (1.0f) : (s.cube_domain_margin_scale));
- float3 half = make_float3((maxs.x - mins.x) *0.5f * scale,
- (maxs.y - mins.y) *0.5f * scale,
- (maxs.z - mins.z) *0.5f * scale);
+ float3 half = make_float3((maxs.x - mins.x) *0.5f * scale,(maxs.y - mins.y) *0.5f * scale,(maxs.z - mins.z) *0.5f * scale);
  s.gridMins = make_float3(center.x - half.x, (((0.f) > (center.y - half.y)) ? (0.f) : (center.y - half.y)), center.z - half.z);
  s.gridMaxs = make_float3(center.x + half.x, center.y + half.y, center.z + half.z);
  }
-
- // ——颜色生成 —— //
  if (s.cube_color_enable) {
  std::mt19937 rng(s.cube_color_seed);
- std::vector<std::array<float,3>> colors;
- colors.resize(s.cube_group_count);
-
- //预构建邻接：同层内曼哈顿距离=1
+ std::vector<std::array<float,3>> colors; colors.resize(s.cube_group_count);
  std::vector<std::vector<int>> adjacency(s.cube_group_count);
  for (int i =0; i < (int)s.cube_group_count; ++i) {
  for (int j =0; j < (int)s.cube_group_count; ++j) {
- if (i == j) continue;
- if (layouts[i].layer != layouts[j].layer) continue;
+ if (i == j) continue; if (layouts[i].layer != layouts[j].layer) continue;
  int dx = std::abs(layouts[i].ix - layouts[j].ix);
  int dz = std::abs(layouts[i].iz - layouts[j].iz);
- if (dx + dz ==1) {
- adjacency[i].push_back(j);
+ if (dx + dz ==1) adjacency[i].push_back(j);
  }
  }
- }
-
  for (uint32_t g =0; g < s.cube_group_count; ++g) {
  std::array<float,3> col{};
- GenDistinctColor(rng,
- s.cube_color_min_component,
+ GenDistinctColor(rng, s.cube_color_min_component,
  s.cube_color_avoid_adjacent_similarity ? s.cube_color_min_distance :0.f,
- adjacency[g],
- colors,
- (int)g,
- col,
- s.cube_color_retry_max);
- s.cube_group_colors[g][0] = col[0];
- s.cube_group_colors[g][1] = col[1];
- s.cube_group_colors[g][2] = col[2];
+ adjacency[g], colors, (int)g, col, s.cube_color_retry_max);
+ s.cube_group_colors[g][0] = col[0]; s.cube_group_colors[g][1] = col[1]; s.cube_group_colors[g][2] = col[2];
  }
  }
-
- // CubeMix 模式禁用连续喷口
  s.faucetFillEnable = false;
 }
 
 void ApplyRendererRuntime(const RuntimeConsole& c, gfx::RendererD3D12& r) {
  gfx::CameraParams cam{};
- cam.eye = c.renderer.eye;
- cam.at = c.renderer.at;
- cam.up = c.renderer.up;
- cam.fovYDeg= c.renderer.fovYDeg;
- cam.nearZ = c.renderer.nearZ;
- cam.farZ = c.renderer.farZ;
+ cam.eye = c.renderer.eye; cam.at = c.renderer.at; cam.up = c.renderer.up;
+ cam.fovYDeg= c.renderer.fovYDeg; cam.nearZ = c.renderer.nearZ; cam.farZ = c.renderer.farZ;
  r.SetCamera(cam);
-
  gfx::VisualParams vis{};
  vis.particleRadiusPx = c.renderer.particleRadiusPx;
  vis.thicknessScale = c.renderer.thicknessScale;
@@ -603,69 +363,45 @@ void FitCameraToDomain(RuntimeConsole& c) {
  const float3 maxs = c.sim.gridMaxs;
  const float3 center = f3_mul(f3_add(mins, maxs),0.5f);
  const float3 halfExtent = f3_mul(f3_sub(maxs, mins),0.5f);
-
  float3 forward = f3_sub(c.renderer.at, c.renderer.eye);
  if (f3_len(forward) <=1e-6f) forward = make_float3(0,0, -1);
  forward = f3_norm(forward);
-
  float3 up = c.renderer.up;
  if (f3_len(up) <=1e-6f || std::fabs(f3_dot(up, forward)) >0.999f) up = make_float3(0,1,0);
  up = f3_norm(up);
-
  float3 right = f3_cross(forward, up);
  if (f3_len(right) <=1e-6f) {
- forward = make_float3(0,0, -1);
- up = make_float3(0,1,0);
- right = f3_cross(forward, up);
+ forward = make_float3(0,0, -1); up = make_float3(0,1,0); right = f3_cross(forward, up);
  }
- right = f3_norm(right);
- up = f3_cross(right, forward);
-
+ right = f3_norm(right); up = f3_cross(right, forward);
  const float halfUp = f3_proj_extent(halfExtent, up);
  const float halfRight = f3_proj_extent(halfExtent, right);
  const float halfForward = f3_proj_extent(halfExtent, forward);
-
  const float aspect = (c.app.height >0u) ? (static_cast<float>(c.app.width) / static_cast<float>(c.app.height)) :1.0f;
  const float fovY = (((1e-3f) > (c.renderer.fovYDeg *3.14159265358979323846f /180.0f)) ? (1e-3f) : (c.renderer.fovYDeg *3.14159265358979323846f /180.0f));
  const float fovX =2.0f * std::atan(std::tan(fovY *0.5f) * aspect);
-
  const float dV = halfUp / std::tan(fovY *0.5f);
  const float dH = halfRight / std::tan(fovX *0.5f);
  float d = (((dV) > (dH)) ? (dV) : (dH));
-
  const float pad =0.05f * f3_len(halfExtent);
- d += pad; // 将 pad 合并到 d，统一处理
-
- // 保持朝向与原逻辑一致
+ d += pad;
  c.renderer.at = center;
  c.renderer.eye = f3_sub(center, f3_mul(forward, d + halfForward));
-
- // 修正可见深度范围：
- // - 到“近端面”的距离 ≈ d
- // - 到“远端面”的距离 ≈ d +2*halfForward
- const float rawFar = d +2.0f * halfForward; // 修正点：原实现少了一个 halfForward
+ const float rawFar = d +2.0f * halfForward;
  const float rawNear = d;
-
- //近裁剪面取较小值提升深度精度，但不小于0.01
  const float nearClamp = (((0.01f) > (rawFar *0.001f)) ? (0.01f) : (rawFar *0.001f));
  c.renderer.nearZ = (((rawNear) < (nearClamp)) ? (rawNear) : (nearClamp));
  c.renderer.farZ = (((c.renderer.nearZ +0.1f) > (rawFar)) ? (c.renderer.nearZ +0.1f) : (rawFar));
 }
 
-// ===== 新增：静态幽灵边界粒子生成与统计 =====
 void GenerateBoundaryGhostParticles(const RuntimeConsole& c, const sim::SimParams& sp, std::vector<float3>& outPositions) {
  outPositions.clear();
  const auto& cfg = c.sim.boundaryGhost;
  if (!cfg.enable) return;
-
- float h = sp.kernel.h;
- if (h <=0.f) h =0.01f;
+ float h = sp.kernel.h; if (h <=0.f) h =0.01f;
  float spacing = std::max(1e-6f, cfg.spacing_factor_h * h);
  int layers = std::max(1, cfg.layers);
-
- const float3 mins = sp.grid.mins;
- const float3 maxs = sp.grid.maxs;
-
+ const float3 mins = sp.grid.mins; const float3 maxs = sp.grid.maxs;
  struct Face { int axis; float coord; int sign; float aLen; float bLen; };
  Face faces[6] = {
  {0, mins.x, +1, maxs.y - mins.y, maxs.z - mins.z},
@@ -675,24 +411,17 @@ void GenerateBoundaryGhostParticles(const RuntimeConsole& c, const sim::SimParam
  {2, mins.z, +1, maxs.x - mins.x, maxs.y - mins.y},
  {2, maxs.z, -1, maxs.x - mins.x, maxs.y - mins.y}
  };
-
  std::mt19937 rng(cfg.jitter_seed);
  std::uniform_real_distribution<float> U(-1.f,1.f);
  auto jitter = [&](float3& p) {
- if (!cfg.jitter_enable) return;
- float amp = cfg.jitter_scale_h * h;
- if (amp <=0.f) return;
- float ox, oy, oz;
- do { ox = U(rng); oy = U(rng); oz = U(rng); } while (ox*ox + oy*oy + oz*oz >1.f);
- p.x += ox * amp; p.y += oy * amp; p.z += oz * amp;
- };
-
+ if (!cfg.jitter_enable) return; float amp = cfg.jitter_scale_h * h; if (amp <=0.f) return;
+ float ox, oy, oz; do { ox = U(rng); oy = U(rng); oz = U(rng); } while (ox*ox + oy*oy + oz*oz >1.f);
+ p.x += ox * amp; p.y += oy * amp; p.z += oz * amp; };
  auto clampIn = [&](float3& p) {
  p.x = fminf(fmaxf(p.x, mins.x), maxs.x);
  p.y = fminf(fmaxf(p.y, mins.y), maxs.y);
  p.z = fminf(fmaxf(p.z, mins.z), maxs.z);
  };
-
  for (const Face& f : faces) {
  for (int L =0; L < layers; ++L) {
  float off = (cfg.layer_offset_bias + L) * spacing * (cfg.place_outside ? -f.sign : f.sign);
@@ -714,10 +443,7 @@ void GenerateBoundaryGhostParticles(const RuntimeConsole& c, const sim::SimParam
  }
  if (outPositions.size() >= cfg.max_ghost_particles) break;
  }
-
  const_cast<RuntimeConsole&>(c).sim.boundaryGhost.ghost_count_runtime = (uint32_t)outPositions.size();
- // 与 SimParams 同步（调用方可再次 BuildSimParams 覆盖）
- // 注意：不直接修改 sp（拷贝值），由调用方重新 BuildSimParams 写入
 }
 
 void LogBoundaryGhostStats(const RuntimeConsole& c, uint32_t fluidCount, uint32_t ghostCount) {

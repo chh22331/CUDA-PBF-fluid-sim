@@ -154,6 +154,7 @@
     <ClCompile Include="app_main.cpp" />
     <ClCompile Include="engine\core\config.cpp" />
     <ClCompile Include="engine\core\console.cpp" />
+    <ClCompile Include="engine\core\precision_mapping.cpp" />
     <ClCompile Include="engine\gfx\d3d12_device.cpp" />
     <ClCompile Include="engine\gfx\renderer.cpp" />
     <ClCompile Include="sim\emitter.cpp" />
@@ -171,6 +172,7 @@
     <ClInclude Include="engine\core\console.h" />
     <ClInclude Include="engine\core\frame_graph.h" />
     <ClInclude Include="engine\core\memory_pool.h" />
+    <ClInclude Include="engine\core\precision_mapping.h" />
     <ClInclude Include="engine\core\prof_nvtx.h" />
     <ClInclude Include="engine\core\profiler.h" />
     <ClInclude Include="engine\gfx\d3d12_device.h" />
