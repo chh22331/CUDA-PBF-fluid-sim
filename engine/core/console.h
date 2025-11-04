@@ -35,13 +35,13 @@ namespace console {
     // 统一数值精度配置（作为 Simulation 的子成员），仅定义开关，无副作用
     struct PrecisionConfig {
         // ---------------- 存储精度（粒子主数据与辅助缓冲） ----------------
-        NumericType positionStore = NumericType::FP32;
+        NumericType positionStore = NumericType::FP16;
         NumericType velocityStore = NumericType::FP32;
         NumericType predictedPosStore = NumericType::FP32; // PBF 预测位置（若使用）
-        NumericType lambdaStore = NumericType::FP32; // PBF λ
+        NumericType lambdaStore = NumericType::FP32; // PBF λ（约束求解敏感，初期保持 FP32）
         NumericType densityStore = NumericType::FP32;
         NumericType auxStore = NumericType::FP32; // 临时/梯度/累加器等
-        NumericType renderTransfer = NumericType::FP32; // 提交渲染的转换目标（保留 float3 默认）
+        NumericType renderTransfer = NumericType::FP16_Packed; // 提交渲染的转换目标（保留 float3 默认）
 
         // ---------------- 核心计算精度（全局默认） ----------------
         NumericType coreCompute = NumericType::FP16; // 主环（邻居/密度/λ/积分）
@@ -50,7 +50,7 @@ namespace console {
 
         // ---------------- 分阶段覆盖（若 useStageOverrides = true 生效） ----------------
         bool        useStageOverrides = true;
-        NumericType emissionCompute = NumericType::FP32;
+        NumericType emissionCompute = NumericType::FP16;
         NumericType gridBuildCompute = NumericType::FP32;
         NumericType neighborCompute = NumericType::FP32;
         NumericType densityCompute = NumericType::FP32;
@@ -142,28 +142,12 @@ namespace console {
             bool logXSphEffect = false;        // 占位：XSPH 平滑实际效果估算（未来扩展）
 
             // —— 新增：统一约束零散日志的分类开关 —__
-            bool printDiagnostics = true;     // [Diag] 诊断与网格占用直方等
+            bool printDiagnostics = false;     // [Diag] 诊断与网格占用直方等
             bool printHints = false;           // [Hint] 启发式建议
             bool printErrors = true;           // 错误/致命提示（默认开）
 
             // 新增：诊断/统计的大频率节流（帧）；0/负值表示禁用
             int  diag_every_n = 0;
-
-            // ---- 新增：Velocity 半精诊断专用开关与参数 ----
-            bool logVelocityEffect = true; // 开启速度更新误差/回滚诊断
-            float velocityRollbackRatioMax =0.8f; // 比例阈值：dvL1/prevL1 超过回滚
-            float velocityNaNGuardMax =1e6f; // 分量绝对值上限（超过视为异常并置零）
-            bool velocityEnableNvtx = true; // 为不同分支加 NVTX 标记
-
-            // ==== 新增：FP16 预测位置抽样日志 ====
-           // 开启后，当 precision.predictedPosStore 为 FP16 / FP16_Packed 且存在半精镜像，将周期抽样打印
-            bool logPredictedPosHalf = true;           // 总开关
-            int  logPredictedPosEveryN = 1;           // 每多少帧打印一次（>=1）
-            int  logPredictedPosSampleStride = 4096;    // 抽样步长（>=1）
-            int  logPredictedPosMaxPrint = 16;          // 每次最多打印多少条粒子样本行
-            float logPredictedPosAbsMax = 1e7f;         // 分量绝对值异常阈值
-            bool  logPredictedPosPrintHeader = true;    // 是否打印头部统计行
-
         } debug;
 
         // 仿真配置（集中所有物理与发射/域参数）
@@ -252,7 +236,7 @@ namespace console {
             static constexpr uint32_t cube_group_count_max = 512;
 
             // 立方体层数（垂直分层放置）。若 cube_group_count=32 且 cube_layers=2 -> 每层16个
-            uint32_t cube_layers = 8;
+            uint32_t cube_layers = 2;
 
             // 立方体中心之间的水平间距（世界单位，沿 X/Z）
             float    cube_group_spacing_world = 60.0f;

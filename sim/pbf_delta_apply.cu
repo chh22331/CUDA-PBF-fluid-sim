@@ -22,20 +22,11 @@ namespace {
         uint32_t sortedIdx = blockIdx.x * blockDim.x + threadIdx.x;
         if (sortedIdx >= N) return;
 
-        uint32_t pid = indicesSorted[sortedIdx];
-        uint32_t ghostCount = dp.ghostCount;
-        uint32_t fluidCount = (ghostCount <= N)? (N - ghostCount): N;
-        bool isGhost = (pid >= fluidCount);
-        if (isGhost && !dp.ghostContribLambda){
-            delta[pid]=make_float4(0,0,0,0);
-            return;
-        }
-
         const sim::GridBounds& grid = dp.grid;
         const sim::KernelCoeffs& kc = dp.kernel;
         const sim::PbfTuning& pbf = dp.pbf;
 
-        uint32_t i = pid;
+        uint32_t i = indicesSorted[sortedIdx];
         float4 pi4 = sim::PrecisionTraits::loadPosPred(pos_pred_fp32, pos_pred_h4, i);
         float3 pi = make_float3(pi4.x, pi4.y, pi4.z);
 
@@ -70,8 +61,7 @@ namespace {
 
                     for (uint32_t k = beg; k < end; ++k) {
                         uint32_t j = indicesSorted[k];
-                        bool jGhost=(j>=fluidCount); if (jGhost && !dp.ghostContribLambda) continue;
-                        if (j == pid) continue;
+                        if (j == i) continue;
 
                         float4 pj4 = sim::PrecisionTraits::loadPosPred(pos_pred_fp32, pos_pred_h4, j);
                         float3 pj = make_float3(pj4.x, pj4.y, pj4.z);
@@ -145,22 +135,13 @@ namespace {
         uint32_t sortedIdx = blockIdx.x * blockDim.x + threadIdx.x;
         if (sortedIdx >= N) return;
 
-        uint32_t pid = indicesSorted[sortedIdx];
-        uint32_t ghostCount = dp.ghostCount;
-        uint32_t fluidCount = (ghostCount <= N)? (N - ghostCount): N;
-        bool isGhost = (pid >= fluidCount);
-        if (isGhost && !dp.ghostContribLambda){
-            delta[pid]=make_float4(0,0,0,0);
-            return;
-        }
-
         const sim::GridBounds& grid = dp.grid;
         const sim::KernelCoeffs& kc = dp.kernel;
         const sim::PbfTuning& pbf = dp.pbf;
 
         const uint32_t M = *compactCount;
 
-        uint32_t i = pid;
+        uint32_t i = indicesSorted[sortedIdx];
         float4 pi4 = sim::PrecisionTraits::loadPosPred(pos_pred_fp32, pos_pred_h4, i);
         float3 pi = make_float3(pi4.x, pi4.y, pi4.z);
 
@@ -193,8 +174,7 @@ namespace {
 
                     for (uint32_t k = beg; k < end; ++k) {
                         uint32_t j = indicesSorted[k];
-                        bool jGhost=(j>=fluidCount); if (jGhost && !dp.ghostContribLambda) continue;
-                        if (j == pid) continue;
+                        if (j == i) continue;
 
                         float4 pj4 = sim::PrecisionTraits::loadPosPred(pos_pred_fp32, pos_pred_h4, j);
                         float3 pj = make_float3(pj4.x, pj4.y, pj4.z);

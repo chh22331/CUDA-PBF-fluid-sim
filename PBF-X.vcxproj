@@ -117,7 +117,6 @@
     <CudaCompile Include="kernel.cu" />
     <CudaCompile Include="sim\adaptive_precision.cu" />
     <CudaCompile Include="sim\boundary.cu" />
-    <CudaCompile Include="sim\boundary_half.cu" />
     <CudaCompile Include="sim\cell_compact.cu" />
     <CudaCompile Include="sim\cell_ranges.cu" />
     <CudaCompile Include="sim\device_buffers_kernels.cu" />
@@ -142,13 +141,8 @@
     <CudaCompile Include="sim\sort_pairs.cu" />
     <CudaCompile Include="sim\stats.cu" />
     <CudaCompile Include="sim\stats_bruteforce.cu" />
-    <CudaCompile Include="sim\velocity_diag.cu" />
-    <CudaCompile Include="sim\velocity_explode_diag.cu" />
     <CudaCompile Include="sim\velocity_from_half_prev.cu" />
-    <CudaCompile Include="sim\velocity_half.cu" />
     <CudaCompile Include="sim\xsph.cu" />
-    <CudaCompile Include="sim\xsph_diag.cu" />
-    <CudaCompile Include="sim\xsph_half.cu" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="app_main.cpp" />
@@ -167,7 +161,6 @@
     <ClCompile Include="sim\simulator.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="cuda sim\precision_traits.cuh" />
     <ClInclude Include="engine\core\config.h" />
     <ClInclude Include="engine\core\console.h" />
     <ClInclude Include="engine\core\frame_graph.h" />

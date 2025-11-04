@@ -133,10 +133,6 @@ namespace sim {
 
         // ======== 新增：幽灵边界粒子计数（静态，设备侧用于邻域贡献，不参与积分） ========
         uint32_t ghostParticleCount = 0; // 由 Simulator 在生成后填充
-        // 新增：幽灵粒子贡献控制（来自 console::boundaryGhost 配置）
-        uint8_t ghostContribDensity = 0; //1: 幽灵参与密度累计
-        uint8_t ghostContribLambda = 0; //1: 幽灵参与 λ约束计算（作为 i 或邻居 j）
-        uint8_t ghostContribXsph = 0; //1: 幽灵参与 XSPH 平滑
     };
 
     struct DeviceParams {
@@ -151,11 +147,7 @@ namespace sim {
         float        particleMass;
         PbfTuning    pbf;
         float        xsph_c;
-        // 新增：幽灵信息
-        uint32_t ghostCount = 0;
-        uint8_t ghostContribDensity = 0;
-        uint8_t ghostContribLambda = 0;
-        uint8_t ghostContribXsph = 0;
+        // 可选：以后扩展加入 precision 快速判定
     };
 
     inline KernelCoeffs MakeKernelCoeffs(float h) {
@@ -186,10 +178,6 @@ namespace sim {
         dp.particleMass = sp.particleMass;
         dp.pbf = sp.pbf;
         dp.xsph_c = sp.xsph_c;
-        dp.ghostCount = sp.ghostParticleCount;
-        dp.ghostContribDensity = sp.ghostContribDensity;
-        dp.ghostContribLambda = sp.ghostContribLambda;
-        dp.ghostContribXsph = sp.ghostContribXsph;
         return dp;
     }
 

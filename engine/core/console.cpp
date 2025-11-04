@@ -7,7 +7,7 @@
 #include <cstring>
 #include <vector>
 #include "../../sim/numeric_utils.h"
-#include "../../sim/logging.h"
+#include "../../sim/logging.h" // 新增：统一日志接口
 
 namespace {
 
@@ -119,9 +119,16 @@ void BuildSimParams(const RuntimeConsole& c, sim::SimParams& out) {
 
  // 幽灵粒子占位（由 GenerateBoundaryGhostParticles 更新 runtime计数后重新 BuildSimParams 可刷新）
  out.ghostParticleCount = c.sim.boundaryGhost.ghost_count_runtime;
- out.ghostContribDensity = c.sim.boundaryGhost.contribute_density ?1:0;
- out.ghostContribLambda = c.sim.boundaryGhost.contribute_lambda ?1:0;
- out.ghostContribXsph = c.sim.boundaryGhost.contribute_xsph ?1:0;
+
+ // ===== 原生 half 主存储激活判定 =====
+ if (src.nativeHalfPrefer) {
+ bool posHalf = (out.precision.positionStore == sim::NumericType::FP16_Packed);
+ bool velHalf = (out.precision.velocityStore == sim::NumericType::FP16_Packed);
+ bool predHalf = (out.precision.predictedPosStore == sim::NumericType::FP16_Packed);
+ if (posHalf && velHalf && predHalf) {
+ out.precision.nativeHalfActive = true; //由 allocator选择 allocateNativeHalfPrimary
+ }
+ }
 }
 
 void BuildDeviceParams(const RuntimeConsole& c, sim::DeviceParams& out) {

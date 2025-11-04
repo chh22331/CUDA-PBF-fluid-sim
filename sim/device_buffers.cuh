@@ -5,584 +5,338 @@
 #include <array>
 #include "parameters.h"
 #include "numeric_utils.h"
-#include "logging.h"
+#include "logging.h" // 新增：日志（用于 allocate失败等）
 #include "device_globals.cuh"
 
 namespace sim {
 
-struct Half4 { __half x, y, z, w; };
+    struct Half4 { __half x, y, z, w; };
 
-void PackFloat4ToHalf4(const float4* src, Half4* dst, uint32_t N, cudaStream_t s);
-void UnpackHalf4ToFloat4(const Half4* src, float4* dst, uint32_t N, cudaStream_t s);
-void PackFloatToHalf(const float* src, __half* dst, uint32_t N, cudaStream_t s);
-void UnpackHalfToFloat(const __half* src, float* dst, uint32_t N, cudaStream_t s);
+    void PackFloat4ToHalf4(const float4* src, Half4* dst, uint32_t N, cudaStream_t s);
+    void UnpackHalf4ToFloat4(const Half4* src, float4* dst, uint32_t N, cudaStream_t s);
+    void PackFloatToHalf(const float* src, __half* dst, uint32_t N, cudaStream_t s);
+    void UnpackHalfToFloat(const __half* src, float* dst, uint32_t N, cudaStream_t s);
 
-#ifndef CUDA_CHECK_ALLOC
-#define CUDA_CHECK_ALLOC(expr) do { \
-    cudaError_t _e = (expr); \
-    if(_e != cudaSuccess){ \
-        std::fprintf(stderr,"[Alloc][Error] %s (%d)\n", cudaGetErrorString(_e), (int)_e); \
-    } \
-} while(0)
-#endif
+    struct DeviceBuffers {
+        // ===== Legacy FP32 pointers =====
+        float4* d_pos = nullptr;        // alias d_pos_curr
+        float4* d_vel = nullptr;        // alias d_vel_curr
+        float4* d_pos_pred = nullptr;   // alias d_pos_next
+        float*  d_lambda = nullptr;
+        float4* d_delta = nullptr;      // XSPH / 临时速度 (unused for final velocity in scheme A)
+        float*  d_density = nullptr;    // 新增：密度（若后续需要主机侧统计）
+        float*  d_aux = nullptr;        // 新增：辅助（梯度等临时累加器）
 
-struct DeviceBuffers {
-    // ===== FP32 primary =====
-    float4* d_pos = nullptr;       // alias -> d_pos_curr
-    float4* d_vel = nullptr;       // alias -> d_vel_curr
-    float4* d_pos_pred = nullptr;  // alias -> d_pos_next
-    float*  d_lambda = nullptr;
-    float4* d_delta = nullptr;
-    float*  d_density = nullptr;
-    float*  d_aux = nullptr;
+        // Ping-pong FP32 state
+        float4* d_pos_curr = nullptr;   // current (formal) positions
+        float4* d_pos_next = nullptr;   // predicted / next positions
+        float4* d_vel_curr = nullptr;   // current velocities
+        float4* d_vel_prev = nullptr;   // optional previous velocities (future use)
 
-    // Ping-pong (双缓冲)
-    float4* d_pos_curr = nullptr;
-    float4* d_pos_next = nullptr;
-    float4* d_vel_curr = nullptr;
-    float4* d_vel_prev = nullptr;
+        // ===== Half mirrors (when not native half primary) =====
+        Half4* d_pos_h4 = nullptr;
+        Half4* d_vel_h4 = nullptr;
+        Half4* d_pos_pred_h4 = nullptr; // alias of d_pos_next mirror
+        Half4* d_delta_h4 = nullptr;
+        Half4* d_prev_pos_h4 = nullptr;
+        Half4* d_render_pos_h4 = nullptr;
 
-    // ===== Half mirrors =====
-    Half4* d_pos_h4 = nullptr;
-    Half4* d_vel_h4 = nullptr;
-    Half4* d_pos_pred_h4 = nullptr;
-    Half4* d_prev_pos_h4 = nullptr;
-    Half4* d_render_pos_h4 = nullptr;
+        // 半精镜像（标量）
+        __half* d_lambda_h = nullptr;
+        __half* d_density_h = nullptr;
+        __half* d_aux_h = nullptr;
 
-    __half* d_lambda_h = nullptr;
-    __half* d_density_h = nullptr;
-    __half* d_aux_h = nullptr;
+        // ===== Native half primary mode =====
+        bool nativeHalfActive = false; // 主存储是否直接使用 half4
+        Half4* d_pos_curr_native = nullptr; // 原生 curr
+        Half4* d_pos_next_native = nullptr; // 原生 next/pred
+        Half4* d_vel_curr_native = nullptr; // 原生 velocity
 
-    // ===== 原生 half 主存储 =====
-    bool   nativeHalfActive = false;
-    Half4* d_pos_curr_native = nullptr;
-    Half4* d_pos_next_native = nullptr;
-    Half4* d_vel_curr_native = nullptr;
+        uint32_t capacity =0;
+        bool      posPredExternal = false; // 单外部预测或镜像模式
+        bool      externalPingPong = false; // 真正双外部 ping-pong 模式
+        bool      ownsPosBuffers = true;    // 是否由内部分配并负责释放位置缓冲
 
-    // ===== NEW: 单块连续分配指针（位置 / half） =====
-    float4* d_pos_block = nullptr;       // [curr | next]
-    Half4*  d_pos_half_block = nullptr;  // [curr_half | next_half]
+        bool usePosHalf = false;
+        bool useVelHalf = false;
+        bool usePosPredHalf = false;
+        bool useLambdaHalf = false;
+        bool useDensityHalf = false;
+        bool useAuxHalf = false;
+        bool useRenderHalf = false;
 
-    uint32_t capacity = 0;
-    bool posPredExternal = false;
-    bool externalPingPong = false;
-    bool ownsPosBuffers = true;
+        uint32_t guardA =0xA11CE5u;
+        uint32_t guardB =0xBEEFBEEFu;
 
-    bool usePosHalf = false;
-    bool useVelHalf = false;
-    bool usePosPredHalf = false;
-    bool useLambdaHalf = false;
-    bool useDensityHalf = false;
-    bool useAuxHalf = false;
-    bool useRenderHalf = false;
+        bool anyHalf() const { return (nativeHalfActive) || usePosHalf || useVelHalf || usePosPredHalf || useLambdaHalf || useDensityHalf || useAuxHalf || useRenderHalf; }
+        bool hasPrevSnapshot() const { return d_prev_pos_h4 != nullptr; }
 
-    bool externalPosPredAlias = false;
+        void ensurePrevSnapshot() { if (nativeHalfActive) { if (d_prev_pos_h4) cudaFree(d_prev_pos_h4); d_prev_pos_h4 = nullptr; if (capacity >0) cudaMalloc((void**)&d_prev_pos_h4, sizeof(Half4) * capacity); return; } if (d_prev_pos_h4) { cudaFree(d_prev_pos_h4); d_prev_pos_h4 = nullptr; } if (capacity >0) cudaMalloc((void**)&d_prev_pos_h4, sizeof(Half4) * capacity); }
+        void freePrevPosSnapshot() { if (d_prev_pos_h4) { cudaFree(d_prev_pos_h4); d_prev_pos_h4 = nullptr; } }
 
-    uint32_t guardA = 0xA11CE5u;
-    uint32_t guardB = 0xBEEFBEEFu;
+        // ===== Pack/Unpack mirrors (skip in native mode) =====
+        void packAllToHalf(uint32_t N, cudaStream_t s) {
+            if (nativeHalfActive) return; // 原生模式不需要 pack
+            if (!anyHalf() || N ==0) return;
+            struct PackItemVec { const float4* src; Half4* dst; bool enabled; };
+            PackItemVec vitems[] = {
+                { d_pos_curr,  d_pos_h4,       usePosHalf     && d_pos_curr  && d_pos_h4 },
+                { d_vel_curr,  d_vel_h4,       useVelHalf     && d_vel_curr  && d_vel_h4 },
+                { d_pos_next,  d_pos_pred_h4,  usePosPredHalf && d_pos_next  && d_pos_pred_h4 },
+                { d_delta,     d_delta_h4,     useVelHalf     && d_delta     && d_delta_h4 }
+            };
+            for (auto& it : vitems) if (it.enabled) PackFloat4ToHalf4(it.src, it.dst, N, s);
+            struct PackItemSca { const float* src; __half* dst; bool enabled; };
+            PackItemSca sitems[] = {
+                { d_lambda,   d_lambda_h,     useLambdaHalf   && d_lambda   && d_lambda_h },
+                { d_density,  d_density_h,    useDensityHalf  && d_density  && d_density_h },
+                { d_aux,      d_aux_h,        useAuxHalf      && d_aux      && d_aux_h }
+            };
+            for (auto& it : sitems) if (it.enabled) PackFloatToHalf(it.src, it.dst, N, s);
+            if (useRenderHalf && d_render_pos_h4 && d_pos_curr) PackFloat4ToHalf4(d_pos_curr, d_render_pos_h4, N, s);
+        }
+        void unpackAllFromHalf(uint32_t N, cudaStream_t s) {
+            if (nativeHalfActive) return; // 原生模式不需要 unpack
+            if (!anyHalf() || N ==0) return;
+            struct UnpackItemVec { const Half4* src; float4* dst; bool enabled; };
+            UnpackItemVec vitems[] = {
+                { d_pos_h4,      d_pos_curr,  usePosHalf     && d_pos_curr  && d_pos_h4 },
+                { d_vel_h4,      d_vel_curr,  useVelHalf     && d_vel_curr  && d_vel_h4 },
+                { d_pos_pred_h4, d_pos_next,  usePosPredHalf && d_pos_next  && d_pos_pred_h4 },
+                { d_delta_h4,    d_delta,     useVelHalf     && d_delta     && d_delta_h4 }
+            };
+            for (auto& it : vitems) if (it.enabled) UnpackHalf4ToFloat4(it.src, it.dst, N, s);
+            struct UnpackItemSca { const __half* src; float* dst; bool enabled; };
+            UnpackItemSca sitems[] = {
+                { d_lambda_h,    d_lambda,     useLambdaHalf   && d_lambda   && d_lambda_h },
+                { d_density_h,   d_density,    useDensityHalf  && d_density  && d_density_h },
+                { d_aux_h,       d_aux,        useAuxHalf      && d_aux      && d_aux_h }
+            };
+            for (auto& it : sitems) if (it.enabled) UnpackHalfToFloat(it.src, it.dst, N, s);
+        }
 
-    bool anyHalf() const {
-        return (nativeHalfActive) || usePosHalf || useVelHalf || usePosPredHalf ||
-               useLambdaHalf || useDensityHalf || useAuxHalf || useRenderHalf;
-    }
-    bool hasPrevSnapshot() const { return d_prev_pos_h4 != nullptr; }
+        void packRenderToHalf(uint32_t N, cudaStream_t s) {
+            if (nativeHalfActive) return; // 原生 half 模式渲染直接读主缓冲
+            if (!useRenderHalf || !d_render_pos_h4 || !d_pos_curr) return; PackFloat4ToHalf4(d_pos_curr, d_render_pos_h4, N, s); }
 
-    void ensurePrevSnapshot() {
-        if (d_prev_pos_h4) { cudaFree(d_prev_pos_h4); d_prev_pos_h4 = nullptr; }
-        if (capacity > 0) CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_prev_pos_h4, sizeof(Half4) * capacity));
-    }
-    void freePrevPosSnapshot() { if (d_prev_pos_h4) { cudaFree(d_prev_pos_h4); d_prev_pos_h4 = nullptr; } }
+        // ===== Allocation API =====
+        void allocate(uint32_t cap) {
+            allocateInternal(cap, false, false, false, false, false, false);
+            ensurePrevSnapshot();
+            BindDeviceGlobalsFrom(*this);
+        }
+        void allocateWithPrecision(const sim::SimPrecision& prec, uint32_t cap) {
+            if (prec.nativeHalfActive) { allocateNativeHalfPrimary(prec, cap); return; }
+            bool posH = (prec.positionStore == sim::NumericType::FP16_Packed || prec.positionStore == sim::NumericType::FP16);
+            bool velH = (prec.velocityStore == sim::NumericType::FP16_Packed || prec.velocityStore == sim::NumericType::FP16);
+            bool predH = (prec.predictedPosStore == sim::NumericType::FP16_Packed || prec.predictedPosStore == sim::NumericType::FP16);
+            bool lambdaH = (prec.lambdaStore == sim::NumericType::FP16_Packed || prec.lambdaStore == sim::NumericType::FP16);
+            bool densityH = (prec.densityStore == sim::NumericType::FP16_Packed || prec.densityStore == sim::NumericType::FP16);
+            bool auxH = (prec.auxStore == sim::NumericType::FP16_Packed || prec.auxStore == sim::NumericType::FP16);
+            bool renderH = ((prec.renderTransfer == sim::NumericType::FP16_Packed || prec.renderTransfer == sim::NumericType::FP16) && !posH);
+            allocateInternal(cap, posH, velH, predH, lambdaH, densityH, auxH);
+            useRenderHalf = renderH;
+            if (useRenderHalf) cudaMalloc((void**)&d_render_pos_h4, sizeof(Half4) * capacity);
+            ensurePrevSnapshot();
+            BindDeviceGlobalsFrom(*this);
+        }
 
-    // ===== Debug 验证 =====
-    void debugValidate(const char* tag) const {
-        auto chk = [&](const void* p, const char* name){
-            if(!p){
-                std::fprintf(stderr,"[BufChk][%s] %s=NULL\n", tag, name);
+        // 原生 half 主存储分配
+        void allocateNativeHalfPrimary(const sim::SimPrecision& prec, uint32_t cap) {
+            release();
+            if (cap ==0) cap =1;
+            capacity = cap;
+            nativeHalfActive = true;
+            ownsPosBuffers = true; externalPingPong = false; posPredExternal = false;
+            auto allocH4 = [&](Half4** p) { cudaMalloc((void**)p, sizeof(Half4) * capacity); };
+            allocH4(&d_pos_curr_native);
+            allocH4(&d_pos_next_native);
+            allocH4(&d_vel_curr_native);
+            // 映射 half镜像指针到原生主存储，便于复用现有 MP kernel代码路径
+            d_pos_h4 = d_pos_curr_native;
+            d_pos_pred_h4 = d_pos_next_native;
+            d_vel_h4 = d_vel_curr_native;
+            // 清空 FP32 主缓冲别名（位置）
+            d_pos_curr = nullptr; d_pos_next = nullptr; d_pos = nullptr; d_pos_pred = nullptr;
+            //仍分配 FP32 velocity 镜像以兼容尚未改写的 kernel 输出路径
+            cudaMalloc((void**)&d_vel, sizeof(float4) * capacity); d_vel_curr = d_vel; d_vel_prev = nullptr;
+            cudaMalloc((void**)&d_lambda, sizeof(float) * capacity);
+            cudaMalloc((void**)&d_delta, sizeof(float4) * capacity);
+            cudaMalloc((void**)&d_density, sizeof(float) * capacity);
+            cudaMalloc((void**)&d_aux, sizeof(float) * capacity);
+            usePosHalf = useVelHalf = usePosPredHalf = true; // 标记为使用 half（实际即原生）
+            useLambdaHalf = false; useDensityHalf = false; useAuxHalf = false; 
+            useRenderHalf = (prec.renderTransfer == sim::NumericType::FP16_Packed || prec.renderTransfer == sim::NumericType::FP16);
+            if (useRenderHalf) cudaMalloc((void**)&d_render_pos_h4, sizeof(Half4) * capacity);
+            ensurePrevSnapshot();
+            BindDeviceGlobalsFrom(*this);
+            std::fprintf(stderr, "[NativeHalf][Allocate] cap=%u pos_native=%p vel_native=%p vel_fp32=%p renderHalf=%d\n", capacity, (void*)d_pos_curr_native, (void*)d_vel_curr_native,(void*)d_vel,(int)useRenderHalf);
+        }
+
+        // 回退到 FP32 主存储（保持数据解包，可在后续阶段实现）
+        void fallbackToFp32(uint32_t cap) {
+            if (!nativeHalfActive) return;
+            //释放原生 half 主缓冲
+            auto fre = [](auto*& p) { if (p) { cudaFree(p); p = nullptr; } };
+            fre(d_pos_curr_native); fre(d_pos_next_native); fre(d_vel_curr_native);
+            nativeHalfActive = false;
+            // 分配标准 FP32 + 可选 half 镜像（均关闭）
+            allocateInternal(cap ==0 ? capacity : cap, false, false, false, false, false, false);
+            std::fprintf(stderr, "[NativeHalf][Fallback] newCap=%u\n", capacity);
+        }
+
+        void bindExternalPosPingPong(float4* ptrA, float4* ptrB, uint32_t cap) {
+            checkGuards("bindExternalPingPong.before");
+            if (nativeHalfActive) {
+                std::fprintf(stderr, "[NativeHalf][Warn] external ping-pong not supported in native mode; ignoring activation\n");
+                fallbackToFp32(cap);
             }
-        };
-        chk(d_pos_curr,"pos_curr");
-        chk(d_pos_next,"pos_next");
-        if(usePosHalf)      chk(d_pos_h4,"pos_h4");
-        if(usePosPredHalf)  chk(d_pos_pred_h4,"pos_pred_h4");
-        if(useVelHalf)      chk(d_vel_h4,"vel_h4");
-    }
-
-    void sanityPrint(const char* tag) const {
-        /*
-        std::fprintf(stderr,
-            "[BufLayout][%s] cap=%u pos_block=%p curr=%p next=%p posHalfBlock=%p pos_h4=%p pos_pred_h4=%p vel=%p vel_h4=%p\n",
-            tag, capacity,
-            (void*)d_pos_block, (void*)d_pos_curr, (void*)d_pos_next,
-            (void*)d_pos_half_block, (void*)d_pos_h4, (void*)d_pos_pred_h4,
-            (void*)d_vel_curr, (void*)d_vel_h4);
-            */
-    }
-
-    // ===== Pack/Unpack mirrors（加强保护） =====
-    void packAllToHalf(uint32_t N, cudaStream_t s) {
-        if (nativeHalfActive || !anyHalf() || N ==0) return;
-        if (N > capacity) {
-            std::fprintf(stderr,"[Pack][Warn] N(%u)>capacity(%u) skip\n", N, capacity);
-            return;
-        }
-        const auto& cc = console::Instance();
-        if (cc.debug.printDiagnostics) {
-            std::fprintf(stderr,"[PredHalf.Pack] N=%u curr=%p next=%p pred_h4=%p pos_h4=%p vel_h4=%p usePos=%d usePred=%d useVel=%d native=%d\n",
-                N,(void*)d_pos_curr,(void*)d_pos_next,(void*)d_pos_pred_h4,(void*)d_pos_h4,(void*)d_vel_h4,
-                (int)usePosHalf,(int)usePosPredHalf,(int)useVelHalf,(int)nativeHalfActive);
-        }
-        struct VItem { const float4* src; Half4* dst; bool enabled; const char* name; };
-        VItem vitems[] = {
-            { d_pos_curr, d_pos_h4,       usePosHalf     && d_pos_curr     && d_pos_h4,       "pos_curr" },
-            { d_vel_curr, d_vel_h4,       useVelHalf     && d_vel_curr     && d_vel_h4,       "vel_curr" },
-            { d_pos_next, d_pos_pred_h4,  usePosPredHalf && d_pos_next     && d_pos_pred_h4,  "pos_next(pred)" }
-        };
-        for (auto& it : vitems) {
-            if (!it.enabled) continue;
-            PackFloat4ToHalf4(it.src, it.dst, N, s);
-        }
-
-        struct SItem { const float* src; __half* dst; bool enabled; const char* name; };
-        SItem sitems[] = {
-            { d_lambda,  d_lambda_h,  useLambdaHalf  && d_lambda  && d_lambda_h,  "lambda" },
-            { d_density, d_density_h, useDensityHalf && d_density && d_density_h, "density" },
-            { d_aux,     d_aux_h,     useAuxHalf     && d_aux     && d_aux_h,     "aux" }
-        };
-        for (auto& it : sitems) {
-            if (!it.enabled) continue;
-            PackFloatToHalf(it.src, it.dst, N, s);
-        }
-
-        if (useRenderHalf && d_render_pos_h4 && d_pos_curr)
-            PackFloat4ToHalf4(d_pos_curr, d_render_pos_h4, N, s);
-    }
-
-    void unpackAllFromHalf(uint32_t N, cudaStream_t s) {
-        if (nativeHalfActive || !anyHalf() || N == 0) return;
-        if (N > capacity) {
-            std::fprintf(stderr,"[Unpack][Warn] N(%u)>capacity(%u) skip\n", N, capacity);
-            return;
-        }
-        struct VItem { const Half4* src; float4* dst; bool enabled; };
-        VItem vitems[] = {
-            { d_pos_h4,      d_pos_curr, usePosHalf     && d_pos_curr    && d_pos_h4 },
-            { d_vel_h4,      d_vel_curr, useVelHalf     && d_vel_curr    && d_vel_h4 },
-            { d_pos_pred_h4, d_pos_next, usePosPredHalf && d_pos_next    && d_pos_pred_h4 }
-        };
-        for (auto& it : vitems) if (it.enabled) UnpackHalf4ToFloat4(it.src, it.dst, N, s);
-
-        struct SItem { const __half* src; float* dst; bool enabled; };
-        SItem sitems[] = {
-            { d_lambda_h,  d_lambda,  useLambdaHalf  && d_lambda  && d_lambda_h },
-            { d_density_h, d_density, useDensityHalf && d_density && d_density_h },
-            { d_aux_h,     d_aux,     useAuxHalf     && d_aux     && d_aux_h }
-        };
-        for (auto& it : sitems) if (it.enabled) UnpackHalfToFloat(it.src, it.dst, N, s);
-    }
-
-    void packRenderToHalf(uint32_t N, cudaStream_t s) {
-        if (nativeHalfActive) return;
-        if (!useRenderHalf || !d_render_pos_h4 || !d_pos_curr || N == 0 || N > capacity) return;
-        PackFloat4ToHalf4(d_pos_curr, d_render_pos_h4, N, s);
-    }
-
-    // ===== 公共接口 =====
-    void allocate(uint32_t cap) { allocateInternal(cap, false,false,false,false,false,false); ensurePrevSnapshot(); BindDeviceGlobalsFrom(*this); }
-    void allocateWithPrecision(const sim::SimPrecision& prec, uint32_t cap) {
-        if (prec.nativeHalfActive) { allocateNativeHalfPrimary(prec, cap); return; }
-        bool posH = (prec.positionStore == sim::NumericType::FP16_Packed || prec.positionStore == sim::NumericType::FP16);
-        bool velH = (prec.velocityStore == sim::NumericType::FP16_Packed || prec.velocityStore == sim::NumericType::FP16);
-        bool predH= (prec.predictedPosStore == sim::NumericType::FP16_Packed || prec.predictedPosStore == sim::NumericType::FP16);
-        bool lambdaH  = (prec.lambdaStore  == sim::NumericType::FP16);
-        bool densityH = (prec.densityStore == sim::NumericType::FP16);
-        bool auxH     = (prec.auxStore     == sim::NumericType::FP16_Packed || prec.auxStore == sim::NumericType::FP16);
-        bool renderH  = ((prec.renderTransfer == sim::NumericType::FP16_Packed || prec.renderTransfer == sim::NumericType::FP16) && !posH);
-        allocateInternal(cap, posH, velH, predH, lambdaH, densityH, auxH);
-        useRenderHalf = renderH;
-        if (useRenderHalf) CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_render_pos_h4, sizeof(Half4)*capacity));
-        ensurePrevSnapshot();
-        BindDeviceGlobalsFrom(*this);
-        debugValidate("allocateWithPrecision");
-        sanityPrint("allocateWithPrecision");
-    }
-
-    void allocateNativeHalfPrimary(const sim::SimPrecision& prec, uint32_t cap) {
-        release();
-        if (cap == 0) cap = 1;
-        capacity = cap;
-        nativeHalfActive = true;
-        ownsPosBuffers = true;
-        externalPingPong = false;
-        posPredExternal = false;
-
-        auto allocH4 = [&](Half4** p){ CUDA_CHECK_ALLOC(cudaMalloc((void**)p, sizeof(Half4)*capacity)); };
-        allocH4(&d_pos_curr_native);
-        allocH4(&d_pos_next_native);
-        allocH4(&d_vel_curr_native);
-
-        d_pos_h4       = d_pos_curr_native;
-        d_pos_pred_h4  = d_pos_next_native;
-        d_vel_h4       = d_vel_curr_native;
-
-        d_pos_curr = d_pos_next = nullptr;
-        d_pos = d_pos_curr;
-        d_pos_pred = d_pos_next;
-
-        CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_vel, sizeof(float4)*capacity));
-        d_vel_curr = d_vel;
-        CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_lambda, sizeof(float)*capacity));
-        CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_delta,  sizeof(float4)*capacity));
-        CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_density,sizeof(float)*capacity));
-        CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_aux,    sizeof(float)*capacity));
-
-        usePosHalf = useVelHalf = usePosPredHalf = true;
-        useLambdaHalf = useDensityHalf = useAuxHalf = false;
-        useRenderHalf = (prec.renderTransfer == sim::NumericType::FP16_Packed || prec.renderTransfer == sim::NumericType::FP16);
-        if (useRenderHalf) CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_render_pos_h4, sizeof(Half4)*capacity));
-
-        ensurePrevSnapshot();
-        BindDeviceGlobalsFrom(*this);
-        sanityPrint("allocateNativeHalfPrimary");
-    }
-
-    void fallbackToFp32(uint32_t cap) {
-        if (!nativeHalfActive) return;
-        auto fre = [](auto*& p) { if (p) { cudaFree(p); p = nullptr; } };
-        fre(d_pos_curr_native);
-        fre(d_pos_next_native);
-        fre(d_vel_curr_native);
-        nativeHalfActive = false;
-        // 清除别名，但不 double-free
-        d_pos_h4 = nullptr;
-        d_pos_pred_h4 = nullptr;
-        allocateInternal(cap == 0 ? capacity : cap, false, false, false, false, false, false);
-    }
-
-    void allocateExternalHalfMirrors(uint32_t cap) {
-        if (!externalPingPong) return;
-        if (cap == 0) cap = capacity;
-        if (cap == 0) return;
-        if (d_pos_half_block) return; // 已分配
-        size_t bytesPosHalf = sizeof(Half4) * size_t(cap) * 2;
-        CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_pos_half_block, bytesPosHalf));
-        d_pos_h4 = d_pos_half_block;
-        d_pos_pred_h4 = d_pos_half_block + cap;
-        usePosHalf = usePosPredHalf = true;
-        std::fprintf(stderr, "[ExternalHalf][Alloc] half_block=%p curr_h4=%p next_h4=%p cap=%u\n",
-            (void*)d_pos_half_block, (void*)d_pos_h4, (void*)d_pos_pred_h4, cap);
-    }
-
-    // 修复：支持半精镜像的外部双缓冲绑定
-    void bindExternalPosPingPong(float4* ptrA, float4* ptrB, uint32_t cap, bool wantHalfMirror) {
-        checkGuards("bindExternalPingPong.before");
-        if (nativeHalfActive) {
-            std::fprintf(stderr, "[NativeHalf][Warn] external ping-pong not supported, fallback FP32\n");
-            fallbackToFp32(cap);
-        }
-
-        // 释放内部自有连续块（不要 cudaFree d_pos_curr/d_pos_next 这些切片）
-        if (ownsPosBuffers) {
-            if (d_pos_block) { cudaFree(d_pos_block); d_pos_block = nullptr; }
-            if (d_pos_half_block) {
-                // 位置 half 块是连续块，别名指针不再单独释放
-                cudaFree(d_pos_half_block);
-                d_pos_half_block = nullptr;
-                d_pos_h4 = nullptr;
-                d_pos_pred_h4 = nullptr;
+            if (ownsPosBuffers) {
+                if (d_pos_curr) cudaFree(d_pos_curr);
+                if (d_pos_next) cudaFree(d_pos_next);
+                d_pos_curr = d_pos_next = nullptr;
+                d_pos = d_pos_curr;
+                d_pos_pred = d_pos_next;
+                ownsPosBuffers = false;
             }
-            ownsPosBuffers = false;
-        }
-
-        capacity = cap;
-        d_pos_curr = ptrA;
-        d_pos_next = ptrB;
-        d_pos = d_pos_curr;
-        d_pos_pred = d_pos_next;
-        posPredExternal = false;
-        externalPingPong = true;
-
-        if (wantHalfMirror) {
-            // 为外部位置建立半精镜像连续块
-            if (!d_pos_half_block) {
-                size_t bytesPosHalf = sizeof(Half4) * size_t(capacity) * 2;
-                if (cudaMalloc((void**)&d_pos_half_block, bytesPosHalf) == cudaSuccess) {
-                    d_pos_h4 = d_pos_half_block;
-                    d_pos_pred_h4 = d_pos_half_block + capacity;
-                    usePosHalf = usePosPredHalf = true;
-                    std::fprintf(stderr,
-                        "[ExternalHalf][Alloc] half_block=%p curr_h4=%p next_h4=%p cap=%u\n",
-                        (void*)d_pos_half_block, (void*)d_pos_h4, (void*)d_pos_pred_h4, capacity);
-                }
-                else {
-                    std::fprintf(stderr, "[ExternalHalf][Error] cudaMalloc failed, disable half mirrors.\n");
-                    d_pos_half_block = nullptr;
-                    d_pos_h4 = d_pos_pred_h4 = nullptr;
-                    usePosHalf = usePosPredHalf = false;
-                }
-            }
-        }
-        else {
-            d_pos_h4 = d_pos_pred_h4 = nullptr;
+            capacity = cap;
+            d_pos_curr = ptrA;
+            d_pos_next = ptrB;
+            d_pos = d_pos_curr;
+            d_pos_pred = d_pos_next;
+            posPredExternal = false;
+            externalPingPong = true;
             usePosHalf = usePosPredHalf = false;
+            d_pos_h4 = d_pos_pred_h4 = nullptr;
+            BindDeviceGlobalsFrom(*this);
+            checkGuards("bindExternalPingPong.after");
         }
 
-        BindDeviceGlobalsFrom(*this);
-        checkGuards("bindExternalPingPong.after");
-        sanityPrint("bindExternalPosPingPong");
-    }
-
-    void swapPositionPingPong() {
-        checkGuards("swapPositionPingPong.before");
-
-        // 外部双缓冲：需要同时交换 half 镜像（若存在）
-        if (externalPingPong) {
+        void swapPositionPingPong() {
+            checkGuards("swapPositionPingPong.before");
+            if (externalPingPong) {
+                std::swap(d_pos_curr, d_pos_next);
+                d_pos = d_pos_curr;
+                d_pos_pred = d_pos_next;
+                BindDeviceGlobalsFrom(*this);
+                checkGuards("swapPositionPingPong.after");
+                return;
+            }
+            if (nativeHalfActive) {
+                std::swap(d_pos_curr_native, d_pos_next_native);
+                // 无需别名更新（FP32 指针为空）
+                BindDeviceGlobalsFrom(*this);
+                checkGuards("swapPositionPingPong.after.nativeHalf");
+                return;
+            }
             float4* oldCurr = d_pos_curr;
             float4* oldNext = d_pos_next;
-            std::swap(d_pos_curr, d_pos_next);
-            d_pos = d_pos_curr;
-            d_pos_pred = d_pos_next;
-
-            // Half 镜像保持语义：d_pos_h4 = 当前 curr 的 half；d_pos_pred_h4 = 当前 next 的 half
-            // 由于 half 块是 [curr_half | next_half] 固定布局，这里需要“指针交换”才能保持一致
-            if ((usePosHalf || usePosPredHalf) && d_pos_h4 && d_pos_pred_h4) {
-                std::swap(d_pos_h4, d_pos_pred_h4);
+            if (posPredExternal) {
+                std::swap(d_pos_curr, d_pos_next);
+                d_pos = d_pos_curr;
+                std::fprintf(stderr,
+                    "[SwapPP][SkipPred] curr=%p next=%p pred(external)=%p cap=%u\n",
+                    (void*)d_pos_curr, (void*)d_pos_next, (void*)d_pos_pred, capacity);
+            } else {
+                std::swap(d_pos_curr, d_pos_next);
+                d_pos = d_pos_curr;
+                d_pos_pred = d_pos_next;
+                std::fprintf(stderr,
+                    "[SwapPP][Internal] curr=%p next=%p pred=%p cap=%u\n",
+                    (void*)d_pos_curr, (void*)d_pos_next, (void*)d_pos_pred, capacity);
             }
-
             BindDeviceGlobalsFrom(*this);
-            checkGuards("swapPositionPingPong.after.external");
-            sanityPrint("swapPositionPingPong.external");
-            return;
+            checkGuards("swapPositionPingPong.after");
         }
 
-        // 原生 half 主存储：也要交换 half 别名
-        if (nativeHalfActive) {
-            sim::Half4* oldCurrH = d_pos_curr_native;
-            sim::Half4* oldNextH = d_pos_next_native;
-            std::swap(d_pos_curr_native, d_pos_next_native);
-            // 同步别名
-            std::swap(d_pos_h4, d_pos_pred_h4);
-            // FP32 pos 不存在（或无效），但保持 d_pos/d_pos_pred 语义为 nullptr 或可选逻辑
-            BindDeviceGlobalsFrom(*this);
-            checkGuards("swapPositionPingPong.after.nativeHalf");
-            sanityPrint("swapPositionPingPong.nativeHalf");
-            return;
-        }
-
-        // 内部双缓冲（标准块）
-        if (posPredExternal) {
-            // 外部预测别名模式：不改变 d_pos_pred，但仍需交换 curr/next 以及 half 匹配关系
-            std::swap(d_pos_curr, d_pos_next);
-            d_pos = d_pos_curr;
-            // predicted 仍指向外部 alias，不 swap
-            if ((usePosHalf || usePosPredHalf) && d_pos_h4 && d_pos_pred_h4) {
-                std::swap(d_pos_h4, d_pos_pred_h4);
+        void bindExternalPosPred(float4* ptr) {
+            checkGuards("bindExternal.before");
+            if (nativeHalfActive) {
+                std::fprintf(stderr, "[NativeHalf][Warn] external predicted bind ignored in native mode\n");
+                return;
             }
-            std::fprintf(stderr, "[SwapPP][SkipPred] curr=%p next=%p pred(ext)=%p cap=%u\n",
-                (void*)d_pos_curr, (void*)d_pos_next, (void*)d_pos_pred, capacity);
-        }
-        else {
-            std::swap(d_pos_curr, d_pos_next);
-            d_pos = d_pos_curr;
-            d_pos_pred = d_pos_next;
-            if ((usePosHalf || usePosPredHalf) && d_pos_h4 && d_pos_pred_h4) {
-                std::swap(d_pos_h4, d_pos_pred_h4);
-            }
-            std::fprintf(stderr, "[SwapPP][Internal] curr=%p next=%p pred=%p cap=%u\n",
-                (void*)d_pos_curr, (void*)d_pos_next, (void*)d_pos_pred, capacity);
-        }
-        BindDeviceGlobalsFrom(*this);
-        checkGuards("swapPositionPingPong.after");
-    }
-
-    void bindExternalPosPred(float4* ptr) {
-        checkGuards("bindExternalPred.before");
-
-        // 原生 half 模式不支持单独外部预测
-        if (nativeHalfActive) {
-            std::fprintf(stderr, "[ExternalPred][Warn] nativeHalfActive -> ignore external predicted\n");
-            return;
-        }
-
-        // 如果当前采用统一连续块 (d_pos_block != nullptr)，说明 d_pos_pred 是内部切片，不能 cudaFree
-        if (d_pos_block) {
-            // 仅建立别名，内部 next 仍用于写；外部 ptr 只读用途（如渲染或调试）
-            d_pos_pred = ptr;
-            posPredExternal = true;
-            externalPosPredAlias = true;
-            externalPingPong = false;
             std::fprintf(stderr,
-                "[ExternalPred][Alias] ptr=%p (keep internal next for simulation) block=%p cap=%u\n",
-                (void*)ptr, (void*)d_pos_block, capacity);
-        }
-        else {
-            // 旧模式（分离分配）才允许释放旧 predicted 缓冲
-            if (d_pos_pred && !posPredExternal && ownsPosBuffers) {
-                cudaError_t e = cudaFree(d_pos_pred);
-                if (e != cudaSuccess) {
-                    std::fprintf(stderr, "[ExternalPred][Warn] cudaFree(oldPred=%p) %s (%d)\n",
-                        (void*)d_pos_pred, cudaGetErrorString(e), (int)e);
-                }
-            }
+                "[ExternalPred][Bind.Enter] newPtr=%p oldPred=%p posPredExternal(old)=%d next(internal)=%p\n",
+                (void*)ptr, (void*)d_pos_pred, (int)posPredExternal, (void*)d_pos_next);
+            if (d_pos_pred && !posPredExternal && ownsPosBuffers) cudaFree(d_pos_pred);
             d_pos_pred = ptr;
             posPredExternal = true;
-            externalPosPredAlias = false;
             externalPingPong = false;
-            std::fprintf(stderr, "[ExternalPred][Bind] ptr=%p (legacy separate predicted)\n", (void*)ptr);
+            BindDeviceGlobalsFrom(*this);
+            std::fprintf(stderr,
+                "[ExternalPred][Bind.Applied] pred=%p next(internal)=%p mode=MirrorOnly external=1\n",
+                (void*)d_pos_pred, (void*)d_pos_next);
+            checkGuards("bindExternal.after");
+        }
+        void detachExternalPosPred() {
+            checkGuards("detachExternal.before");
+            if (nativeHalfActive) return; // 原生模式无外部预测缓冲
+            d_pos_pred = nullptr; posPredExternal = false; externalPingPong = false; BindDeviceGlobalsFrom(*this);
         }
 
-        BindDeviceGlobalsFrom(*this);
-        checkGuards("bindExternalPred.after");
-    }
-
-    void detachExternalPosPred() {
-        checkGuards("detachExternalPred.before");
-        if (nativeHalfActive) return;
-        if (externalPosPredAlias) {
-            // 只是别名，直接置空
-            d_pos_pred = d_pos_next; // 恢复内部 predicted (next)
-        }
-        else {
-            // 旧模式下 d_pos_pred 指向独立 cudaMalloc，保持原逻辑（这里只是置空，不释放）
-            // 若需要真正释放可在 release() 统一处理
-        }
-        posPredExternal = false;
-        externalPosPredAlias = false;
-        externalPingPong = false;
-        BindDeviceGlobalsFrom(*this);
-        checkGuards("detachExternalPred.after");
-    }
-
-    void checkGuards(const char* tag) const {
-        if (guardA!=0xA11CE5u || guardB!=0xBEEFBEEFu){
-            std::fprintf(stderr,"[GuardCorrupt][%s] A=%08X B=%08X\n",tag,guardA,guardB);
-        }
-    }
-
-    void release();
-    ~DeviceBuffers(){ release(); }
-private:
-    void allocateInternal(uint32_t cap,
-                          bool posH,bool velH,bool predH,bool lambdaH,bool densityH,bool auxH){
-        checkGuards("allocateInternal.before");
-        if (nativeHalfActive){
-            std::fprintf(stderr,"[AllocateInternal][Warn] native active\n");
-            return;
-        }
-        if (cap == 0) cap = 1;
-        release();
-        capacity = cap;
-        usePosHalf      = posH;
-        useVelHalf      = velH;
-        usePosPredHalf  = predH;
-        useLambdaHalf   = lambdaH;
-        useDensityHalf  = densityH;
-        useAuxHalf      = auxH;
-        ownsPosBuffers  = true;
-        externalPingPong= false;
-        posPredExternal = false;
-        nativeHalfActive= false;
-
-        // ===== NEW: 单块双缓冲分配 (位置) =====
-        size_t bytesPos = sizeof(float4) * size_t(capacity) * 2;
-        CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_pos_block, bytesPos));
-        d_pos_curr = d_pos_block;
-        d_pos_next = d_pos_block + capacity;
-        d_pos      = d_pos_curr;
-        d_pos_pred = d_pos_next;
-
-        // 速度 + prev
-        CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_vel_curr, sizeof(float4)*capacity));
-        d_vel = d_vel_curr;
-        CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_vel_prev, sizeof(float4)*capacity));
-
-        // 标量 & delta
-        CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_lambda,  sizeof(float)*capacity));
-        CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_delta,   sizeof(float4)*capacity));
-        CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_density, sizeof(float)*capacity));
-        CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_aux,     sizeof(float)*capacity));
-
-        // Half 单块（位置双缓冲）
-        if (usePosHalf || usePosPredHalf) {
-            size_t bytesPosHalf = sizeof(Half4) * size_t(capacity) * 2;
-            CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_pos_half_block, bytesPosHalf));
-            d_pos_h4      = d_pos_half_block;
-            d_pos_pred_h4 = d_pos_half_block + capacity;
-        }
-
-        if (useVelHalf)      CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_vel_h4,      sizeof(Half4)*capacity));
-        if (useLambdaHalf)   CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_lambda_h,    sizeof(__half)*capacity));
-        if (useDensityHalf)  CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_density_h,   sizeof(__half)*capacity));
-        if (useAuxHalf)      CUDA_CHECK_ALLOC(cudaMalloc((void**)&d_aux_h,       sizeof(__half)*capacity));
-
-        std::fprintf(stderr,"[AllocateInternal] cap=%u pos_block=%p curr=%p next=%p velPrev=%p usePredHalf=%d native=%d\n",
-                     capacity,(void*)d_pos_block,(void*)d_pos_curr,(void*)d_pos_next,(void*)d_vel_prev,(int)usePosPredHalf,(int)nativeHalfActive);
-        checkGuards("allocateInternal.after");
-    }
-};
-
-inline void DeviceBuffers::release() {
-    checkGuards("release.before");
-    auto fre = [](auto*& p) {
-        if (p) {
-            cudaError_t e = cudaFree(p);
-            if (e != cudaSuccess) {
-                std::fprintf(stderr, "[Release][Warn] cudaFree(%p) %s (%d)\n",
-                    (void*)p, cudaGetErrorString(e), (int)e);
+        void checkGuards(const char* tag) const {
+            if (guardA !=0xA11CE5u || guardB !=0xBEEFBEEFu) {
+                std::fprintf(stderr,
+                    "[GuardCorrupt][%s] guardA=%08X guardB=%08X posPredExternal=%d externalPingPong=%d capacity=%u nativeHalf=%d\n",
+                    tag, guardA, guardB, (int)posPredExternal, (int)externalPingPong, capacity, (int)nativeHalfActive);
             }
-            p = nullptr;
         }
-        };
 
-    if (nativeHalfActive) {
-        fre(d_pos_curr_native);
-        fre(d_pos_next_native);
-        fre(d_vel_curr_native);
+        void release();
+        ~DeviceBuffers() { release(); }
+
+    private:
+        void allocateInternal(uint32_t cap, bool posH, bool velH, bool predH, bool lambdaH, bool densityH, bool auxH) {
+            checkGuards("allocateInternal.before");
+            if (nativeHalfActive) { std::fprintf(stderr, "[AllocateInternal][Warn] called while nativeHalfActive; ignoring\n"); return; }
+            std::fprintf(stderr,
+                "[Origin][AllocateInternal] cap=%u posH=%d velH=%d predH=%d lambdaH=%d densityH=%d auxH=%d (prevCap=%u)\n",
+                cap, (int)posH, (int)velH, (int)predH, (int)lambdaH, (int)densityH, (int)auxH, capacity);
+            if (cap ==0) cap =1;
+            if (cap == capacity && posH == usePosHalf && velH == useVelHalf && predH == usePosPredHalf && lambdaH == useLambdaHalf && densityH == useDensityHalf && auxH == useAuxHalf) return;
+            release();
+            capacity = cap;
+            usePosHalf = posH; useVelHalf = velH; usePosPredHalf = predH; useLambdaHalf = lambdaH; useDensityHalf = densityH; useAuxHalf = auxH;
+            ownsPosBuffers = true; externalPingPong = false; posPredExternal = false; nativeHalfActive = false;
+            auto alloc = [&](void** p, size_t elemSize) { cudaMalloc(p, elemSize * capacity); };
+            alloc((void**)&d_pos_curr, sizeof(float4));
+            alloc((void**)&d_pos_next, sizeof(float4));
+            d_pos = d_pos_curr; d_pos_pred = d_pos_next;
+            alloc((void**)&d_vel_curr, sizeof(float4)); d_vel = d_vel_curr;
+            alloc((void**)&d_lambda, sizeof(float));
+            alloc((void**)&d_delta, sizeof(float4));
+            alloc((void**)&d_density, sizeof(float));
+            alloc((void**)&d_aux, sizeof(float));
+            if (usePosHalf) alloc((void**)&d_pos_h4, sizeof(Half4));
+            if (useVelHalf) alloc((void**)&d_vel_h4, sizeof(Half4));
+            if (usePosPredHalf) alloc((void**)&d_pos_pred_h4, sizeof(Half4));
+            if (useVelHalf) alloc((void**)&d_delta_h4, sizeof(Half4));
+            if (useLambdaHalf) alloc((void**)&d_lambda_h, sizeof(__half));
+            if (useDensityHalf) alloc((void**)&d_density_h, sizeof(__half));
+            if (useAuxHalf) alloc((void**)&d_aux_h, sizeof(__half));
+            std::fprintf(stderr,
+                "[Origin][AllocateInternal][Done] cap=%u d_pos_curr=%p d_pos_next=%p nativeHalf=0\n",
+                capacity, (void*)d_pos_curr, (void*)d_pos_next);
+            checkGuards("allocateInternal.after");
+        }
+    };
+
+    inline void DeviceBuffers::release() {
+        checkGuards("release.before");
+        auto fre = [](auto*& p) { if (p) { cudaFree(p); p = nullptr; } };
+        if (nativeHalfActive) {
+            fre(d_pos_curr_native); fre(d_pos_next_native); fre(d_vel_curr_native);
+        }
+        if (ownsPosBuffers && !nativeHalfActive) { fre(d_pos_curr); fre(d_pos_next); }
+        fre(d_vel_curr); fre(d_vel_prev);
+        if (ownsPosBuffers && !nativeHalfActive) { fre(d_pos); fre(d_pos_pred); } else { d_pos = nullptr; d_pos_pred = nullptr; }
+        fre(d_lambda); fre(d_delta); fre(d_density); fre(d_aux);
+        fre(d_pos_h4); fre(d_vel_h4); fre(d_pos_pred_h4); fre(d_delta_h4); fre(d_prev_pos_h4);
+        fre(d_lambda_h); fre(d_density_h); fre(d_aux_h);
+        fre(d_render_pos_h4);
+        capacity =0; posPredExternal = false; externalPingPong = false; ownsPosBuffers = true; nativeHalfActive = false;
+        usePosHalf = useVelHalf = usePosPredHalf = useLambdaHalf = useDensityHalf = useAuxHalf = false; useRenderHalf = false;
+        checkGuards("release.after");
     }
-
-    // 内部双缓冲块
-    fre(d_pos_block);
-    fre(d_pos_half_block);
-
-    // 指针还原，外部别名不释放
-    d_pos_curr = d_pos_next = nullptr;
-    d_pos = nullptr;
-    if (!externalPosPredAlias) {
-        d_pos_pred = nullptr;
-    }
-    else {
-        // 外部别名模式：外部 ptr 由外部管理，不做释放
-        d_pos_pred = nullptr;
-    }
-
-    fre(d_vel_curr);
-    fre(d_vel_prev);
-    fre(d_lambda);
-    fre(d_delta);
-    fre(d_density);
-    fre(d_aux);
-
-    // Half mirrors （位置 half 已经通过 half block 释放，避免 double free）
-    d_pos_h4 = nullptr;
-    d_pos_pred_h4 = nullptr;
-    fre(d_vel_h4);
-    fre(d_prev_pos_h4);
-    fre(d_render_pos_h4);
-
-    fre(d_lambda_h);
-    fre(d_density_h);
-    fre(d_aux_h);
-
-    capacity = 0;
-    posPredExternal = false;
-    externalPosPredAlias = false;
-    externalPingPong = false;
-    ownsPosBuffers = true;
-    nativeHalfActive = false;
-    usePosHalf = useVelHalf = usePosPredHalf =
-        useLambdaHalf = useDensityHalf = useAuxHalf = false;
-    useRenderHalf = false;
-
-    checkGuards("release.after");
-}
 
 } // namespace sim

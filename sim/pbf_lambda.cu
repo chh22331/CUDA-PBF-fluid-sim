@@ -18,10 +18,6 @@ namespace {
         uint32_t sortedIdx = blockIdx.x * blockDim.x + threadIdx.x;
         if (sortedIdx >= N) return;
 
-        uint32_t pid = indicesSorted[sortedIdx];
-        uint32_t ghostCount = dp.ghostCount; uint32_t fluidCount = (ghostCount <= N)? (N - ghostCount): N; bool isGhost = (pid >= fluidCount);
-        if (isGhost && !dp.ghostContribLambda) { lambda[pid]=0.f; return; }
-
         const sim::GridBounds& grid = dp.grid;
         const sim::KernelCoeffs& kc = dp.kernel;
         const float restDensity = dp.restDensity;
@@ -66,7 +62,7 @@ namespace {
 
                     for (uint32_t k = beg; k < end; ++k) {
                         if (hasCap && neighborContrib >= cap) break;
-                        uint32_t j = indicesSorted[k]; bool jGhost = (j >= fluidCount); if (jGhost && !dp.ghostContribLambda) continue;
+                        uint32_t j = indicesSorted[k];
                         if (j == i) continue;
                         float4 pj4 = sim::PrecisionTraits::loadPosPred(pos_pred_fp32, pos_pred_h4, j);
                         float3 pj = make_float3(pj4.x, pj4.y, pj4.z);
@@ -138,8 +134,6 @@ namespace {
         uint32_t sortedIdx = blockIdx.x * blockDim.x + threadIdx.x;
         if (sortedIdx >= N) return;
 
-        uint32_t pid = indicesSorted[sortedIdx]; uint32_t ghostCount = dp.ghostCount; uint32_t fluidCount = (ghostCount <= N)? (N - ghostCount): N; bool isGhost = (pid >= fluidCount); if (isGhost && !dp.ghostContribLambda){ lambda[pid]=0.f; return; }
-
         const sim::GridBounds& grid = dp.grid;
         const sim::KernelCoeffs& kc = dp.kernel;
         const float restDensity = dp.restDensity;
@@ -183,7 +177,7 @@ namespace {
 
                     for (uint32_t k = beg; k < end; ++k) {
                         if (hasCap && neighborContrib >= cap) break;
-                        uint32_t j = indicesSorted[k]; bool jGhost = (j >= fluidCount); if (jGhost && !dp.ghostContribLambda) continue;
+                        uint32_t j = indicesSorted[k];
                         if (j == i) continue;
 
                         float4 pj4 = sim::PrecisionTraits::loadPosPred(pos_pred_fp32, pos_pred_h4, j);
