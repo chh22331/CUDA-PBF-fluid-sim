@@ -16,15 +16,15 @@ namespace sim {
 // Wrapper implementations for initial phases (Integrate + Velocity)
 static void KernelIntegrate(DeviceBuffers& bufs, GridBuffers&, const SimParams& p, cudaStream_t s){
     bool useMP=(UseHalfForPosition(p,Stage::Integration,bufs)&&UseHalfForVelocity(p,Stage::Integration,bufs));
-    if(useMP) LaunchIntegratePredMP(bufs.d_pos,bufs.d_vel,bufs.d_pos_pred,bufs.d_pos_h4,bufs.d_vel_h4,p.gravity,p.dt,p.numParticles,s);
-    else LaunchIntegratePred(bufs.d_pos,bufs.d_vel,bufs.d_pos_pred,p.gravity,p.dt,p.numParticles,s);
-    LaunchBoundary(bufs.d_pos_pred,bufs.d_vel,p.grid,0.0f,p.numParticles,s);
+    if(useMP) LaunchIntegratePredMP(bufs.d_pos_curr, bufs.d_vel, bufs.d_pos_next, bufs.d_pos_curr_h4, bufs.d_vel_h4, p.gravity, p.dt, p.numParticles, s);
+    else LaunchIntegratePred(bufs.d_pos_curr, bufs.d_vel, bufs.d_pos_next, p.gravity, p.dt, p.numParticles, s);
+    LaunchBoundary(bufs.d_pos_next, bufs.d_vel, p.grid,0.0f, p.numParticles, s);
 }
 
 static void KernelVelocity(DeviceBuffers& bufs, GridBuffers&, const SimParams& p, cudaStream_t s){
     bool useMP=UseHalfForPosition(p,Stage::VelocityUpdate,bufs);
-    if(useMP) LaunchVelocityMP(bufs.d_vel,bufs.d_pos,bufs.d_pos_pred,bufs.d_pos_h4,bufs.d_pos_pred_h4,1.0f/p.dt,p.numParticles,s);
-    else LaunchVelocity(bufs.d_vel,bufs.d_pos,bufs.d_pos_pred,1.0f/p.dt,p.numParticles,s);
+    if(useMP) LaunchVelocityMP(bufs.d_vel, bufs.d_pos_curr, bufs.d_pos_next, bufs.d_pos_curr_h4, bufs.d_pos_next_h4,1.0f/p.dt, p.numParticles, s);
+    else LaunchVelocity(bufs.d_vel, bufs.d_pos_curr, bufs.d_pos_next,1.0f/p.dt, p.numParticles, s);
 }
 
 // Registration helper

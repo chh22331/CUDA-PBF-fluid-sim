@@ -129,7 +129,7 @@ namespace sim {
         GenerateNozzleLattice(emit, ep, simParams, frameIndex, poissonPts, s_h_pos, s_h_vel);
         ApplyJitter(emit, s_h_pos, simParams, cc, frameIndex);
         const uint32_t begin = simParams.numParticles;
-        CUDA_CHECK(cudaMemcpyAsync(buffers.d_pos + begin, s_h_pos, sizeof(float4) * emit, cudaMemcpyHostToDevice, stream));
+        CUDA_CHECK(cudaMemcpyAsync(buffers.d_pos_curr + begin, s_h_pos, sizeof(float4) * emit, cudaMemcpyHostToDevice, stream));
         CUDA_CHECK(cudaMemcpyAsync(buffers.d_vel + begin, s_h_vel, sizeof(float4) * emit, cudaMemcpyHostToDevice, stream));
         simParams.numParticles += emit;
         return emit;

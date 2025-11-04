@@ -254,7 +254,6 @@ namespace gfx {
     }
 
     void RendererD3D12::Shutdown(){
-        m_sharedParticleBuffer.Reset();
         m_paletteBuffer.Reset();
         if (m_timelineFenceSharedHandle) { CloseHandle(m_timelineFenceSharedHandle); m_timelineFenceSharedHandle=nullptr; }
         m_timelineFence.Reset();
@@ -275,27 +274,6 @@ namespace gfx {
         if(!m_timelineFence) return;
         ++m_renderFenceValue; // 偶数序列：0,1,2,... 这里不强制偶数，仅单调即可
         m_device.queue()->Signal(m_timelineFence.Get(), m_renderFenceValue);
-    }
-
-    bool RendererD3D12::CreateSharedParticleBuffer(uint32_t numElements,uint32_t strideBytes,HANDLE& outSharedHandle){
-        outSharedHandle=nullptr;
-        const UINT64 sizeBytes=UINT64(numElements)*UINT64(strideBytes);
-        D3D12_HEAP_PROPERTIES hp{}; hp.Type=D3D12_HEAP_TYPE_DEFAULT;
-        D3D12_RESOURCE_DESC rd{}; rd.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER; rd.Width=sizeBytes; rd.Height=1;
-        rd.DepthOrArraySize=1; rd.MipLevels=1; rd.Format=DXGI_FORMAT_UNKNOWN; rd.SampleDesc={1,0};
-        rd.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR; rd.Flags=D3D12_RESOURCE_FLAG_NONE;
-        Microsoft::WRL::ComPtr<ID3D12Resource> res;
-        if(FAILED(m_device.device()->CreateCommittedResource(&hp,D3D12_HEAP_FLAG_SHARED,&rd,
-            D3D12_RESOURCE_STATE_COMMON,nullptr,IID_PPV_ARGS(&res)))) return false;
-        int srvIndex=m_device.createBufferSRV(res.Get(),numElements,strideBytes);
-        if(srvIndex<0) return false;
-        HANDLE handle=nullptr;
-        if(FAILED(m_device.device()->CreateSharedHandle(res.Get(),nullptr,GENERIC_ALL,nullptr,&handle))) return false;
-        m_sharedParticleBuffer=res;
-        m_particleSrvIndex=srvIndex;
-        m_particleCount=numElements;
-        outSharedHandle=handle;
-        return true;
     }
 
     bool RendererD3D12::CreateSharedParticleBufferIndexed(int slot, uint32_t numElements, uint32_t strideBytes, HANDLE& outSharedHandle) {
@@ -342,7 +320,7 @@ namespace gfx {
         }
         std::fprintf(stderr,
             "[Render.PingPong][Register] ptrA=%p ptrB=%p activePing=%d srvIndex=%d srvA=%d srvB=%d\n",
-            ptrA, ptrB, m_activePingIndex, m_particleSrvIndex,
+            ptrA, ptrB, m_activePingIndex, m_particleSrvIndexPing[m_activePingIndex],
             m_particleSrvIndexPing[0], m_particleSrvIndexPing[1]);
     }
 
@@ -352,7 +330,6 @@ namespace gfx {
         for (int i = 0; i < 2; ++i) {
             if (m_knownCudaPtrs[i] == devicePtrCurr && m_particleSrvIndexPing[i] >= 0) {
                 m_activePingIndex = i;
-                m_particleSrvIndex = m_particleSrvIndexPing[i];
                 return;
             }
         }
@@ -435,33 +412,16 @@ namespace gfx {
                 bool useHalf = m_useHalfRender && m_psoPointsHalf; //运行时标志
                 cl->SetPipelineState(useHalf ? m_psoPointsHalf.Get() : m_psoPointsFloat.Get());
                 cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-                if (m_sharedParticleBuffer){
-                    D3D12_RESOURCE_BARRIER b{}; b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-                    b.Transition.pResource = m_sharedParticleBuffer.Get();
-                    b.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
-                    b.Transition.StateAfter = D3D12_RESOURCE_STATE_GENERIC_READ;
-                    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-                    cl->ResourceBarrier(1,&b);
-                }
-                PerFrameCB cb{}; float3 eye=m_camera.eye, at=m_camera.at, up=m_camera.up;
-                Mat4 V=lookAtRH(eye,at,up); float aspect=(m_device.height()>0)?(float)m_device.width()/(float)m_device.height():1.0f;
-                Mat4 P=perspectiveFovRH_ZO(Deg2Rad(m_camera.fovYDeg),aspect,m_camera.nearZ,m_camera.farZ);
-                Mat4 VP=mul(P,V); std::memcpy(cb.viewProj,VP.m,sizeof(cb.viewProj));
+                PerFrameCB cb{}; Mat4 V=lookAtRH(m_camera.eye,m_camera.at,m_camera.up); float aspect=(m_device.height()>0)?(float)m_device.width()/(float)m_device.height():1.0f;
+                Mat4 P=perspectiveFovRH_ZO(Deg2Rad(m_camera.fovYDeg),aspect,m_camera.nearZ,m_camera.farZ); Mat4 VP=mul(P,V); std::memcpy(cb.viewProj,VP.m,sizeof(cb.viewProj));
                 cb.screenSize[0]=(float)m_device.width(); cb.screenSize[1]=(float)m_device.height();
                 cb.particleRadiusPx=m_visual.particleRadiusPx; cb.thicknessScale=m_visual.thicknessScale;
                 cb.groups=m_groups; cb.particlesPerGroup=m_particlesPerGroup;
                 cl->SetGraphicsRoot32BitConstants(0,sizeof(PerFrameCB)/4,&cb,0);
-                if(m_particleSrvIndex>=0 && m_particleCount>0){ auto gpuPos=m_device.srvGpuHandleAt((uint32_t)m_particleSrvIndex); cl->SetGraphicsRootDescriptorTable(1,gpuPos); }
+                int currentSrv = (m_activePingIndex>=0)? m_particleSrvIndexPing[m_activePingIndex] : -1;
+                if(currentSrv>=0 && m_particleCount>0){ auto gpuPos=m_device.srvGpuHandleAt((uint32_t)currentSrv); cl->SetGraphicsRootDescriptorTable(1,gpuPos); }
                 if(m_paletteSrvIndex>=0){ auto gpuPal=m_device.srvGpuHandleAt((uint32_t)m_paletteSrvIndex); cl->SetGraphicsRootDescriptorTable(2,gpuPal); }
                 UINT instanceCount=m_particleCount; if(instanceCount>0) cl->DrawInstanced(6,instanceCount,0,0);
-                if (m_sharedParticleBuffer){
-                    D3D12_RESOURCE_BARRIER b{}; b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-                    b.Transition.pResource = m_sharedParticleBuffer.Get();
-                    b.Transition.StateBefore = D3D12_RESOURCE_STATE_GENERIC_READ;
-                    b.Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
-                    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-                    cl->ResourceBarrier(1,&b);
-                }
                 m_device.writeTimestamp();
             };
             m_fg.addPass(points);
@@ -481,21 +441,6 @@ namespace gfx {
         m_fg.execute([&](const std::string& name, double ms) { profiler.addRow(name, ms); });
         if (m_device.readbackPassTimesMs(gpuMs))
             for (size_t i = 0; i < gpuMs.size(); ++i) profiler.addRow(std::string("gpu_") + std::to_string(i), gpuMs[i]);
-    }
-
-    bool RendererD3D12::ImportSharedBufferAsSRV(HANDLE sharedHandle, uint32_t numElements, uint32_t strideBytes, int& outSrvIndex) {
-        ID3D12Resource* res = nullptr;
-        if (!m_device.openSharedResource(sharedHandle, __uuidof(ID3D12Resource), (void**)&res)) return false;
-        Microsoft::WRL::ComPtr<ID3D12Resource> local; local.Attach(res);
-        int srvIndex = m_device.createBufferSRV(local.Get(), numElements, strideBytes);
-        if (srvIndex <0) return false;
-        m_sharedParticleBuffer = local;
-        m_particleSrvIndex = srvIndex;
-        m_particleCount = numElements;
-        outSrvIndex = srvIndex;
-        // 根据 strideBytes 判断是否为 half 压缩（8 字节）
-        if (strideBytes ==8) m_useHalfRender = true; //资源导入驱动 half
-        return true;
     }
 
     void RendererD3D12::WaitForGPU(){ 

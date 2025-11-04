@@ -45,14 +45,10 @@ namespace gfx {
         void RenderFrame(core::Profiler& profiler);
         void Shutdown();
 
-        // 原单缓冲接口（保留兼容）
-        bool CreateSharedParticleBuffer(uint32_t numElements, uint32_t strideBytes, HANDLE& outSharedHandle);
         // 新增：带索引创建（slot=0/1），用于双外部 ping-pong
         bool CreateSharedParticleBufferIndexed(int slot, uint32_t numElements, uint32_t strideBytes, HANDLE& outSharedHandle);
         // 新增：根据当前 CUDA 设备指针切换显示 SRV
         void UpdateParticleSRVForPingPong(const void* devicePtrCurr);
-        // 原单缓冲导入
-        bool ImportSharedBufferAsSRV(HANDLE sharedHandle, uint32_t numElements, uint32_t strideBytes, int& outSrvIndex);
         // 新增：登记双缓冲 CUDA 设备指针（A=当前，B=下一帧），并立即尝试切换到 A
         void RegisterPingPongCudaPtrs(const void* ptrA, const void* ptrB);
 
@@ -81,17 +77,10 @@ namespace gfx {
         int  m_activePingIndex = 0;
 
     private:
-        void createThicknessResources();
-        void createNormalResources();
-
         D3D12Device m_device;
         core::FrameGraph m_fg;
 
         float m_clearColor[4] = { 0.1f, 0.2f, 0.35f, 1.0f };
-
-        // 单缓冲旧字段（仍用于单外部预测）
-        Microsoft::WRL::ComPtr<ID3D12Resource> m_sharedParticleBuffer;
-        int m_particleSrvIndex = -1;
 
         uint32_t m_particleCount = 0;
 

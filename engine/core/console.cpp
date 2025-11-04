@@ -46,7 +46,7 @@ RuntimeConsole& Instance() {
 }
 
 void BuildSimParams(const RuntimeConsole& c, sim::SimParams& out) {
- // 原有赋值保持
+ // existing mapping kept
  out.numParticles = c.sim.numParticles;
  out.maxParticles = c.sim.maxParticles;
  out.dt = c.sim.dt;
@@ -56,79 +56,66 @@ void BuildSimParams(const RuntimeConsole& c, sim::SimParams& out) {
  out.solverIters = c.sim.solverIters;
  out.maxNeighbors = (c.perf.neighbor_cap >0) ? c.perf.neighbor_cap : c.sim.maxNeighbors;
  out.useMixedPrecision = c.sim.useMixedPrecision;
- out.sortEveryN = (((1) > (c.sim.sortEveryN)) ? (1) : (c.sim.sortEveryN));
+ out.sortEveryN = (c.sim.sortEveryN <1 ?1 : c.sim.sortEveryN);
  out.boundaryRestitution = c.sim.boundaryRestitution;
  out.pbf = c.sim.pbf;
  out.xsph_c = c.sim.xsph_c;
-
- // ====== 新增：覆盖 pbf 的动态稳定性开关 ======
+ // map pbf dynamic flags
  out.pbf.xpbd_enable = c.sim.xpbd_enable ?1 :0;
  out.pbf.compliance = (c.sim.xpbd_enable ? c.sim.xpbd_compliance :0.0f);
  out.pbf.lambda_warm_start_enable = c.sim.lambda_warm_start_enable ?1 :0;
  out.pbf.lambda_warm_start_decay = c.sim.lambda_warm_start_decay;
  out.pbf.semi_implicit_integration_enable = c.sim.integrate_semi_implicit ?1 :0;
-
+ // kernel/h derivation
  float h = (c.sim.smoothingRadius >0.f) ? c.sim.smoothingRadius :0.02f;
  if (c.sim.deriveHFromRadius) {
- const float r = (((1e-8f) > (c.sim.particleRadiusWorld)) ? (1e-8f) : (c.sim.particleRadiusWorld));
- const float h_from_r = c.sim.h_over_r * r;
- if (h_from_r >0.0f) h = h_from_r;
+ const float r = (c.sim.particleRadiusWorld <1e-8f ?1e-8f : c.sim.particleRadiusWorld);
+ float h_from_r = c.sim.h_over_r * r;
+ if (h_from_r >0.f) h = h_from_r;
  }
  out.kernel = sim::MakeKernelCoeffs(h);
-
+ // mass modes
  float mass = c.sim.particleMass;
  switch (c.sim.massMode) {
  case RuntimeConsole::Simulation::MassMode::UniformLattice: {
- const float factor = (c.sim.lattice_spacing_factor_h >0.f) ? c.sim.lattice_spacing_factor_h :1.0f;
- const float spacing = factor * h;
+ float factor = (c.sim.lattice_spacing_factor_h >0.f) ? c.sim.lattice_spacing_factor_h :1.0f;
+ float spacing = factor * h;
  mass = c.sim.restDensity * spacing * spacing * spacing;
- break;
- }
+ break; }
  case RuntimeConsole::Simulation::MassMode::SphereByRadius: {
- const float r = (((1e-8f) > (c.sim.particleRadiusWorld)) ? (1e-8f) : (c.sim.particleRadiusWorld));
+ const float r = (c.sim.particleRadiusWorld <1e-8f ?1e-8f : c.sim.particleRadiusWorld);
  const float pi =3.14159265358979323846f;
- const float vol = c.sim.particleVolumeScale * (4.0f /3.0f) * pi * r * r * r;
+ float vol = c.sim.particleVolumeScale * (4.0f/3.0f) * pi * r * r * r;
  mass = vol * c.sim.restDensity;
- break;
- }
+ break; }
  case RuntimeConsole::Simulation::MassMode::Explicit:
- default:
- break;
+ default: break;
  }
  out.particleMass = mass;
-
+ // grid build
  float cell = c.sim.cellSize;
  if (cell <=0.0f) {
  float m = (c.perf.grid_cell_size_multiplier >0.0f) ? c.perf.grid_cell_size_multiplier :1.0f;
- cell = (((1e-6f) > (m * h)) ? (1e-6f) : (m * h));
+ cell = (m * h <1e-6f ?1e-6f : m * h);
  }
  out.grid.mins = c.sim.gridMins;
  out.grid.maxs = c.sim.gridMaxs;
  out.grid.cellSize = cell;
- auto clamp_ge1 = [](int v) { return (((1) > (v)) ? (1) : (v)); };
- float3 size = make_float3(out.grid.maxs.x - out.grid.mins.x,
- out.grid.maxs.y - out.grid.mins.y,
- out.grid.maxs.z - out.grid.mins.z);
+ auto clamp_ge1 = [](int v) { return v <1 ?1 : v; };
+ float3 size = make_float3(out.grid.maxs.x - out.grid.mins.x, out.grid.maxs.y - out.grid.mins.y, out.grid.maxs.z - out.grid.mins.z);
  int dx = clamp_ge1((int)std::ceil(size.x / cell));
  int dy = clamp_ge1((int)std::ceil(size.y / cell));
  int dz = clamp_ge1((int)std::ceil(size.z / cell));
  out.grid.dim = make_int3(dx, dy, dz);
-
- // ========== 精度映射：调用抽取模块 ==========
+ // precision mapping
  out.precision = MapPrecision(c.sim);
-
- // 幽灵粒子占位（由 GenerateBoundaryGhostParticles 更新 runtime计数后重新 BuildSimParams 可刷新）
+ // ghost count passthrough
  out.ghostParticleCount = c.sim.boundaryGhost.ghost_count_runtime;
-
- // ===== 原生 half 主存储激活判定 =====
- if (src.nativeHalfPrefer) {
- bool posHalf = (out.precision.positionStore == sim::NumericType::FP16_Packed);
- bool velHalf = (out.precision.velocityStore == sim::NumericType::FP16_Packed);
- bool predHalf = (out.precision.predictedPosStore == sim::NumericType::FP16_Packed);
- if (posHalf && velHalf && predHalf) {
- out.precision.nativeHalfActive = true; //由 allocator选择 allocateNativeHalfPrimary
- }
- }
+ // ===== 新增：哈希压缩网格参数映射 =====
+ out.useHashedGrid = c.perf.use_hashed_grid;
+ out.compactRebuildEveryN = (c.perf.sort_compact_every_n >=1) ? c.perf.sort_compact_every_n :1;
+ out.compactBinarySearch = c.perf.compact_binary_search;
+ out.logGridCompactStats = c.perf.log_grid_compact_stats;
 }
 
 void BuildDeviceParams(const RuntimeConsole& c, sim::DeviceParams& out) {

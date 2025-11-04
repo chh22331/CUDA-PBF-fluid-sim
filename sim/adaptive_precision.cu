@@ -1,10 +1,10 @@
-ï»¿#include "simulator.h"
+#include "simulator.h"
 #include "precision_traits.cuh"
 #include "../engine/core/console.h"
 
 namespace sim {
 
-    // ç®€å•æ–¹å·®ä¼°è®¡è¾…åŠ©ï¼ˆåœ¨çº¿ï¼‰
+    // ¼òµ¥·½²î¹À¼Æ¸¨Öú£¨ÔÚÏß£©
     struct OnlineVar {
         double mean = 0.0;
         double m2 = 0.0;
@@ -21,22 +21,22 @@ namespace sim {
         }
     };
 
-    // æ ¹æ® SimStats ä¸æ§åˆ¶å°é˜ˆå€¼å†³å®šæ˜¯å¦è°ƒæ•´åªè¯»åŠç²¾å¼€å…³
+    // ¸ù¾İ SimStats Óë¿ØÖÆÌ¨ãĞÖµ¾ö¶¨ÊÇ·ñµ÷ÕûÖ»¶Á°ë¾«¿ª¹Ø
     bool Simulator::adaptivePrecisionCheck(const SimStats& stats) {
         const auto& cfg = console::Instance().sim.precision;
         if (!cfg.adaptivePrecision) return false;
         if (cfg.adaptCheckEveryN <= 0) return false;
         if ((m_frameIndex % (uint64_t)cfg.adaptCheckEveryN) != 0ull) return false;
 
-        // ä¼°ç®—ç›¸å¯¹å¯†åº¦è¯¯å·®ï¼ˆä¸ target restDensity æ¯”è¾ƒï¼‰
-        double rhoRel = stats.avgRhoRel; // å·²æ˜¯ avgRho / restDensity
-        double densityError = fabs(rhoRel - 1.0); // ä¸ 1 æ¯”è¾ƒ
+        // ¹ÀËãÏà¶ÔÃÜ¶ÈÎó²î£¨Óë target restDensity ±È½Ï£©
+        double rhoRel = stats.avgRhoRel; // ÒÑÊÇ avgRho / restDensity
+        double densityError = fabs(rhoRel - 1.0); // Óë 1 ±È½Ï
         m_adaptDensityErrorHistory.add(densityError);
 
-        // Î» æ–¹å·®ï¼ˆéœ€è¦æœ‰ lambda ç¼“å†²ï¼›è‹¥æ— åˆ™è·³è¿‡ï¼‰
+        // ¦Ë ·½²î£¨ĞèÒªÓĞ lambda »º³å£»ÈôÎŞÔòÌø¹ı£©
         double lambdaVar = 0.0;
         if (m_bufs.d_lambda && stats.N > 0) {
-            // é‡‡æ ·å­é›†ï¼ˆé™åˆ¶é«˜å¼€é”€ï¼‰
+            // ²ÉÑù×Ó¼¯£¨ÏŞÖÆ¸ß¿ªÏú£©
             uint32_t sample = std::min<uint32_t>(stats.N, 8192);
             std::vector<float> h_lambda(sample);
             cudaMemcpy(h_lambda.data(), m_bufs.d_lambda, sizeof(float) * sample, cudaMemcpyDeviceToHost);
@@ -49,7 +49,7 @@ namespace sim {
         bool needUpgrade = (densityError > (double)cfg.densityErrorTolerance) ||
             (lambdaVar > (double)cfg.lambdaVarianceTolerance);
 
-        // å†·å´/å›é€€ç­–ç•¥ï¼šè‹¥è¿ç»­å¤šæ¬¡ä½äº 50% é˜ˆå€¼åˆ™å°è¯•æ¢å¤ half åŠ è½½
+        // ÀäÈ´/»ØÍË²ßÂÔ£ºÈôÁ¬Ğø¶à´ÎµÍÓÚ 50% ãĞÖµÔò³¢ÊÔ»Ö¸´ half ¼ÓÔØ
         bool canDowngrade = (!needUpgrade) &&
             (densityError < 0.5 * (double)cfg.densityErrorTolerance) &&
             (lambdaVar < 0.5 * (double)cfg.lambdaVarianceTolerance);
@@ -63,7 +63,7 @@ namespace sim {
                 ++m_adaptUpgradeHold;
             }
             else {
-                // æå‡ï¼šç¦ç”¨åŠç²¾åªè¯»ï¼ˆå›åˆ° FP32 ä¸»ç¼“å†²åŠ è½½ï¼‰
+                // ÌáÉı£º½ûÓÃ°ë¾«Ö»¶Á£¨»Øµ½ FP32 Ö÷»º³å¼ÓÔØ£©
                 if (m_adaptHalfDisabled == false) {
                     m_adaptHalfDisabled = true;
                     changed = true;
@@ -76,14 +76,14 @@ namespace sim {
                 ++m_adaptDowngradeHold;
             }
             else {
-                // å›é€€åˆ°åŠç²¾åªè¯»
+                // »ØÍËµ½°ë¾«Ö»¶Á
                 m_adaptHalfDisabled = false;
                 changed = true;
                 m_adaptUpgradeHold = 0;
             }
         }
         else {
-            // ä¸­æ€§çŠ¶æ€
+            // ÖĞĞÔ×´Ì¬
             m_adaptUpgradeHold = 0;
             m_adaptDowngradeHold = 0;
         }
@@ -93,14 +93,14 @@ namespace sim {
                 "[AdaptivePrecision] Frame=%llu | densityErr=%.4g lambdaVar=%.4g | halfDisabled=%d\n",
                 (unsigned long long)m_frameIndex, densityError, lambdaVar, m_adaptHalfDisabled ? 1 : 0);
 
-            // åˆ·æ–°è®¾å¤‡å¸¸é‡è§†å›¾ï¼ˆä¸æ”¹å˜åˆ†é…ï¼Œä»…ä¿®æ”¹ useHalf* æ ‡å¿—é€»è¾‘æ˜ å°„ï¼‰
+            // Ë¢ĞÂÉè±¸³£Á¿ÊÓÍ¼£¨²»¸Ä±ä·ÖÅä£¬½öĞŞ¸Ä useHalf* ±êÖ¾Âß¼­Ó³Éä£©
             SimPrecision pr = m_params.precision;
             if (m_adaptHalfDisabled) {
-                // æš‚å­˜ç”¨æˆ·åŸå§‹é…ç½®
+                // Ôİ´æÓÃ»§Ô­Ê¼ÅäÖÃ
                 pr._adaptive_pos_prev = pr.positionStore;
                 pr._adaptive_vel_prev = pr.velocityStore;
                 pr._adaptive_pos_pred_prev = pr.predictedPosStore;
-                // å¼ºåˆ¶è§†å›¾æ”¹ä¸º FP32ï¼ˆä¿ç•™ç¼“å†²ä¸é‡Šæ”¾ï¼Œå¿«é€Ÿåˆ‡æ¢ï¼‰
+                // Ç¿ÖÆÊÓÍ¼¸ÄÎª FP32£¨±£Áô»º³å²»ÊÍ·Å£¬¿ìËÙÇĞ»»£©
                 pr.positionStore = NumericType::FP32;
                 pr.velocityStore = NumericType::FP32;
                 pr.predictedPosStore = NumericType::FP32;
