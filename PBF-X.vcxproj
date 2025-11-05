@@ -115,7 +115,8 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <CudaCompile Include="kernel.cu" />
-    <CudaCompile Include="sim\boundary_globals.cu" />
+    <CudaCompile Include="sim\adaptive_precision.cu" />
+    <CudaCompile Include="sim\boundary.cu" />
     <CudaCompile Include="sim\cell_compact.cu" />
     <CudaCompile Include="sim\cell_ranges.cu" />
     <CudaCompile Include="sim\delta_globals.cu" />
@@ -153,6 +154,7 @@
     <ClCompile Include="engine\gfx\renderer.cpp" />
     <ClCompile Include="sim\emitter.cpp" />
     <ClCompile Include="sim\graph_builder.cpp" />
+    <ClCompile Include="sim\kernel_dispatcher.cpp" />
     <ClCompile Include="sim\kernel_fallback.cpp" />
     <ClCompile Include="sim\phases.cpp" />
     <ClCompile Include="sim\poisson_disk.cpp" />

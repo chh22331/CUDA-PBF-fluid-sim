@@ -20,10 +20,6 @@ namespace sim {
         uint32_t* d_compactCount = nullptr; // size = 1
         uint32_t  compactCapacity = 0;
 
-        // Hash (direct) mapping: cellKey -> compact index (size = numCells)
-        // 0xFFFFFFFF表示该 cell为空（未出现在压缩列表中）
-        uint32_t* d_keyToCompact = nullptr;
-
         // Sort temporary storage
         void*   d_sortTemp = nullptr;
         size_t  sortTempBytes = 0;
@@ -46,16 +42,11 @@ namespace sim {
             numCells = nCells;
             cudaMalloc((void**)&d_cellStart, sizeof(uint32_t) * numCells);
             cudaMalloc((void**)&d_cellEnd, sizeof(uint32_t) * numCells);
-            // allocate hash mapping buffer
-            if (d_keyToCompact) cudaFree(d_keyToCompact);
-            cudaMalloc((void**)&d_keyToCompact, sizeof(uint32_t) * numCells);
-            cudaMemset(d_keyToCompact, 0xFF, sizeof(uint32_t) * numCells);
         }
         void resizeGridRanges(uint32_t nCells) {
             if (d_cellStart) cudaFree(d_cellStart);
             if (d_cellEnd)   cudaFree(d_cellEnd);
-            if (d_keyToCompact) cudaFree(d_keyToCompact);
-            d_cellStart = d_cellEnd = nullptr; d_keyToCompact = nullptr;
+            d_cellStart = d_cellEnd = nullptr;
             numCells = nCells;
             if (numCells) allocGridRanges(numCells);
         }
@@ -87,7 +78,6 @@ namespace sim {
             auto fre = [](auto*& p) { if (p) { cudaFree(p); p = nullptr; } };
             fre(d_cellStart); fre(d_cellEnd);
             fre(d_cellUniqueKeys); fre(d_cellOffsets); fre(d_compactCount);
-            fre(d_keyToCompact);
             fre(d_sortTemp);
             sortTempBytes = 0; compactCapacity = 0; numCells = 0;
         }

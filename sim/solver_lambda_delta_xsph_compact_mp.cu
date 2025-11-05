@@ -33,12 +33,6 @@ extern "C" {
         if (lo < M && uniqueKeys[lo] == target) return (int)lo;
         return -1;
     }
-    // 新增：哈希表直接查找（d_keyToCompact由构建阶段填充；值=段索引或0xFFFFFFFF）
-    __device__ inline int hashLookupKey(const uint32_t* keyToCompact, uint32_t numCells, uint32_t target){ 
-        if(!keyToCompact || target>=numCells) return -1; 
-        uint32_t v=keyToCompact[target]; 
-        return (v==0xFFFFFFFFu)? -1 : (int)v; 
-    }
 
     __device__ inline float W_poly6(const KernelCoeffs& kc, float r2) {
         if (r2 >= kc.h2) return 0.f;
@@ -64,8 +58,6 @@ extern "C" {
         const uint32_t* __restrict__ uniqueKeys,
         const uint32_t* __restrict__ offsets,     // 长度 >= M+1
         const uint32_t* __restrict__ compactCount,
-        const uint32_t* __restrict__ keyToCompact,
-        uint32_t numCells,
         DeviceParams dp,
         uint32_t N)
     {
@@ -103,7 +95,7 @@ extern "C" {
                     int x = cx + dx;
                     if (x < 0 || x >= dim.x) continue;
                     uint32_t nKey = makeKey(x, y, z, dim);
-                    int idxCell = keyToCompact ? hashLookupKey(keyToCompact, numCells, nKey) : binSearchKey(uniqueKeys, M, nKey);
+                    int idxCell = binSearchKey(uniqueKeys, M, nKey);
                     if (idxCell < 0) continue;
                     uint32_t start = offsets[idxCell];
                     uint32_t end = offsets[idxCell + 1];
@@ -152,8 +144,6 @@ extern "C" {
         const uint32_t* __restrict__ uniqueKeys,
         const uint32_t* __restrict__ offsets,
         const uint32_t* __restrict__ compactCount,
-        const uint32_t* __restrict__ keyToCompact,
-        uint32_t numCells,
         DeviceParams dp,
         uint32_t N)
     {
@@ -187,7 +177,7 @@ extern "C" {
                 for (int dx = -1; dx <= 1; ++dx) {
                     int x = cx + dx; if (x < 0 || x >= dim.x) continue;
                     uint32_t nKey = makeKey(x, y, z, dim);
-                    int idxCell = keyToCompact ? hashLookupKey(keyToCompact, numCells, nKey) : binSearchKey(uniqueKeys, M, nKey);
+                    int idxCell = binSearchKey(uniqueKeys, M, nKey);
                     if (idxCell < 0) continue;
                     uint32_t start = offsets[idxCell];
                     uint32_t end = offsets[idxCell + 1];
@@ -244,8 +234,6 @@ extern "C" {
         const uint32_t* __restrict__ uniqueKeys,
         const uint32_t* __restrict__ offsets,
         const uint32_t* __restrict__ compactCount,
-        const uint32_t* __restrict__ keyToCompact,
-        uint32_t numCells,
         DeviceParams dp,
         uint32_t N)
     {
@@ -284,7 +272,7 @@ extern "C" {
                 for (int dx = -1; dx <= 1; ++dx) {
                     int x = cx + dx; if (x < 0 || x >= dim.x) continue;
                     uint32_t nKey = makeKey(x, y, z, dim);
-                    int idxCell = keyToCompact ? hashLookupKey(keyToCompact, numCells, nKey) : binSearchKey(uniqueKeys, M, nKey);
+                    int idxCell = binSearchKey(uniqueKeys, M, nKey);
                     if (idxCell < 0) continue;
                     uint32_t start = offsets[idxCell];
                     uint32_t end = offsets[idxCell + 1];
@@ -324,8 +312,6 @@ extern "C" {
         const uint32_t* uniqueKeys,
         const uint32_t* offsets,
         const uint32_t* compactCount,
-        const uint32_t* keyToCompact,
-        uint32_t numCells,
         DeviceParams dp,
         uint32_t N,
         cudaStream_t s)
@@ -335,7 +321,7 @@ extern "C" {
             pos_pred_fp32, pos_pred_h4,
             indicesSorted, keysSorted,
             uniqueKeys, offsets, compactCount,
-            keyToCompact, numCells, dp, N);
+            dp, N);
     }
 
     void LaunchDeltaApplyCompactMP(
@@ -349,8 +335,6 @@ extern "C" {
         const uint32_t* uniqueKeys,
         const uint32_t* offsets,
         const uint32_t* compactCount,
-        const uint32_t* keyToCompact,
-        uint32_t numCells,
         DeviceParams dp,
         uint32_t N,
         cudaStream_t s)
@@ -361,7 +345,7 @@ extern "C" {
             pos_pred_fp32, pos_pred_h4,
             indicesSorted, keysSorted,
             uniqueKeys, offsets, compactCount,
-            keyToCompact, numCells, dp, N);
+            dp, N);
     }
 
     void LaunchXSPHCompactMP(
@@ -375,8 +359,6 @@ extern "C" {
         const uint32_t* uniqueKeys,
         const uint32_t* offsets,
         const uint32_t* compactCount,
-        const uint32_t* keyToCompact,
-        uint32_t numCells,
         DeviceParams dp,
         uint32_t N,
         cudaStream_t s)
@@ -388,7 +370,7 @@ extern "C" {
             pos_pred_fp32, pos_pred_h4,
             indicesSorted, keysSorted,
             uniqueKeys, offsets, compactCount,
-            keyToCompact, numCells, dp, N);
+            dp, N);
     }
 
 } // extern "C"

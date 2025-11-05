@@ -20,22 +20,22 @@ public:
 
 class PhasePipeline {
 public:
-    // 统一：仅保留单一阶段序列（原 full + cheap 合并）
-    const std::vector<std::unique_ptr<IPhase>>& phases() const { return m_phases; }
+    const std::vector<std::unique_ptr<IPhase>>& full() const { return m_full; }
+    const std::vector<std::unique_ptr<IPhase>>& cheap() const { return m_cheap; }
 
     template<typename P, typename...Args>
-    void addPhase(Args&&...args){ m_phases.push_back(std::make_unique<P>(std::forward<Args>(args)...)); }
+    void addFull(Args&&...args){ m_full.push_back(std::make_unique<P>(std::forward<Args>(args)...)); }
+    template<typename P, typename...Args>
+    void addCheap(Args&&...args){ m_cheap.push_back(std::make_unique<P>(std::forward<Args>(args)...)); }
 
-    // 原 runFull/runCheap 合并
-    void runAll(SimulationContext& ctx, const SimParams& p, cudaStream_t s) {
-        for(auto& ph: m_phases) ph->run(ctx,p,s);
-        m_post.runAll(ctx,p,s);
-    }
+    void runFull(SimulationContext& ctx, const SimParams& p, cudaStream_t s){ for(auto& ph: m_full) ph->run(ctx,p,s); m_post.runAll(ctx,p,s);}    
+    void runCheap(SimulationContext& ctx, const SimParams& p, cudaStream_t s){ for(auto& ph: m_cheap) ph->run(ctx,p,s); m_post.runAll(ctx,p,s);}   
 
     PostOpsPipeline& post(){ return m_post; }
 private:
-    std::vector<std::unique_ptr<IPhase>> m_phases; // [CHEAP_REMOVED] 统一序列
-    PostOpsPipeline m_post;
+    std::vector<std::unique_ptr<IPhase>> m_full;  // includes grid/hash/sort phases
+    std::vector<std::unique_ptr<IPhase>> m_cheap; // excludes heavy grid rebuild
+    PostOpsPipeline m_post; // pluggable post operations
 };
 
 // Populate default phases

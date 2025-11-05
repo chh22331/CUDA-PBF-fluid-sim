@@ -14,14 +14,18 @@ extern "C" void LaunchVelocityGlobals(float dtInv, uint32_t N, cudaStream_t);
 // Phase Integrate：只调用预测积分 + 初次无弹性边界（不使用 XSPH）
 namespace sim {
 
-// 只做预测积分，不做边界
-static void KernelIntegrate(DeviceBuffers&, GridBuffers&, const SimParams& p, cudaStream_t s) {
-    LaunchIntegratePredGlobals(p.gravity, p.dt, p.numParticles, s);
+// Wrapper implementations for initial phases (Integrate + Velocity)
+static void KernelIntegrate(DeviceBuffers& bufs, GridBuffers&, const SimParams& p, cudaStream_t s){
+    bool useMP=(UseHalfForPosition(p,Stage::Integration,bufs)&&UseHalfForVelocity(p,Stage::Integration,bufs));
+    if(useMP) LaunchIntegratePredMP(bufs.d_pos,bufs.d_vel,bufs.d_pos_pred,bufs.d_pos_h4,bufs.d_vel_h4,p.gravity,p.dt,p.numParticles,s);
+    else LaunchIntegratePred(bufs.d_pos,bufs.d_vel,bufs.d_pos_pred,p.gravity,p.dt,p.numParticles,s);
+    LaunchBoundary(bufs.d_pos_pred,bufs.d_vel,p.grid,0.0f,p.numParticles,s);
 }
 
-// 只做速度更新，不做边界
-static void KernelVelocity(DeviceBuffers&, GridBuffers&, const SimParams& p, cudaStream_t s) {
-    LaunchVelocityGlobals(1.0f / p.dt, p.numParticles, s);
+static void KernelVelocity(DeviceBuffers& bufs, GridBuffers&, const SimParams& p, cudaStream_t s){
+    bool useMP=UseHalfForPosition(p,Stage::VelocityUpdate,bufs);
+    if(useMP) LaunchVelocityMP(bufs.d_vel,bufs.d_pos,bufs.d_pos_pred,bufs.d_pos_h4,bufs.d_pos_pred_h4,1.0f/p.dt,p.numParticles,s);
+    else LaunchVelocity(bufs.d_vel,bufs.d_pos,bufs.d_pos_pred,1.0f/p.dt,p.numParticles,s);
 }
 
 static void RegisterBaseKernels(KernelDispatcher& kd) {

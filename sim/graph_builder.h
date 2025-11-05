@@ -25,11 +25,12 @@ namespace sim {
             int lastUpdateFrame);
 
     private:
-        // 录制统一序列（原 full/cheap 二选一移除）
-        bool recordSequence(Simulator& sim, const SimParams& p, cudaGraph_t& outGraph);
+        // 录制指定序列到新 graph
+        bool recordSequencePipeline(Simulator& sim, const SimParams& p, bool full,
+            cudaGraph_t& outGraph);
 
         // 释放旧资源
-        void destroyGraph(Simulator& sim);
+        void destroyGraphs(Simulator& sim);
 
         // 写入捕获参数签名
         void updateCapturedSignature(Simulator& sim, const SimParams& p, uint32_t numCells);

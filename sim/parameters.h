@@ -133,12 +133,6 @@ namespace sim {
 
         // ======== 新增：幽灵边界粒子计数（静态，设备侧用于邻域贡献，不参与积分） ========
         uint32_t ghostParticleCount = 0; // 由 Simulator 在生成后填充
-
-        // ===== 哈希压缩网格新增参数 =====
-        bool     useHashedGrid = true;    // perf.use_hashed_grid
-        int      compactRebuildEveryN = 32; // perf.sort_compact_every_n (>=1)
-        bool     compactBinarySearch = true; // perf.compact_binary_search
-        bool     logGridCompactStats = false; // perf.log_grid_compact_stats
     };
 
     struct DeviceParams {
