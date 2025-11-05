@@ -19,14 +19,15 @@ namespace sim {
 
     struct OnlineVarHost { double mean = 0.0; double m2 = 0.0; uint64_t n = 0; void add(double x) { ++n; double d = x - mean; mean += d / double(n); double d2 = x - mean; m2 += d * d2; } double variance() const { return (n > 1) ? (m2 / double(n - 1)) : 0.0; } };
 
+    // 统一后的持久化参数结构（与 simulator.cpp 使用保持一致）
     struct PersistentKernelArgs {
-        cudaGraphNode_t node{};
-        const void* func = nullptr;
-        cudaKernelNodeParams base{};      // 原始（用于gridDim等非参数值字段）
-        std::vector<uint8_t> valueStorage; // 参数值副本（设备指针8字节；标量4字节）
-        std::vector<void*>   paramPtrs;    // kernelParams -> 指向 valueStorage 各槽
-        std::vector<uint8_t> isPtr;        // 1=设备/托管指针；0=标量
-        uint32_t paramCount = 0;
+        cudaGraphNode_t node = nullptr;
+        void*           func = nullptr;
+        cudaKernelNodeParams base{};
+        uint32_t        paramCount = 0;        // 原始槽数量
+        std::vector<uint8_t> isPtr;            // 设备指针标记
+        std::vector<void*>   paramPtrs;        // 兼容旧逻辑（当前为空）
+        std::vector<uint8_t> valueStorage;     // 兼容旧逻辑（当前为空）
     };
 
     class GraphBuilder;
@@ -81,11 +82,10 @@ namespace sim {
 
     private:
         struct CachedKernelArgs {
-            cudaGraphNode_t node{};
-            cudaKernelNodeParams base{};
-            std::vector<void*> argStorage;      // 每个参数值的“副本”存放处
-            std::vector<void**> paramPtrs;      // kernelParams 用到的指针数组（持久）
-            std::vector<uint8_t> isPtr;         // 1 表示此参数原本语义为指针（设备/主机）
+            cudaGraphNode_t node{}; cudaKernelNodeParams base{};
+            std::vector<void*> argStorage;
+            std::vector<void**> paramPtrs;
+            std::vector<uint8_t> isPtr;
         };
 
         std::vector<CachedKernelArgs> m_posCached;
@@ -157,10 +157,7 @@ namespace sim {
         size_t m_renderHalfBytes = 0;
 
         std::vector<PersistentKernelArgs> m_persistentArgs;
-
-        // ===== 重构后使用的缓存（取代 m_posCached/m_velCached 中 argStorage 的不稳定来源） =====
         std::vector<PersistentKernelArgs*> m_posNodesPersistent;
         std::vector<PersistentKernelArgs*> m_velNodesPersistent;
-
     };
 } // namespace sim
