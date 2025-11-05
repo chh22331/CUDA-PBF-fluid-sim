@@ -33,6 +33,7 @@ namespace sim {
         void seedBoxLattice(uint32_t nx, uint32_t ny, uint32_t nz, float3 origin, float spacing);
         void seedBoxLatticeAuto(uint32_t total, float3 origin, float spacing);
         bool importPosPredFromD3D12(void* sharedHandleWin32, size_t bytes);
+        void performPingPongSwap(uint32_t N);
         bool bindExternalPosPingPong(void* sharedHandleA, size_t bytesA, void* sharedHandleB, size_t bytesB);
         uint32_t activeParticleCount() const { return m_params.numParticles; }
         bool computeStats(SimStats& out, uint32_t sampleStride = 4) const;
@@ -47,14 +48,12 @@ namespace sim {
         void debugSampleDisplacement(uint32_t sampleStride = 1024);
 
         cudaStream_t cudaStream() const { return m_stream; }
-        void syncForRender(); // 保留
+        void syncForRender();
         bool swappedThisFrame() const { return m_swappedThisFrame; }
 
-        // 时间线 fence 绑定（D3D12 shared fence -> CUDA external semaphore）
         bool bindTimelineFence(HANDLE sharedFenceHandle);
-        uint64_t lastSimFenceValue() const { return m_simFenceValue; } // 最近一次模拟完成的奇数值
+        uint64_t lastSimFenceValue() const { return m_simFenceValue; }
 
-        // 半精渲染共享：导入 D3D12 half 压缩位置缓冲，并在每帧发布
         bool importRenderHalfBuffer(void* sharedHandleWin32, size_t bytes);
         void publishRenderHalf(uint32_t count);
         void releaseRenderHalfExternal();
@@ -77,11 +76,10 @@ namespace sim {
         void kSolveIter(cudaStream_t s, const SimParams& p);
         void kVelocityAndPost(cudaStream_t s, const SimParams& p);
         bool cacheGraphNodes();
-        void patchGraphPositionPointers(bool fullGraph,float4* oldCurr,float4* oldNext,float4* oldPred);        
-        void patchGraphVelocityPointers(bool fullGraph, const float4* fromPtr, const float4* toPtr);
-        // 新增：原生 half 主存储模式下的指针热更新（针对 Half4*）
+        void patchGraphPositionPointers(float4* oldCurr, float4* oldNext);
+        void patchGraphVelocityPointers(const float4* fromPtr, const float4* toPtr);
         void patchGraphHalfPositionPointers(bool fullGraph, sim::Half4* oldCurrH, sim::Half4* oldNextH);
-        void signalSimFence(); //末尾 signal external semaphore
+        void signalSimFence();
         void debugLogPredictedPosHalf(const SimParams& p);
 
     private:
@@ -100,7 +98,7 @@ namespace sim {
         int          m_frameTimingEveryN = 1;
         bool         m_frameTimingEnabled = true;
 
-        bool         m_swappedThisFrame = false; // ping-pong swap indicator
+        bool         m_swappedThisFrame = false;
 
         cudaGraph_t     m_graphFull = nullptr;
         cudaGraphExec_t m_graphExecFull = nullptr;
@@ -151,13 +149,11 @@ namespace sim {
         std::unique_ptr<IGridStrategy> m_gridStrategy;
         PostOpsPipeline    m_postPipeline;
 
-        // External semaphore for timeline fence
         cudaExternalSemaphore_t m_extTimelineSem = nullptr;
-        uint64_t m_simFenceValue =0; // monotonically increasing simulation completion value
+        uint64_t m_simFenceValue =0;
 
-        // 渲染半精外部缓冲
         cudaExternalMemory_t m_extRenderHalf = nullptr;
-        void* m_renderHalfMappedPtr = nullptr; // 指向 D3D12 half (uint2)资源的设备指针
+        void* m_renderHalfMappedPtr = nullptr;
         size_t m_renderHalfBytes =0;
     };
 } // namespace sim

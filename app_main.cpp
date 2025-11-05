@@ -438,30 +438,20 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     // 4) D3D12-CUDA 共享粒子缓冲
     {
         const uint32_t capacity = (simParams.maxParticles > 0) ? simParams.maxParticles : simParams.numParticles;
-        if (cc.perf.use_external_pos_pingpong) {
-            HANDLE sharedA = nullptr, sharedB = nullptr;
-            renderer.CreateSharedParticleBufferIndexed(0, capacity, sizeof(float4), sharedA);
-            renderer.CreateSharedParticleBufferIndexed(1, capacity, sizeof(float4), sharedB);
+        // 移除旧的 cc.perf.use_external_pos_pingpong 标志：统一采用双缓冲 ping-pong
+        HANDLE sharedA = nullptr, sharedB = nullptr;
+        renderer.CreateSharedParticleBufferIndexed(0, capacity, sizeof(float4), sharedA);
+        renderer.CreateSharedParticleBufferIndexed(1, capacity, sizeof(float4), sharedB);
 
-            size_t bytes = size_t(capacity) * sizeof(float4);
-            if (!simulator.bindExternalPosPingPong(sharedA, bytes, sharedB, bytes)) {
-                std::fprintf(stderr, "[App][Error] bindExternalPosPingPong failed.\n");
-            }
-            CloseHandle(sharedA);
-            CloseHandle(sharedB);
+        size_t bytes = size_t(capacity) * sizeof(float4);
+        if (!simulator.bindExternalPosPingPong(sharedA, bytes, sharedB, bytes)) {
+            std::fprintf(stderr, "[App][Error] bindExternalPosPingPong failed.\n");
+        }
+        CloseHandle(sharedA);
+        CloseHandle(sharedB);
 
-            // 核心：登记两个设备指针（A=curr，B=next）
-            renderer.RegisterPingPongCudaPtrs(simulator.pingpongPosA(), simulator.pingpongPosB());
-            // 初始粒子数
-            renderer.SetParticleCount(simulator.activeParticleCount());
-        }
-        else {
-            HANDLE shared = nullptr;
-            renderer.CreateSharedParticleBuffer(capacity, sizeof(float4), shared);
-            simulator.importPosPredFromD3D12(shared, size_t(capacity) * sizeof(float4));
-            CloseHandle(shared);
-            renderer.SetParticleCount(simulator.activeParticleCount());
-        }
+        renderer.RegisterPingPongCudaPtrs(simulator.pingpongPosA(), simulator.pingpongPosB());
+        renderer.SetParticleCount(simulator.activeParticleCount());
     }
 
     // Timeline fence binding (zero CPU polling)
