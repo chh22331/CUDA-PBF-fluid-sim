@@ -20,190 +20,146 @@ extern "C" void LaunchSortPairsQuery(size_t*, const uint32_t*, uint32_t*, const 
 
 namespace sim {
 
-bool GraphBuilder::recordSequencePipeline(Simulator& sim, const SimParams& p, bool full, cudaGraph_t& outGraph) {
-    outGraph = nullptr;
+    bool GraphBuilder::recordSequencePipeline(Simulator& sim, const SimParams& p, cudaGraph_t& outGraph) {
+        outGraph = nullptr;
 
-    // 预处理：排序临时空间与稀疏网格 scratch 只在 full 路径检查，但 cheap 仍需 hashed scratch
-    if (full) {
         if (p.numParticles > 0) {
             size_t tempBytes = 0;
             LaunchSortPairsQuery(&tempBytes,
-                                 sim.m_grid.d_cellKeys,
-                                 sim.m_grid.d_cellKeys_sorted,
-                                 sim.m_grid.d_indices,
-                                 sim.m_grid.d_indices_sorted,
-                                 p.numParticles,
-                                 sim.m_stream);
+                sim.m_grid.d_cellKeys,
+                sim.m_grid.d_cellKeys_sorted,
+                sim.m_grid.d_indices,
+                sim.m_grid.d_indices_sorted,
+                p.numParticles,
+                sim.m_stream);
             sim.ensureSortTemp(tempBytes);
         }
         if (sim.m_useHashedGrid) {
             if (!EnsureCellCompactScratch(p.numParticles, 256)) {
                 if (console::Instance().debug.printErrors)
-                    std::fprintf(stderr, "[GraphBuilder][Error] EnsureCellCompactScratch failed (full).\n");
+                    std::fprintf(stderr, "[GraphBuilder][Error] EnsureCellCompactScratch failed.\n");
                 return false;
             }
         }
-    } else {
-        if (sim.m_useHashedGrid) {
-            if (!EnsureCellCompactScratch(p.numParticles, 256)) {
-                if (console::Instance().debug.printErrors)
-                    std::fprintf(stderr, "[GraphBuilder][Error] EnsureCellCompactScratch failed (cheap).\n");
-                return false;
-            }
+
+        if (sim.m_pipeline.full().empty()) {
+            BuildDefaultPipelines(sim.m_pipeline);
+            PostOpsConfig cfg{};
+            cfg.enableXsph = (p.xsph_c > 0.f);
+            cfg.enableBoundary = true;
+            cfg.enableRecycle = true;
+            sim.m_pipeline.post().configure(cfg, sim.m_useHashedGrid, cfg.enableXsph);
         }
-    }
 
-    // 确保 pipeline 已构建
-    if (sim.m_pipeline.full().empty()) {
-        BuildDefaultPipelines(sim.m_pipeline);
-        PostOpsConfig cfg{};
-        cfg.enableXsph     = (p.xsph_c > 0.f);
-        cfg.enableBoundary = true;
-        cfg.enableRecycle  = true;
-        sim.m_pipeline.post().configure(cfg, sim.m_useHashedGrid, cfg.enableXsph);
-    }
+        sim.m_ctx.bufs = &sim.m_bufs;
+        sim.m_ctx.grid = &sim.m_grid;
+        sim.m_ctx.useHashedGrid = sim.m_useHashedGrid;
+        sim.m_ctx.gridStrategy = sim.m_gridStrategy.get();
+        sim.m_ctx.dispatcher = &sim.m_kernelDispatcher;
 
-    // 同步上下文指针（可能容量扩展后重分配）
-    sim.m_ctx.bufs = &sim.m_bufs;
-    sim.m_ctx.grid = &sim.m_grid;
-    sim.m_ctx.useHashedGrid = sim.m_useHashedGrid;
-    sim.m_ctx.gridStrategy = sim.m_gridStrategy.get();
-    sim.m_ctx.dispatcher = &sim.m_kernelDispatcher;
-
-    CUDA_CHECK(cudaStreamBeginCapture(sim.m_stream, cudaStreamCaptureModeGlobal));
-
-    if (full) {
+        CUDA_CHECK(cudaStreamBeginCapture(sim.m_stream, cudaStreamCaptureModeGlobal));
         sim.m_pipeline.runFull(sim.m_ctx, p, sim.m_stream);
-    } else {
-        sim.m_pipeline.runCheap(sim.m_ctx, p, sim.m_stream);
+        CUDA_CHECK(cudaStreamEndCapture(sim.m_stream, &outGraph));
+        BindDeviceGlobalsFrom(sim.m_bufs);
+        return outGraph != nullptr;
     }
 
-    CUDA_CHECK(cudaStreamEndCapture(sim.m_stream, &outGraph));
-    BindDeviceGlobalsFrom(sim.m_bufs);
-    return outGraph != nullptr;
-}
-
-void GraphBuilder::destroyGraphs(Simulator& sim) {
-    if (sim.m_graphExecFull) { cudaGraphExecDestroy(sim.m_graphExecFull); sim.m_graphExecFull = nullptr; }
-    if (sim.m_graphFull) { cudaGraphDestroy(sim.m_graphFull); sim.m_graphFull = nullptr; }
-    if (sim.m_graphExecCheap) { cudaGraphExecDestroy(sim.m_graphExecCheap); sim.m_graphExecCheap = nullptr; }
-    if (sim.m_graphCheap) { cudaGraphDestroy(sim.m_graphCheap); sim.m_graphCheap = nullptr; }
-    sim.m_cachedNodesReady = false;
-}
-
-void GraphBuilder::updateCapturedSignature(Simulator& sim, const SimParams& p, uint32_t numCells) {
-    sim.m_captured.numParticles = p.numParticles;
-    sim.m_captured.numCells = numCells;
-    sim.m_captured.solverIters = p.solverIters;
-    sim.m_captured.maxNeighbors = p.maxNeighbors;
-    sim.m_captured.sortEveryN = p.sortEveryN;
-    sim.m_captured.grid = p.grid;
-    sim.m_captured.kernel = p.kernel;
-    sim.m_captured.dt = p.dt;
-    sim.m_captured.gravity = p.gravity;
-    sim.m_captured.restDensity = p.restDensity;
-    sim.m_paramTracker.capture(p, numCells);
-}
-
-bool GraphBuilder::structuralChanged(const Simulator& sim, const SimParams& p) const {
-    return sim.structuralGraphChange(p);
-}
-
-bool GraphBuilder::dynamicChanged(const Simulator& sim, const SimParams& p) const {
-    if (structuralChanged(sim, p)) return false;
-    return sim.paramOnlyGraphChange(p);
-}
-
-GraphBuildResult GraphBuilder::BuildStructural(Simulator& sim, const SimParams& p) {
-    GraphBuildResult res{};
-    if (!sim.m_bufs.d_pos || !sim.m_bufs.d_vel || !sim.m_bufs.d_pos_pred) {
-        std::fprintf(stderr, "[GraphBuilder][Error] Required buffers null before structural capture.\n");
+    void GraphBuilder::destroyGraphs(Simulator& sim) {
+        if (sim.m_graphExecFull) { cudaGraphExecDestroy(sim.m_graphExecFull); sim.m_graphExecFull = nullptr; }
+        if (sim.m_graphFull) { cudaGraphDestroy(sim.m_graphFull); sim.m_graphFull = nullptr; }
+        sim.m_cachedNodesReady = false;
     }
 
-    destroyGraphs(sim);
-
-    cudaGraph_t newFull = nullptr;
-    cudaGraph_t newCheap = nullptr;
-
-    if (!recordSequencePipeline(sim, p, true, newFull)) {
-        std::fprintf(stderr, "[GraphBuilder][Error] recordSequence(full) failed.\n");
-        return res;
+    void GraphBuilder::updateCapturedSignature(Simulator& sim, const SimParams& p, uint32_t numCells) {
+        sim.m_captured.numParticles = p.numParticles;
+        sim.m_captured.numCells = numCells;
+        sim.m_captured.solverIters = p.solverIters;
+        sim.m_captured.maxNeighbors = p.maxNeighbors;
+        sim.m_captured.sortEveryN = p.sortEveryN;
+        sim.m_captured.grid = p.grid;
+        sim.m_captured.kernel = p.kernel;
+        sim.m_captured.dt = p.dt;
+        sim.m_captured.gravity = p.gravity;
+        sim.m_captured.restDensity = p.restDensity;
+        sim.m_paramTracker.capture(p, numCells);
     }
-    if (!recordSequencePipeline(sim, p, false, newCheap)) {
-        std::fprintf(stderr, "[GraphBuilder][Error] recordSequence(cheap) failed.\n");
-        cudaGraphDestroy(newFull);
-        return res;
+
+    bool GraphBuilder::structuralChanged(const Simulator& sim, const SimParams& p) const {
+        return sim.structuralGraphChange(p);
     }
 
-    CUDA_CHECK(cudaGraphInstantiate(&sim.m_graphExecFull, newFull, nullptr, nullptr, 0));
-    CUDA_CHECK(cudaGraphInstantiate(&sim.m_graphExecCheap, newCheap, nullptr, nullptr, 0));
-    CUDA_CHECK(cudaGraphUpload(sim.m_graphExecFull, sim.m_stream));
-    CUDA_CHECK(cudaGraphUpload(sim.m_graphExecCheap, sim.m_stream));
+    bool GraphBuilder::dynamicChanged(const Simulator& sim, const SimParams& p) const {
+        if (structuralChanged(sim, p)) return false;
+        return sim.paramOnlyGraphChange(p);
+    }
 
-    sim.m_graphFull = newFull;
-    sim.m_graphCheap = newCheap;
+    GraphBuildResult GraphBuilder::BuildStructural(Simulator& sim, const SimParams& p) {
+        GraphBuildResult res{};
+        if (!sim.m_bufs.d_pos || !sim.m_bufs.d_vel || !sim.m_bufs.d_pos_pred) {
+            std::fprintf(stderr, "[GraphBuilder][Error] Required buffers null before structural capture.\n");
+        }
 
-    sim.cacheGraphNodes();
+        destroyGraphs(sim);
 
-    int3 dim = GridSystem::ComputeDims(p.grid);
-    uint32_t numCells = GridSystem::NumCells(dim);
-    updateCapturedSignature(sim, p, numCells);
+        cudaGraph_t newFull = nullptr;
+        if (!recordSequencePipeline(sim, p, newFull)) {
+            std::fprintf(stderr, "[GraphBuilder][Error] recordSequence(full) failed.\n");
+            return res;
+        }
 
-    sim.m_graphDirty = false;
-    sim.m_paramDirty = false;
-    res.structuralRebuilt = true;
-    res.reuseSucceeded = true;
-    return res;
-}
+        CUDA_CHECK(cudaGraphInstantiate(&sim.m_graphExecFull, newFull, nullptr, nullptr, 0));
+        CUDA_CHECK(cudaGraphUpload(sim.m_graphExecFull, sim.m_stream));
+        sim.m_graphFull = newFull;
 
-GraphBuildResult GraphBuilder::UpdateDynamic(Simulator& sim, const SimParams& p,
-                                             int minIntervalFrames,
-                                             int frameIndex,
-                                             int lastUpdateFrame) {
-    GraphBuildResult res{};
-    if (!sim.m_paramDirty) return res;
+        sim.cacheGraphNodes();
 
-    if (minIntervalFrames > 0 && lastUpdateFrame >= 0 &&
-        (frameIndex - lastUpdateFrame) < minIntervalFrames) {
+        int3 dim = GridSystem::ComputeDims(p.grid);
+        uint32_t numCells = GridSystem::NumCells(dim);
+        updateCapturedSignature(sim, p, numCells);
+
+        sim.m_graphDirty = false;
         sim.m_paramDirty = false;
+        res.structuralRebuilt = true;
+        res.reuseSucceeded = true;
         return res;
     }
 
-    if (structuralChanged(sim, p)) {
-        sim.m_graphDirty = true;
+    GraphBuildResult GraphBuilder::UpdateDynamic(Simulator& sim, const SimParams& p,
+        int /*minIntervalFrames*/,
+        int frameIndex,
+        int lastUpdateFrame) {
+        GraphBuildResult res{};
+        if (!sim.m_paramDirty) return res;
+
+        // 简化：不做最小间隔节流（如需可在此加条件）
+        if (structuralChanged(sim, p)) {
+            sim.m_graphDirty = true;
+            return res;
+        }
+
+        cudaGraph_t newFull = nullptr;
+        if (!recordSequencePipeline(sim, p, newFull)) {
+            sim.m_graphDirty = true; return res;
+        }
+
+        cudaGraphExecUpdateResultInfo infoFull{};
+        cudaError_t eFull = cudaGraphExecUpdate(sim.m_graphExecFull, newFull, &infoFull);
+
+        if (newFull)  cudaGraphDestroy(newFull);
+
+        bool success = (eFull == cudaSuccess && infoFull.result == cudaGraphExecUpdateSuccess);
+        if (!success) { sim.m_graphDirty = true; return res; }
+
+        sim.cacheGraphNodes();
+        sim.m_captured.dt = p.dt;
+        sim.m_captured.gravity = p.gravity;
+        sim.m_captured.restDensity = p.restDensity;
+        sim.m_captured.kernel = p.kernel;
+        sim.m_paramTracker.capture(p, sim.m_captured.numCells);
+        sim.m_paramDirty = false;
+        res.dynamicUpdated = true;
+        res.reuseSucceeded = true;
         return res;
     }
-
-    cudaGraph_t newFull = nullptr;
-    cudaGraph_t newCheap = nullptr;
-
-    if (!recordSequencePipeline(sim, p, true, newFull)) {
-        sim.m_graphDirty = true; return res; }
-    if (!recordSequencePipeline(sim, p, false, newCheap)) {
-        cudaGraphDestroy(newFull); sim.m_graphDirty = true; return res; }
-
-    cudaGraphExecUpdateResultInfo infoFull{}, infoCheap{};
-    cudaError_t eFull  = cudaGraphExecUpdate(sim.m_graphExecFull, newFull, &infoFull);
-    cudaError_t eCheap = cudaGraphExecUpdate(sim.m_graphExecCheap, newCheap, &infoCheap);
-
-    bool success = (eFull == cudaSuccess && infoFull.result == cudaGraphExecUpdateSuccess &&
-                    eCheap == cudaSuccess && infoCheap.result == cudaGraphExecUpdateSuccess);
-
-    if (newFull)  cudaGraphDestroy(newFull);
-    if (newCheap) cudaGraphDestroy(newCheap);
-
-    if (!success) { sim.m_graphDirty = true; return res; }
-
-    sim.cacheGraphNodes();
-    sim.m_captured.dt = p.dt;
-    sim.m_captured.gravity = p.gravity;
-    sim.m_captured.restDensity = p.restDensity;
-    sim.m_captured.kernel = p.kernel;
-    sim.m_paramTracker.capture(p, sim.m_captured.numCells);
-    sim.m_paramDirty = false;
-    res.dynamicUpdated = true;
-    res.reuseSucceeded = true;
-    return res;
-}
 
 } // namespace sim
