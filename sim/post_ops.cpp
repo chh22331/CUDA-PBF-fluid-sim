@@ -41,13 +41,12 @@ void RecycleOp::run(SimulationContext& ctx, const SimParams& p, cudaStream_t s) 
         p.grid, p.dt, p.numParticles, 0, s);
 
     static uint64_t s_lastCopyFrame = UINT64_MAX;
-    // externalPingPong 模式完全零拷贝：不执行回退复制
     bool needCopy = (p.numParticles > 0) && !ctx.pingPongPos && !ctx.bufs->posPredExternal && !ctx.bufs->externalPingPong;
     if (needCopy) {
         if (s_lastCopyFrame == g_simFrameIndex) return;
         s_lastCopyFrame = g_simFrameIndex;
         size_t bytes = sizeof(float4) * p.numParticles;
-        const char* reason = ClassifyRecycleFallback(ctx); // 复用已有分类函数
+        const char* reason = ClassifyRecycleFallback(ctx);
         std::fprintf(stderr,
             "[RecycleFallback][Frame=%llu] reason=%s d_pos=%p d_pos_pred=%p bytes=%zu (%.3f MB)\n",
             (unsigned long long)g_simFrameIndex,
@@ -56,27 +55,43 @@ void RecycleOp::run(SimulationContext& ctx, const SimParams& p, cudaStream_t s) 
             (void*)ctx.bufs->d_pos_pred,
             bytes, bytes / (1024.0 * 1024.0));
         prof::Range rCopy("D2D.pos_pred->pos", prof::Color(0xE0, 0x30, 0x30));
-        cudaMemcpyAsync(ctx.bufs->d_pos, ctx.bufs->d_pos_pred,
-            bytes, cudaMemcpyDeviceToDevice, s);
+        cudaMemcpyAsync(ctx.bufs->d_pos, ctx.bufs->d_pos_pred, bytes, cudaMemcpyDeviceToDevice, s);
     }
-    ctx.effectiveVel = effectiveVel;
+    // ctx.effectiveVel 已保持为最终速度缓冲，无需额外赋值
 }
 
 void XsphOp::run(SimulationContext& ctx, const SimParams& p, cudaStream_t s) {
     if (p.xsph_c <= 0.f || p.numParticles == 0) return;
-    prof::Range r("PostOp.XSPH", prof::Color(0x30,0x70,0xC0));
+    prof::Range r("PostOp.XSPH", prof::Color(0x30, 0x70, 0xC0));
     DeviceParams dp = MakeDP(p);
-    prof::Range r("PostOp.XSPH", prof::Color(0x30,0x70,0xC0));
-    // Write XSPH result directly into d_vel (eliminate d_delta -> d_vel copy).
     bool useMP = (UseHalfForPosition(p, Stage::XSPH, *ctx.bufs) && UseHalfForVelocity(p, Stage::XSPH, *ctx.bufs));
-    if(ctx.useHashedGrid){
-        if(useMP) LaunchXSPHCompactMP(ctx.bufs->d_vel, ctx.bufs->d_vel, ctx.bufs->d_vel_h4, ctx.bufs->d_pos_pred, ctx.bufs->d_pos_pred_h4, ctx.grid->d_indices_sorted, ctx.grid->d_cellKeys_sorted, ctx.grid->d_cellUniqueKeys, ctx.grid->d_cellOffsets, ctx.grid->d_compactCount, dp, p.numParticles, s);
-        else      LaunchXSPHCompact(ctx.bufs->d_vel, ctx.bufs->d_vel, ctx.bufs->d_pos_pred, ctx.grid->d_indices_sorted, ctx.grid->d_cellKeys_sorted, ctx.grid->d_cellUniqueKeys, ctx.grid->d_cellOffsets, ctx.grid->d_compactCount, dp, p.numParticles, s);
-    } else {
-        if(useMP) LaunchXSPHMP(ctx.bufs->d_vel, ctx.bufs->d_vel, ctx.bufs->d_vel_h4, ctx.bufs->d_pos_pred, ctx.bufs->d_pos_pred_h4, ctx.grid->d_indices_sorted, ctx.grid->d_cellKeys_sorted, ctx.grid->d_cellStart, ctx.grid->d_cellEnd, dp, p.numParticles, s);
-        else      LaunchXSPH(ctx.bufs->d_vel, ctx.bufs->d_vel, ctx.bufs->d_pos_pred, ctx.grid->d_indices_sorted, ctx.grid->d_cellKeys_sorted, ctx.grid->d_cellStart, ctx.grid->d_cellEnd, dp, p.numParticles, s);
+    if (ctx.useHashedGrid) {
+        if (useMP)
+            LaunchXSPHCompactMP(ctx.bufs->d_vel, ctx.bufs->d_vel, ctx.bufs->d_vel_h4,
+                ctx.bufs->d_pos_pred, ctx.bufs->d_pos_pred_h4,
+                ctx.grid->d_indices_sorted, ctx.grid->d_cellKeys_sorted,
+                ctx.grid->d_cellUniqueKeys, ctx.grid->d_cellOffsets, ctx.grid->d_compactCount,
+                dp, p.numParticles, s);
+        else
+            LaunchXSPHCompact(ctx.bufs->d_vel, ctx.bufs->d_vel, ctx.bufs->d_pos_pred,
+                ctx.grid->d_indices_sorted, ctx.grid->d_cellKeys_sorted,
+                ctx.grid->d_cellUniqueKeys, ctx.grid->d_cellOffsets, ctx.grid->d_compactCount,
+                dp, p.numParticles, s);
     }
-    ctx.effectiveVel = ctx.bufs->d_vel; // effective velocity is now final velocity
+    else {
+        if (useMP)
+            LaunchXSPHMP(ctx.bufs->d_vel, ctx.bufs->d_vel, ctx.bufs->d_vel_h4,
+                ctx.bufs->d_pos_pred, ctx.bufs->d_pos_pred_h4,
+                ctx.grid->d_indices_sorted, ctx.grid->d_cellKeys_sorted,
+                ctx.grid->d_cellStart, ctx.grid->d_cellEnd,
+                dp, p.numParticles, s);
+        else
+            LaunchXSPH(ctx.bufs->d_vel, ctx.bufs->d_vel, ctx.bufs->d_pos_pred,
+                ctx.grid->d_indices_sorted, ctx.grid->d_cellKeys_sorted,
+                ctx.grid->d_cellStart, ctx.grid->d_cellEnd,
+                dp, p.numParticles, s);
+    }
+    ctx.effectiveVel = ctx.bufs->d_vel;
 }
 
 void PostOpsPipeline::configure(const PostOpsConfig& cfg, bool useHashedGrid, bool hasXsph) {

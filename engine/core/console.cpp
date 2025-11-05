@@ -121,7 +121,7 @@ void BuildSimParams(const RuntimeConsole& c, sim::SimParams& out) {
  out.ghostParticleCount = c.sim.boundaryGhost.ghost_count_runtime;
 
  // ===== 原生 half 主存储激活判定 =====
- if (src.nativeHalfPrefer) {
+ if (c.sim.precision.nativeHalfPrefer) {
  bool posHalf = (out.precision.positionStore == sim::NumericType::FP16_Packed);
  bool velHalf = (out.precision.velocityStore == sim::NumericType::FP16_Packed);
  bool predHalf = (out.precision.predictedPosStore == sim::NumericType::FP16_Packed);
