@@ -229,11 +229,11 @@ extern "C" void LaunchLambdaCompactHalf(
 }
 
 extern "C" void LaunchDeltaApplyCompactHalf(
-    float4* pos_pred,
-    float4* delta,
-    const float* lambda,
-    const float4* pos_pred_fp32,
-    const Half4* pos_pred_h4,
+    float4* pos_pred,              // 目标 FP32 位置写入
+    float4* delta,                 // 位移输出（可选）
+    const float* lambda,           // λ FP32
+    const float4* pos_pred_fp32,   // 源 FP32 位置（用于邻居读取）
+    const Half4* pos_pred_h4,      // 源 Half 位置（用于邻居读取, 可能为空）
     const uint32_t* indicesSorted,
     const uint32_t* keysSorted,
     const uint32_t* uniqueKeys,
@@ -246,8 +246,11 @@ extern "C" void LaunchDeltaApplyCompactHalf(
 {
     (void)forceFp32Accum;
     if (N == 0) return;
-    KDeltaApplyHalfCompact<float, float> << <gridFor(N), 256, 0, s >> > (
-        pos_pred, delta, lambda,
+    // 修正参数顺序与数量：补上目的 Half4*（当前未使用传 nullptr），并与 kernel 形参对齐
+    KDeltaApplyHalfCompact<float, float> <<<gridFor(N), 256, 0, s>>>(
+        pos_pred, (Half4*)nullptr,
+        delta,
+        lambda,
         pos_pred_fp32, pos_pred_h4,
         indicesSorted, keysSorted,
         uniqueKeys, offsets, compactCount,
