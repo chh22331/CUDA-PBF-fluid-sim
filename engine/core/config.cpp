@@ -33,10 +33,12 @@ namespace {
         return !ec;
     }
 
+    // —— 将 io 用 tmp 中的同名字段覆盖（仅白名单映射的那几个） —— //
     static void ApplyWhitelistDiff(const std::vector<std::string>& whitelist,
                                    const console::RuntimeConsole& tmp,
                                    console::RuntimeConsole& io,
                                    config::State& st) {
+        // 注意：仅覆盖以下少量字段，保证 M0 可用；未实现的白名单项忽略
         for (const auto& k : whitelist) {
             if (k == "simulation.solver_iterations") {
                 io.sim.solverIters = tmp.sim.solverIters;
@@ -47,16 +49,23 @@ namespace {
             } else if (k == "viewer.point_size_px") {
                 io.viewer.point_size_px = tmp.viewer.point_size_px;
             } else if (k == "performance.sort_frequency") {
-                // 保留占位（未实现）
+                // 未实现 sort_frequency 概念，对应到 io.sim.sortEveryN（every_step=1）
+                // 若后续引入完整枚举，可在此处转换
+                // 保持不变以免误伤当前逻辑
             } else if (k == "viewer.color_mode") {
-                // 未实现
+                // 当前 RuntimeConsole 未包含 color_mode，忽略
             } else if (k == "profile") {
+                // 仅更新状态，不做 profiles 覆盖（M0）：
+                // 如果需要真正应用 profiles，可扩展至 JSON 分支
+                // st.activeProfile 在 LoadFile 中已刷新
             }
         }
     }
 
 #if !PBFX_HAVE_JSON
+    // —— 极简 JSON 解析兜底：只解析我们要的少量字段（容错有限，确保 M0 不因为缺少 JSON 库而链接失败） —— //
     static bool parseBool(const std::string& s, size_t& pos, bool& out) {
+        // 跳过空白
         while (pos < s.size() && isspace((unsigned char)s[pos])) ++pos;
         if (s.compare(pos, 4, "true") == 0) { out = true; pos += 4; return true; }
         if (s.compare(pos, 5, "false") == 0) { out = false; pos += 5; return true; }
@@ -99,12 +108,14 @@ namespace {
         return false;
     }
     static bool findObject(const std::string& s, const std::string& key, size_t from, size_t& objBegin, size_t& objEnd) {
+        // 简单查找 "key" : { ... }
         size_t kpos = s.find("\"" + key + "\"", from);
         if (kpos == std::string::npos) return false;
         size_t colon = s.find(':', kpos);
         if (colon == std::string::npos) return false;
         size_t brace = s.find('{', colon);
         if (brace == std::string::npos) return false;
+        // 匹配花括号
         int depth = 0; size_t i = brace;
         for (; i < s.size(); ++i) {
             if (s[i] == '{') ++depth;
@@ -152,10 +163,11 @@ namespace {
     }
 #endif
 
-} // namespace
+} // anonymous
 
 namespace config {
 
+    // 以“Merge”策略填充 cc：仅当 JSON 存在某字段时才覆盖现值
     static void MergeIntoConsole_Safe(console::RuntimeConsole& cc,
 #if PBFX_HAVE_JSON
         const json& j,
@@ -166,6 +178,7 @@ namespace config {
 #endif
     ) {
 #if PBFX_HAVE_JSON
+        // system
         if (j.contains("system") && j["system"].is_object()) {
             const auto& s = j["system"];
             if (s.contains("resolution") && s["resolution"].is_array() && s["resolution"].size() >= 2) {
@@ -175,6 +188,7 @@ namespace config {
             if (s.contains("vsync")) cc.app.vsync = s["vsync"].get<bool>();
             if (s.contains("csv_stats_path")) cc.app.csv_path = s["csv_stats_path"].get<std::string>();
         }
+        // viewer
         if (j.contains("viewer") && j["viewer"].is_object()) {
             const auto& v = j["viewer"];
             if (v.contains("enabled")) cc.viewer.enabled = v["enabled"].get<bool>();
@@ -190,20 +204,24 @@ namespace config {
                 cc.viewer.background_color[2] = v["background_color"][2].get<float>();
             }
         }
+        // performance
         if (j.contains("performance") && j["performance"].is_object()) {
             const auto& p = j["performance"];
             if (p.contains("grid_cell_size_multiplier")) cc.perf.grid_cell_size_multiplier = p["grid_cell_size_multiplier"].get<float>();
             if (p.contains("neighbor_cap")) cc.perf.neighbor_cap = p["neighbor_cap"].get<int>();
             if (p.contains("launch_bounds_tbs")) cc.perf.launch_bounds_tbs = p["launch_bounds_tbs"].get<int>();
             if (p.contains("min_blocks_per_sm")) cc.perf.min_blocks_per_sm = p["min_blocks_per_sm"].get<int>();
-            // use_cuda_graphs 已移除：忽略输入配置
+            if (p.contains("use_cuda_graphs")) cc.perf.use_cuda_graphs = p["use_cuda_graphs"].get<bool>();
             if (p.contains("use_hashed_grid")) cc.perf.use_hashed_grid = p["use_hashed_grid"].get<bool>();
             if (p.contains("sort_compact_every_n")) cc.perf.sort_compact_every_n = p["sort_compact_every_n"].get<int>();
             if (p.contains("compact_binary_search")) cc.perf.compact_binary_search = p["compact_binary_search"].get<bool>();
             if (p.contains("log_grid_compact_stats")) cc.perf.log_grid_compact_stats = p["log_grid_compact_stats"].get<bool>();
         }
+        // simulation（仅 M0 需要的子集）
         if (j.contains("simulation") && j["simulation"].is_object()) {
             const auto& s = j["simulation"];
+            if (s.contains("dt_min")) {/*M0 不用*/}
+            if (s.contains("dt_max")) {/*M0 不用*/}
             if (s.contains("cfl")) cc.sim.cfl = s["cfl"].get<float>();
             if (s.contains("rest_density")) cc.sim.restDensity = s["rest_density"].get<float>();
             if (s.contains("kernel_radius")) cc.sim.smoothingRadius = s["kernel_radius"].get<float>();
@@ -211,9 +229,11 @@ namespace config {
             if (s.contains("max_neighbors")) cc.sim.maxNeighbors = s["max_neighbors"].get<int>();
             if (s.contains("xsph_c")) cc.sim.xsph_c = s["xsph_c"].get<float>();
         }
+        // profile 名
         if (j.contains("profile") && j["profile"].is_string()) {
             if (state) state->activeProfile = j["profile"].get<std::string>();
         }
+        // profiles（M0：仅应用能映射到现有 RuntimeConsole 的少量字段）
         if (state && !state->activeProfile.empty() && j.contains("profiles") && j["profiles"].is_object()) {
             const auto& pr = j["profiles"];
             auto it = pr.find(state->activeProfile);
@@ -227,16 +247,21 @@ namespace config {
                 if (P.contains("performance") && P["performance"].is_object()) {
                     const auto& pp = P["performance"];
                     if (pp.contains("neighbor_cap")) cc.perf.neighbor_cap = pp["neighbor_cap"].get<int>();
+                    // mixed_precision 等暂不映射
                 }
             }
         }
 #else
+        // 无第三方 JSON 库时：极简解析（仅解析少量关键字段）
         size_t objB = 0, objE = 0;
+        // system
         if (findObject(raw, "system", 0, objB, objE)) {
             std::string sys = raw.substr(objB, objE - objB);
+            // resolution: [w,h]
             size_t ab = 0, ae = 0;
             if (findArray(sys, "resolution", 0, ab, ae)) {
                 std::string arr = sys.substr(ab, ae - ab);
+                // 解析两个数字
                 size_t p = 0; double a = 0, b = 0;
                 if (parseNumber(arr, p, a)) {
                     while (p < arr.size() && arr[p] != ',') ++p;
@@ -251,19 +276,23 @@ namespace config {
             std::string csv;
             if (findStringInObject(sys, "csv_stats_path", csv)) cc.app.csv_path = csv;
         }
+        // viewer
         if (findObject(raw, "viewer", 0, objB, objE)) {
             std::string vw = raw.substr(objB, objE - objB);
             bool en = false; if (findBoolInObject(vw, "enabled", en)) cc.viewer.enabled = en;
             double ps = 0.0; if (findNumberInObject(vw, "point_size_px", ps)) cc.viewer.point_size_px = float(ps);
+            // 背景色略
         }
+        // performance
         if (findObject(raw, "performance", 0, objB, objE)) {
             std::string pf = raw.substr(objB, objE - objB);
             double gmul = 0.0; if (findNumberInObject(pf, "grid_cell_size_multiplier", gmul)) cc.perf.grid_cell_size_multiplier = float(gmul);
             double ncap = 0.0; if (findNumberInObject(pf, "neighbor_cap", ncap)) cc.perf.neighbor_cap = int(ncap);
+            bool graphs = false; if (findBoolInObject(pf, "use_cuda_graphs", graphs)) cc.perf.use_cuda_graphs = graphs;
             bool hashed = false; if (findBoolInObject(pf, "use_hashed_grid", hashed)) cc.perf.use_hashed_grid = hashed;
             double every = 0.0; if (findNumberInObject(pf, "sort_compact_every_n", every)) cc.perf.sort_compact_every_n = int(every);
-            // use_cuda_graphs 已移除，不再解析
         }
+        // simulation
         if (findObject(raw, "simulation", 0, objB, objE)) {
             std::string sm = raw.substr(objB, objE - objB);
             double cfl = 0.0; if (findNumberInObject(sm, "cfl", cfl)) cc.sim.cfl = float(cfl);
@@ -273,6 +302,7 @@ namespace config {
             double MN = 0.0;  if (findNumberInObject(sm, "max_neighbors", MN)) cc.sim.maxNeighbors = int(MN);
             double X  = 0.0;  if (findNumberInObject(sm, "xsph_c", X)) cc.sim.xsph_c = float(X);
         }
+        // profile
         {
             size_t p = raw.find("\"profile\"");
             if (p != std::string::npos) {
@@ -303,6 +333,7 @@ namespace config {
                 if (ec) *errOut = "config: open failed: " + ec.message();
                 else     *errOut = "config: empty or unreadable file";
             }
+            // 文件缺失时不视为致命错误，直接沿用默认参数
             if (state) {
                 if (!state->missingWarnedOnce) {
                     state->lastError = (errOut ? *errOut : std::string("config missing."));
@@ -312,6 +343,7 @@ namespace config {
             return false;
         }
 
+        // 记录 mtime
         if (state) {
             std::error_code ec2;
             fs::file_time_type ft;
@@ -328,6 +360,7 @@ namespace config {
             return false;
         }
 #else
+        // 兜底解析（功能有限）
         MergeIntoConsole_Safe(io, raw, state);
 #endif
         return true;
@@ -339,6 +372,7 @@ namespace config {
         if (!fileTime(state.path, ft, ec) || ec) return false;
         if (state.lastWrite == fs::file_time_type{} || ft <= state.lastWrite) return false;
 
+        // 先完整加载到 tmp，再按白名单复制到 io
         console::RuntimeConsole tmp = io;
         State tmpState = state;
         std::string err;
@@ -350,6 +384,7 @@ namespace config {
         const auto& wl = ResolveWhitelist(&state);
         ApplyWhitelistDiff(wl, tmp, io, state);
 
+        // 同步新 mtime 与 profile
         state.lastWrite = tmpState.lastWrite;
         state.activeProfile = tmpState.activeProfile;
         return true;
