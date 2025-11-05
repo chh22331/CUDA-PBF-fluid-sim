@@ -158,7 +158,6 @@
     <ClCompile Include="engine\gfx\renderer.cpp" />
     <ClCompile Include="sim\emitter.cpp" />
     <ClCompile Include="sim\graph_builder.cpp" />
-    <ClCompile Include="sim\grid_stategy_impl.cpp" />
     <ClCompile Include="sim\kernel_dispatcher.cpp" />
     <ClCompile Include="sim\kernel_fallback.cpp" />
     <ClCompile Include="sim\phases.cpp" />
