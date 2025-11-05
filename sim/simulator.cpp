@@ -91,31 +91,28 @@ namespace sim {
 // ===================== End D2D Memcpy 插桩 =====================
 
 // ===== 外部 CUDA kernel =====
-extern "C" void LaunchIntegratePred(float4*, const float4*, float4*, float3, float, uint32_t, cudaStream_t);
-extern "C" void LaunchIntegratePredMP(const float4*, const float4*, float4*, const sim::Half4*, const sim::Half4*, float3, float, uint32_t, cudaStream_t);
 extern "C" void LaunchHashKeys(uint32_t*, uint32_t*, const float4*, sim::GridBounds, uint32_t, cudaStream_t);
 extern "C" void LaunchHashKeysMP(uint32_t*, uint32_t*, const float4*, const sim::Half4*, sim::GridBounds, uint32_t, cudaStream_t);
 extern "C" void LaunchCellRanges(uint32_t*, uint32_t*, const uint32_t*, uint32_t, uint32_t, cudaStream_t);
 extern "C" void LaunchCellRangesCompact(uint32_t*, uint32_t*, uint32_t*, const uint32_t*, uint32_t, cudaStream_t);
-extern "C" void LaunchLambda(float*, const float4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
-extern "C" void LaunchLambdaCompact(float*, const float4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
-extern "C" void LaunchLambdaCompactMP(float*, const float4*, const sim::Half4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, uint32_t, sim::DeviceParams, uint32_t, cudaStream_t);
-extern "C" void LaunchDeltaApply(float4*, float4*, const float*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
-extern "C" void LaunchDeltaApplyCompact(float4*, float4*, const float*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
-extern "C" void LaunchDeltaApplyCompactMP(float4*, float4*, const float*, const float4*, const sim::Half4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, uint32_t, sim::DeviceParams, uint32_t, cudaStream_t);
-extern "C" void LaunchLambdaMP(float*, const float4*, const sim::Half4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
-extern "C" void LaunchDeltaApplyMP(float4*, float4*, const float*, const float4*, const sim::Half4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
 extern "C" void LaunchXSPH(float4*, const float4*, const float4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
 extern "C" void LaunchXSPHCompact(float4*, const float4*, const float4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
 extern "C" void LaunchXSPHCompactMP(float4*, const float4*, const sim::Half4*, const float4*, const sim::Half4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, uint32_t, sim::DeviceParams, uint32_t, cudaStream_t);
 extern "C" void LaunchXSPHMP(float4*, const float4*, const sim::Half4*, const float4*, const sim::Half4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
 extern "C" bool EnsureCellCompactScratch(uint32_t, uint32_t);
-extern "C" void LaunchVelocity(float4*, const float4*, const float4*, float, uint32_t, cudaStream_t);
-extern "C" void LaunchVelocityMP(float4*, const float4*, const float4*, const sim::Half4*, const sim::Half4*, float, uint32_t, cudaStream_t);
-extern "C" void LaunchBoundary(float4*, float4*, sim::GridBounds, float, uint32_t, cudaStream_t);
 extern "C" void LaunchSortPairsQuery(size_t*, const uint32_t*, uint32_t*, const uint32_t*, uint32_t*, uint32_t, cudaStream_t);
 extern "C" void LaunchSortPairs(void*, size_t, uint32_t*, uint32_t*, uint32_t*, uint32_t*, uint32_t, cudaStream_t);
 extern "C" void LaunchRecycleToNozzleConst(float4*, float4*, float4*, sim::GridBounds, float, uint32_t, int, cudaStream_t);
+extern "C" void LaunchIntegratePredGlobals(float3 gravity, float dt, uint32_t N, cudaStream_t);
+extern "C" void LaunchVelocityGlobals(float dtInv, uint32_t N, cudaStream_t);
+extern "C" void LaunchBoundaryGlobals(sim::GridBounds, float restitution, uint32_t N, bool xsphApplied, cudaStream_t);
+extern "C" void LaunchLambdaDenseGlobals(const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
+extern "C" void LaunchLambdaCompactGlobals(const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
+extern "C" void LaunchDeltaApplyDenseGlobals(const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
+extern "C" void LaunchDeltaApplyCompactGlobals(const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
+extern "C" void LaunchXsphDenseGlobals(const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
+extern "C" void LaunchXsphCompactGlobals(const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
+
 extern "C" void* GetRecycleKernelPtr();
 
 namespace sim {
@@ -176,47 +173,6 @@ namespace sim {
         m_renderHalfMappedPtr = nullptr;
         m_renderHalfBytes = 0;
     }
-
-    void Simulator::patchGraphPositionPointers(float4* oldCurr, float4* oldNext) {
-        cudaGraphExec_t exec = m_graphExecFull;
-        if (!exec) return;
-        auto& nodes = m_posNodesFull;
-        if (nodes.empty()) return;
-
-        int scanLimit = 512;
-        for (auto nd : nodes) {
-            cudaKernelNodeParams kp{};
-            if (cudaGraphKernelNodeGetParams(nd, &kp) != cudaSuccess) continue;
-            if (!kp.kernelParams) continue;
-
-            uint32_t blocks = (m_params.numParticles + 255u) / 256u;
-            if (blocks == 0) blocks = 1;
-            if (kp.gridDim.x != blocks) {
-                kp.gridDim.x = blocks;
-            }
-
-            void** params = (void**)kp.kernelParams;
-            bool modified = false;
-            for (int i = 0; i < scanLimit; ++i) {
-                void* slot = params[i];
-                if (!slot) break;
-                if (!hostPtrReadable(slot)) break;
-                void* inner = *(void**)slot;
-                if (inner == oldCurr) {
-                    *(void**)slot = (void*)m_bufs.d_pos_curr;
-                    modified = true;
-                }
-                else if (inner == oldNext) {
-                    *(void**)slot = (void*)m_bufs.d_pos_next;
-                    modified = true;
-                }
-            }
-            if (modified) {
-                cudaGraphExecKernelNodeSetParams(exec, nd, &kp);
-            }
-        }
-    }
-
 
     // ===== 追加：调试插桩（仅非 Graph 模式） =====
     static void DebugPrintParticle0(const char* tag,
@@ -312,6 +268,7 @@ namespace sim {
         }
 
         m_paramTracker.capture(m_params, m_numCells);
+        BindDeviceGlobalsFrom(m_bufs);
 
         std::fprintf(stderr,
             "[Init][PingPong] curr=%p next=%p N=%u\n",
@@ -376,64 +333,48 @@ namespace sim {
 
     // ===== Graph Node 缓存 =====
     bool Simulator::cacheGraphNodes() {
+        // 仅记录 recycle 节点；不再解析 kernelParams 指针内容
         m_nodeRecycleFull = nullptr;
         m_kpRecycleBaseFull = {};
         m_cachedNodesReady = false;
 
+        // 迁移后不再需要 velocity 节点列表
         m_velNodesFull.clear();
         m_velNodeParamsBaseFull.clear();
-        m_posNodesFull.clear();
-        m_posNodeParamsBaseFull.clear();
-        m_cachedVelNodes = false;
-        m_cachedPosNodes = false;
+        m_cachedVelNodes = true; // 标记为已“缓存”，避免其它地方重复工作
 
         void* target = GetRecycleKernelPtr();
+        if (!m_graphFull) {
+            m_cachedNodesReady = true;
+            return true;
+        }
 
-        auto scan = [&](cudaGraph_t g,
-            std::vector<cudaGraphNode_t>& outVel,
-            std::vector<cudaKernelNodeParams>& outVelParams,
-            std::vector<cudaGraphNode_t>& outPos,
-            std::vector<cudaKernelNodeParams>& outPosParams) {
-                if (!g) return;
-                size_t n = 0;
-                CUDA_CHECK(cudaGraphGetNodes(g, nullptr, &n));
-                if (!n) return;
-                std::vector<cudaGraphNode_t> nodes(n);
-                CUDA_CHECK(cudaGraphGetNodes(g, nodes.data(), &n));
-                for (auto nd : nodes) {
-                    cudaGraphNodeType t;
-                    CUDA_CHECK(cudaGraphNodeGetType(nd, &t));
-                    if (t != cudaGraphNodeTypeKernel) continue;
-                    cudaKernelNodeParams kp{};
-                    CUDA_CHECK(cudaGraphKernelNodeGetParams(nd, &kp));
-                    if (kp.func == target) {
-                        m_nodeRecycleFull = nd;
-                        m_kpRecycleBaseFull = kp;
-                    }
-                    if (!kp.kernelParams) continue;
-                    void** params = (void**)kp.kernelParams;
-                    std::unordered_set<const void*> watchVel{ (const void*)m_bufs.d_vel, (const void*)m_bufs.d_delta };
-                    std::unordered_set<const void*> watchPos;
-                    if (m_bufs.d_pos_curr) watchPos.insert((const void*)m_bufs.d_pos_curr);
-                    if (m_bufs.d_pos_next) watchPos.insert((const void*)m_bufs.d_pos_next);
-                    bool hasVel = false, hasPos = false;
-                    for (int i = 0; i < 32; ++i) {
-                        void* slot = params[i];
-                        if (!slot) break;
-                        if (!hostPtrReadable(slot)) break;
-                        void* val = *(void**)slot;
-                        if (watchVel.count(val)) hasVel = true;
-                        if (watchPos.count(val)) hasPos = true;
-                        if (hasVel && hasPos) break;
-                    }
-                    if (hasVel) { outVel.push_back(nd); outVelParams.push_back(kp); }
-                    if (hasPos) { outPos.push_back(nd); outPosParams.push_back(kp); }
-                }
-            };
+        size_t n = 0;
+        cudaError_t err = cudaGraphGetNodes(m_graphFull, nullptr, &n);
+        if (err != cudaSuccess || n == 0) {
+            m_cachedNodesReady = true;
+            return true;
+        }
 
-        scan(m_graphFull, m_velNodesFull, m_velNodeParamsBaseFull, m_posNodesFull, m_posNodeParamsBaseFull);
-        m_cachedVelNodes = true;
-        m_cachedPosNodes = true;
+        std::vector<cudaGraphNode_t> nodes(n);
+        CUDA_CHECK(cudaGraphGetNodes(m_graphFull, nodes.data(), &n));
+
+        for (auto nd : nodes) {
+            cudaGraphNodeType t;
+            if (cudaGraphNodeGetType(nd, &t) != cudaSuccess) continue;
+            if (t != cudaGraphNodeTypeKernel) continue;
+
+            cudaKernelNodeParams kp{};
+            if (cudaGraphKernelNodeGetParams(nd, &kp) != cudaSuccess) continue;
+
+            // 仅匹配 recycle kernel
+            if (kp.func == target) {
+                m_nodeRecycleFull = nd;
+                m_kpRecycleBaseFull = kp;
+                break; // 找到即退出
+            }
+        }
+
         m_cachedNodesReady = true;
         return true;
     }
@@ -618,130 +559,84 @@ namespace sim {
     }
 
     void Simulator::kSolveIter(cudaStream_t s, const SimParams& p) {
-        prof::Range r("Phase.SolveIter", prof::Color(0xE0,0x80,0x40));
+        prof::Range r("Phase.SolveIter", prof::Color(0xE0, 0x80, 0x40));
         DeviceParams dp = MakeDeviceParams(p);
-        if (m_useHashedGrid) {
-            bool useMP = UseHalfForPosition(p, Stage::LambdaSolve, m_bufs);
-            const uint32_t* keyMap = p.compactBinarySearch ? nullptr : m_grid.d_keyToCompact;
-            uint32_t numCells = m_numCells;
-            if (useMP) {
-                LaunchLambdaCompactMP(m_bufs.d_lambda, m_bufs.d_pos_next, m_bufs.d_pos_next_h4,
-                                      m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
-                                      m_grid.d_cellUniqueKeys, m_grid.d_cellOffsets, m_grid.d_compactCount,
-                                      keyMap, numCells, dp, p.numParticles, s);
-                LaunchDeltaApplyCompactMP(m_bufs.d_pos_next, m_bufs.d_delta, m_bufs.d_lambda,
-                                          m_bufs.d_pos_next, m_bufs.d_pos_next_h4,
-                                          m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
-                                          m_grid.d_cellUniqueKeys, m_grid.d_cellOffsets, m_grid.d_compactCount,
-                                          keyMap, numCells, dp, p.numParticles, s);
-            } else {
-                LaunchLambdaCompact(m_bufs.d_lambda, m_bufs.d_pos_next,
-                                    m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
-                                    m_grid.d_cellUniqueKeys, m_grid.d_cellOffsets, m_grid.d_compactCount,
-                                    dp, p.numParticles, s);
-                LaunchDeltaApplyCompact(m_bufs.d_pos_next, m_bufs.d_delta, m_bufs.d_lambda,
-                                        m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
-                                        m_grid.d_cellUniqueKeys, m_grid.d_cellOffsets, m_grid.d_compactCount,
-                                        dp, p.numParticles, s);
-            }
-        } else {
-            bool useMP = UseHalfForPosition(p, Stage::LambdaSolve, m_bufs);
-            if (useMP) {
-                LaunchLambdaMP(m_bufs.d_lambda, m_bufs.d_pos_next, m_bufs.d_pos_next_h4,
-                               m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
-                               m_grid.d_cellStart, m_grid.d_cellEnd,
-                               dp, p.numParticles, s);
-                LaunchDeltaApplyMP(m_bufs.d_pos_next, m_bufs.d_delta, m_bufs.d_lambda,
-                                   m_bufs.d_pos_next, m_bufs.d_pos_next_h4,
-                                   m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
-                                   m_grid.d_cellStart, m_grid.d_cellEnd,
-                                   dp, p.numParticles, s);
-            } else {
-                LaunchLambda(m_bufs.d_lambda, m_bufs.d_pos_next,
-                             m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
-                             m_grid.d_cellStart, m_grid.d_cellEnd,
-                             dp, p.numParticles, s);
-                LaunchDeltaApply(m_bufs.d_pos_next, m_bufs.d_delta, m_bufs.d_lambda,
-                                 m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
-                                 m_grid.d_cellStart, m_grid.d_cellEnd,
-                                 dp, p.numParticles, s);
-            }
-        }
-
-        LaunchBoundary(m_bufs.d_pos_next, m_bufs.d_vel, p.grid,0.0f, p.numParticles, s);
-    }
-    void Simulator::kVelocityAndPost(cudaStream_t s, const SimParams& p) {
-        prof::Range r("Phase.VelocityPost", prof::Color(0xC0,0x40,0xA0));
-        bool useMP = UseHalfForPosition(p, Stage::VelocityUpdate, m_bufs);
-        if (useMP)
-            LaunchVelocityMP(m_bufs.d_vel, m_bufs.d_pos_curr, m_bufs.d_pos_next,
-                             m_bufs.d_pos_curr_h4, m_bufs.d_pos_next_h4,
-                             1.0f / p.dt, p.numParticles, s);
-        else
-            LaunchVelocity(m_bufs.d_vel, m_bufs.d_pos_curr, m_bufs.d_pos_next,
-                           1.0f / p.dt, p.numParticles, s);
-
-        bool xsphApplied = false;
-        if (p.xsph_c >0.f && p.numParticles >0) {
-            DeviceParams dp = MakeDeviceParams(p);
-            bool useMPxs = (UseHalfForPosition(p, Stage::XSPH, m_bufs) && UseHalfForVelocity(p, Stage::XSPH, m_bufs));
+        for (int iter = 0; iter < p.solverIters; ++iter) {
             if (m_useHashedGrid) {
-                const uint32_t* keyMap = p.compactBinarySearch ? nullptr : m_grid.d_keyToCompact;
-                uint32_t numCells = m_numCells;
-                if (useMPxs)
-                    LaunchXSPHCompactMP(m_bufs.d_delta, m_bufs.d_vel, m_bufs.d_vel_h4,
-                                        m_bufs.d_pos_next, m_bufs.d_pos_next_h4,
-                                        m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
-                                        m_grid.d_cellUniqueKeys, m_grid.d_cellOffsets, m_grid.d_compactCount,
-                                      keyMap, numCells, dp, p.numParticles, s);
-                else
-                    LaunchXSPHCompact(m_bufs.d_delta, m_bufs.d_vel, m_bufs.d_pos_next,
-                                      m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
-                                      m_grid.d_cellUniqueKeys, m_grid.d_cellOffsets, m_grid.d_compactCount,
-                                      dp, p.numParticles, s);
-            } else {
-                if (useMPxs)
-                    LaunchXSPHMP(m_bufs.d_delta, m_bufs.d_vel, m_bufs.d_vel_h4,
-                                 m_bufs.d_pos_next, m_bufs.d_pos_next_h4,
-                                 m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
-                                 m_grid.d_cellStart, m_grid.d_cellEnd,
-                                 dp, p.numParticles, s);
-                else
-                    LaunchXSPH(m_bufs.d_delta, m_bufs.d_vel, m_bufs.d_pos_next,
-                               m_grid.d_indices_sorted, m_grid.d_cellKeys_sorted,
-                               m_grid.d_cellStart, m_grid.d_cellEnd,
-                               dp, p.numParticles, s);
+                LaunchLambdaCompactGlobals(m_grid.d_indices_sorted,
+                    m_grid.d_cellKeys_sorted,
+                    m_grid.d_cellUniqueKeys,
+                    m_grid.d_cellOffsets,
+                    m_grid.d_compactCount,
+                    dp, p.numParticles, s);
+                LaunchDeltaApplyCompactGlobals(m_grid.d_indices_sorted,
+                    m_grid.d_cellKeys_sorted,
+                    m_grid.d_cellUniqueKeys,
+                    m_grid.d_cellOffsets,
+                    m_grid.d_compactCount,
+                    dp, p.numParticles, s);
+            }
+            else {
+                LaunchLambdaDenseGlobals(m_grid.d_indices_sorted,
+                    m_grid.d_cellKeys_sorted,
+                    m_grid.d_cellStart,
+                    m_grid.d_cellEnd,
+                    dp, p.numParticles, s);
+                LaunchDeltaApplyDenseGlobals(m_grid.d_indices_sorted,
+                    m_grid.d_cellKeys_sorted,
+                    m_grid.d_cellStart,
+                    m_grid.d_cellEnd,
+                    dp, p.numParticles, s);
+            }
+            // 迭代内仍用无弹性边界校正（不使用 XSPH）
+            LaunchBoundaryGlobals(p.grid, 0.0f, p.numParticles, false, s);
+        }
+    }
+
+    void Simulator::kVelocityAndPost(cudaStream_t s, const SimParams& p) {
+        prof::Range r("Phase.VelocityPost", prof::Color(0xC0, 0x40, 0xA0));
+
+        // 1. 根据当前 pos / pos_pred 计算速度
+        LaunchVelocityGlobals(1.0f / p.dt, p.numParticles, s);
+
+        // 2. 可选 XSPH 平滑（写入 g_delta）
+        bool xsphApplied = false;
+        if (p.xsph_c > 0.f && p.numParticles > 0) {
+            DeviceParams dp = MakeDeviceParams(p);
+            if (m_useHashedGrid) {
+                LaunchXsphCompactGlobals(m_grid.d_indices_sorted,
+                    m_grid.d_cellKeys_sorted,
+                    m_grid.d_cellUniqueKeys,
+                    m_grid.d_cellOffsets,
+                    m_grid.d_compactCount,
+                    dp, p.numParticles, s);
+            }
+            else {
+                LaunchXsphDenseGlobals(m_grid.d_indices_sorted,
+                    m_grid.d_cellKeys_sorted,
+                    m_grid.d_cellStart,
+                    m_grid.d_cellEnd,
+                    dp, p.numParticles, s);
             }
             xsphApplied = true;
         }
 
-        float4* effectiveVel = xsphApplied ? m_bufs.d_delta : m_bufs.d_vel;
-        LaunchBoundary(m_bufs.d_pos_next, effectiveVel, p.grid, p.boundaryRestitution, p.numParticles, s);
-        LaunchRecycleToNozzleConst(m_bufs.d_pos_curr, m_bufs.d_pos_next, effectiveVel,
-                                   p.grid, p.dt, p.numParticles,0, s);
+        // 3. 边界：仅一次（带 restitution）；如果 XSPH 已应用，BoundaryGlobals 会读取 g_delta 并提交到 g_vel
+        LaunchBoundaryGlobals(p.grid, p.boundaryRestitution, p.numParticles, xsphApplied, s);
+
+        // 4. Recycle 基于最终有效速度（若 xsphApplied 为 true 则已经在 boundary 时写入 g_vel）
+        float4* effectiveVel = m_bufs.d_vel; // Boundary 已提交最终速度
+        LaunchRecycleToNozzleConst(m_bufs.d_pos_curr,
+                                   m_bufs.d_pos_next,
+                                   effectiveVel,
+                                   p.grid, p.dt, p.numParticles, 0, s);
 
         cudaStreamSynchronize(s);
     }
 
     void Simulator::kIntegratePred(cudaStream_t s, const SimParams& p) {
-        prof::Range r("Phase.Integrate", prof::Color(0x50,0xA0,0xFF));
-
-        const float4* velSrc = (m_ctx.xsphApplied && m_ctx.effectiveVel)
-            ? m_ctx.effectiveVel : m_bufs.d_vel;
-
-        bool useMP = (UseHalfForPosition(p, Stage::Integration, m_bufs) &&
-                      UseHalfForVelocity(p, Stage::Integration, m_bufs));
-
-        if (useMP)
-            LaunchIntegratePredMP(m_bufs.d_pos_curr, velSrc, m_bufs.d_pos_next,
-                                  m_bufs.d_pos_curr_h4, m_bufs.d_vel_h4,
-                                  p.gravity, p.dt, p.numParticles, s);
-        else
-            LaunchIntegratePred(m_bufs.d_pos_curr, velSrc, m_bufs.d_pos_next,
-                                p.gravity, p.dt, p.numParticles, s);
-
-        LaunchBoundary(m_bufs.d_pos_next, m_bufs.d_vel, p.grid, 0.0f, p.numParticles, s);
-
+        prof::Range r("Phase.Integrate", prof::Color(0x50, 0xA0, 0xFF));
+        LaunchIntegratePredGlobals(p.gravity, p.dt, p.numParticles, s);
         cudaStreamSynchronize(s);
     }
 
@@ -1004,17 +899,20 @@ namespace sim {
     }
  
     void Simulator::performPingPongSwap(uint32_t N) {
-        if (!m_ctx.pingPongPos) return;
-        if (!m_bufs.isExternalPingPong()) return;
-        if (N == 0) return;
-        float4* oldCurr = m_bufs.posCurr();
-        float4* oldNext = m_bufs.posNext();
-        m_bufs.swapPingPongPositions();
-        m_swappedThisFrame = true;
-        UploadSimPosTableConst(m_bufs.posCurr(), m_bufs.posNext());
-        if (m_graphExecFull) {
-            patchGraphPositionPointers(oldCurr, oldNext);
+        if (!m_ctx.pingPongPos || N == 0) return;
+        if (m_bufs.isExternalPingPong()) {
+            m_bufs.swapPingPongPositions();
+            m_swappedThisFrame = true;
+            UploadSimPosTableConst(m_bufs.posCurr(), m_bufs.posNext());
+            BindDeviceGlobalsFrom(m_bufs); // 仅重绑全局指针
+            return;
         }
+        std::swap(m_bufs.d_pos_curr, m_bufs.d_pos_next);
+        if (m_bufs.usePosHalf) std::swap(m_bufs.d_pos_curr_h4, m_bufs.d_pos_next_h4);
+        m_swappedThisFrame = true;
+        UploadSimPosTableConst(m_bufs.d_pos_curr, m_bufs.d_pos_next);
+        RebindPositionGlobals(m_bufs.d_pos_curr, m_bufs.d_pos_next,
+            m_bufs.d_pos_curr_h4, m_bufs.d_pos_next_h4);
     }
 
     bool Simulator::bindTimelineFence(HANDLE sharedFenceHandle) {

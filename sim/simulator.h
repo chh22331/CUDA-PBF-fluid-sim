@@ -78,7 +78,6 @@ namespace sim {
         void kSolveIter(cudaStream_t s, const SimParams& p);
         void kVelocityAndPost(cudaStream_t s, const SimParams& p);
         bool cacheGraphNodes();
-        void patchGraphPositionPointers(float4* oldCurr, float4* oldNext);
         void patchGraphHalfPositionPointers(bool fullGraph, sim::Half4* oldCurrH, sim::Half4* oldNextH); // 可后续精简
         void signalSimFence();
 
@@ -108,11 +107,9 @@ namespace sim {
         bool m_canPingPongPos = true;
         bool m_precisionLogged = false;
         bool m_graphPointersChecked = false;
-        bool m_graphNodesPatchedOnce = false;
+ 
 
-        std::vector<cudaGraphNode_t> m_posNodesFull;
-        std::vector<cudaKernelNodeParams> m_posNodeParamsBaseFull;
-        bool m_cachedPosNodes = false;
+ 
 
         int  m_frameIndex = 0;
         int  m_lastParamUpdateFrame = -1;

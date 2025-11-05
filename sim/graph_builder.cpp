@@ -61,6 +61,7 @@ bool GraphBuilder::recordSequence(Simulator& sim, const SimParams& p, cudaGraph_
     CUDA_CHECK(cudaStreamBeginCapture(sim.m_stream, cudaStreamCaptureModeGlobal));
     sim.m_pipeline.runAll(sim.m_ctx, p, sim.m_stream);
     CUDA_CHECK(cudaStreamEndCapture(sim.m_stream, &outGraph));
+    BindDeviceGlobalsFrom(sim.m_bufs);
     return outGraph != nullptr;
 }
 

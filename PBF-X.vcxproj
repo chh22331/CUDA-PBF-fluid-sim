@@ -115,9 +115,10 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <CudaCompile Include="kernel.cu" />
-    <CudaCompile Include="sim\boundary.cu" />
+    <CudaCompile Include="sim\boundary_globals.cu" />
     <CudaCompile Include="sim\cell_compact.cu" />
     <CudaCompile Include="sim\cell_ranges.cu" />
+    <CudaCompile Include="sim\delta_globals.cu" />
     <CudaCompile Include="sim\device_buffers_kernels.cu" />
     <CudaCompile Include="sim\device_globals.cu" />
     <CudaCompile Include="sim\device_pos_state.cu" />
@@ -130,7 +131,6 @@
     <CudaCompile Include="sim\integrate_velocity_mp.cu" />
     <CudaCompile Include="sim\neighborhood_mp.cu" />
     <CudaCompile Include="sim\pack_prev_pos_snapshot.cu" />
-    <CudaCompile Include="sim\pbf_delta_apply.cu" />
     <CudaCompile Include="sim\pbf_lambda.cu" />
     <CudaCompile Include="sim\precision_math.cu" />
     <CudaCompile Include="sim\precision_traits.cu" />
@@ -141,7 +141,8 @@
     <CudaCompile Include="sim\stats.cu" />
     <CudaCompile Include="sim\stats_bruteforce.cu" />
     <CudaCompile Include="sim\velocity_from_half_prev.cu" />
-    <CudaCompile Include="sim\xsph.cu" />
+    <CudaCompile Include="sim\velocity_globals.cu" />
+    <CudaCompile Include="sim\xsph_globals.cu" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="app_main.cpp" />
