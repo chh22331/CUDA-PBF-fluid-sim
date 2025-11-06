@@ -8,8 +8,8 @@ namespace sim {
 
     struct GraphBuildResult {
         bool structuralRebuilt = false;
-        bool dynamicUpdated = false;
-        bool reuseSucceeded = false;
+        bool dynamicUpdated    = false;
+        bool reuseSucceeded    = false;
     };
 
     class GraphBuilder {

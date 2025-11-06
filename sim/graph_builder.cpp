@@ -10,6 +10,7 @@
 #include "device_buffers.cuh"
 #include "kernel_dispatcher.h"
 #include "../engine/core/console.h"
+#include "logging.h"
 
 #ifndef CUDA_CHECK
 #define CUDA_CHECK(expr) do { cudaError_t _e=(expr); if(_e!=cudaSuccess){ sim::Log(sim::LogChannel::Error,"CUDA %s (%d)", cudaGetErrorString(_e), (int)_e);} } while(0)
@@ -23,7 +24,6 @@ namespace sim {
 bool GraphBuilder::recordSequencePipeline(Simulator& sim, const SimParams& p, cudaGraph_t& outGraph) {
     outGraph = nullptr;
 
-    // 排序临时空间 & 哈希网格 scratch 准备
     if (p.numParticles > 0) {
         size_t tempBytes = 0;
         LaunchSortPairsQuery(&tempBytes,
@@ -43,7 +43,6 @@ bool GraphBuilder::recordSequencePipeline(Simulator& sim, const SimParams& p, cu
         }
     }
 
-    // Pipeline 构建（只需一次）
     if (sim.m_pipeline.full().empty()) {
         BuildDefaultPipelines(sim.m_pipeline);
         PostOpsConfig cfg{};
@@ -53,26 +52,23 @@ bool GraphBuilder::recordSequencePipeline(Simulator& sim, const SimParams& p, cu
         sim.m_pipeline.post().configure(cfg, sim.m_useHashedGrid, cfg.enableXsph);
     }
 
-    // 同步上下文指针
-    sim.m_ctx.bufs = &sim.m_bufs;
-    sim.m_ctx.grid = &sim.m_grid;
-    sim.m_ctx.useHashedGrid = sim.m_useHashedGrid;
+    sim.m_ctx.bufs         = &sim.m_bufs;
+    sim.m_ctx.grid         = &sim.m_grid;
+    sim.m_ctx.useHashedGrid= sim.m_useHashedGrid;
     sim.m_ctx.gridStrategy = sim.m_gridStrategy.get();
-    sim.m_ctx.dispatcher = &sim.m_kernelDispatcher;
+    sim.m_ctx.dispatcher   = &sim.m_kernelDispatcher;
 
     CUDA_CHECK(cudaStreamBeginCapture(sim.m_stream, cudaStreamCaptureModeGlobal));
-
-    // 仅保留 full 路线执行
     sim.m_pipeline.runFull(sim.m_ctx, p, sim.m_stream);
-
     CUDA_CHECK(cudaStreamEndCapture(sim.m_stream, &outGraph));
+
     BindDeviceGlobalsFrom(sim.m_bufs);
     return outGraph != nullptr;
 }
 
 void GraphBuilder::destroyGraph(Simulator& sim) {
-    if (sim.m_graphExecFull) { cudaGraphExecDestroy(sim.m_graphExecFull); sim.m_graphExecFull = nullptr; }
-    if (sim.m_graphFull)     { cudaGraphDestroy(sim.m_graphFull);        sim.m_graphFull = nullptr; }
+    if (sim.m_graphExec) { cudaGraphExecDestroy(sim.m_graphExec); sim.m_graphExec = nullptr; }
+    if (sim.m_graph)     { cudaGraphDestroy(sim.m_graph);         sim.m_graph = nullptr; }
     sim.m_cachedNodesReady = false;
 }
 
@@ -109,14 +105,13 @@ GraphBuildResult GraphBuilder::BuildStructural(Simulator& sim, const SimParams& 
 
     cudaGraph_t newGraph = nullptr;
     if (!recordSequencePipeline(sim, p, newGraph)) {
-        std::fprintf(stderr, "[GraphBuilder][Error] recordSequence(full) failed.\n");
+        std::fprintf(stderr, "[GraphBuilder][Error] recordSequence failed.\n");
         return res;
     }
+    CUDA_CHECK(cudaGraphInstantiate(&sim.m_graphExec, newGraph, nullptr, nullptr, 0));
+    CUDA_CHECK(cudaGraphUpload(sim.m_graphExec, sim.m_stream));
 
-    CUDA_CHECK(cudaGraphInstantiate(&sim.m_graphExecFull, newGraph, nullptr, nullptr, 0));
-    CUDA_CHECK(cudaGraphUpload(sim.m_graphExecFull, sim.m_stream));
-
-    sim.m_graphFull = newGraph;
+    sim.m_graph = newGraph;
     sim.cacheGraphNodes();
 
     int3 dim       = GridSystem::ComputeDims(p.grid);
@@ -150,7 +145,6 @@ GraphBuildResult GraphBuilder::UpdateDynamic(Simulator& sim,
         return res;
     }
 
-    // 捕获新图用于 update
     cudaGraph_t newGraph = nullptr;
     if (!recordSequencePipeline(sim, p, newGraph)) {
         sim.m_graphDirty = true;
@@ -158,8 +152,7 @@ GraphBuildResult GraphBuilder::UpdateDynamic(Simulator& sim,
     }
 
     cudaGraphExecUpdateResultInfo info{};
-    cudaError_t e = cudaGraphExecUpdate(sim.m_graphExecFull, newGraph, &info);
-
+    cudaError_t e = cudaGraphExecUpdate(sim.m_graphExec, newGraph, &info);
     if (newGraph) cudaGraphDestroy(newGraph);
 
     if (!(e == cudaSuccess && info.result == cudaGraphExecUpdateSuccess)) {
@@ -174,7 +167,7 @@ GraphBuildResult GraphBuilder::UpdateDynamic(Simulator& sim,
     sim.m_captured.kernel      = p.kernel;
     sim.m_paramTracker.capture(p, sim.m_captured.numCells);
 
-    sim.m_paramDirty = false;
+    sim.m_paramDirty   = false;
     res.dynamicUpdated = true;
     res.reuseSucceeded = true;
     return res;

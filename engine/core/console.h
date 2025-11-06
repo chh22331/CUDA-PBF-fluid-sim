@@ -34,9 +34,9 @@ namespace console {
     };
 
     struct PrecisionConfig {
-        NumericType positionStore = NumericType::FP32;
-        NumericType velocityStore = NumericType::FP32;
-        NumericType predictedPosStore = NumericType::FP32;
+        NumericType positionStore = NumericType::FP16;
+        NumericType velocityStore = NumericType::FP16;
+        NumericType predictedPosStore = NumericType::FP16;
         NumericType lambdaStore = NumericType::FP32;
         NumericType densityStore = NumericType::FP32;
         NumericType auxStore = NumericType::FP32;

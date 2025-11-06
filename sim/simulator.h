@@ -28,7 +28,7 @@ namespace sim {
         bool step(const SimParams& p);
 
         const float4* devicePositions() const { return m_bufs.d_pos_curr; }
-        float4* renderPositionPtr() const { return m_bufs.d_pos_curr; } // 渲染使用 curr
+        float4* renderPositionPtr() const { return m_bufs.d_pos_curr; }
 
         void seedBoxLattice(uint32_t nx, uint32_t ny, uint32_t nz, float3 origin, float spacing);
         void seedBoxLatticeAuto(uint32_t total, float3 origin, float spacing);
@@ -68,19 +68,11 @@ namespace sim {
         bool captureGraphIfNeeded(const SimParams& p);
         bool updateGraphsParams(const SimParams& p);
         bool updateGridIfNeeded(const SimParams& p);
-        void kIntegratePred(cudaStream_t s, const SimParams& p);
-        void kHashKeys(cudaStream_t s, const SimParams& p);
-        void kSort(cudaStream_t s, const SimParams& p);
-        void kCellRanges(cudaStream_t s, const SimParams& p);
-        void kCellRangesCompact(cudaStream_t s, const SimParams& p);
-        void kSolveIter(cudaStream_t s, const SimParams& p);
-        void kVelocityAndPost(cudaStream_t s, const SimParams& p);
         bool cacheGraphNodes();
         void patchGraphPositionPointers(float4* oldCurr, float4* oldNext);
         void patchGraphVelocityPointers(const float4* fromPtr, const float4* toPtr);
-        void patchGraphHalfPositionPointers(bool fullGraph, sim::Half4* oldCurrH, sim::Half4* oldNextH);
+        void patchGraphHalfPositionPointers(sim::Half4* oldCurrH, sim::Half4* oldNextH);
         void signalSimFence();
-        void debugLogPredictedPosHalf(const SimParams& p);
 
     private:
         SimParams m_params{};
@@ -100,41 +92,43 @@ namespace sim {
 
         bool         m_swappedThisFrame = false;
 
-        cudaGraph_t     m_graphFull = nullptr;
-        cudaGraphExec_t m_graphExecFull = nullptr;
-        cudaGraph_t     m_graphCheap = nullptr;
-        cudaGraphExec_t m_graphExecCheap = nullptr;
+        cudaGraph_t     m_graph = nullptr;
+        cudaGraphExec_t m_graphExec = nullptr;
         bool m_graphDirty = true;
         bool m_paramDirty = true;
         bool m_canPingPongPos = true;
-        bool m_precisionLogged = false;
         bool m_graphPointersChecked = false;
-        bool m_graphNodesPatchedOnce = false;
 
-        std::vector<cudaGraphNode_t> m_posNodesFull,  m_posNodesCheap;
-        std::vector<cudaKernelNodeParams> m_posNodeParamsBaseFull, m_posNodeParamsBaseCheap;
+        std::vector<cudaGraphNode_t>      m_posNodes;
+        std::vector<cudaKernelNodeParams> m_posNodeParamsBase;
         bool m_cachedPosNodes = false;
 
+        std::vector<cudaGraphNode_t>      m_velNodes;
+        std::vector<cudaKernelNodeParams> m_velNodeParamsBase;
+        bool m_cachedVelNodes = false;
+
         int  m_frameIndex = 0;
-        int  m_lastFullFrame = -1;
         int  m_lastParamUpdateFrame = -1;
 
-        struct GraphCapturedParams { uint32_t numParticles=0; uint32_t numCells=0; int solverIters=0; int maxNeighbors=0; int sortEveryN=1; GridBounds grid{}; KernelCoeffs kernel{}; float dt=0.0f; float3 gravity=make_float3(0.f,0.f,0.f); float restDensity=0.0f; } m_captured{};
+        struct GraphCapturedParams {
+            uint32_t numParticles=0;
+            uint32_t numCells=0;
+            int solverIters=0;
+            int maxNeighbors=0;
+            int sortEveryN=1;
+            GridBounds  grid{};
+            KernelCoeffs kernel{};
+            float dt=0.0f;
+            float3 gravity=make_float3(0.f,0.f,0.f);
+            float restDensity=0.0f;
+        } m_captured{};
 
         cudaExternalMemory_t m_extPosPred = nullptr;
         cudaExternalMemory_t m_extraExternalMemB = nullptr;
 
-        cudaGraphNode_t      m_nodeRecycleFull  = nullptr;
-        cudaGraphNode_t      m_nodeRecycleCheap = nullptr;
-        cudaKernelNodeParams m_kpRecycleBaseFull{};
-        cudaKernelNodeParams m_kpRecycleBaseCheap{};
+        cudaGraphNode_t      m_nodeRecycle  = nullptr;
+        cudaKernelNodeParams m_kpRecycleBase{};
         bool m_cachedNodesReady = false;
-
-        std::vector<cudaGraphNode_t> m_velNodesFull,  m_velNodesCheap;
-        std::vector<cudaKernelNodeParams> m_velNodeParamsBaseFull, m_velNodeParamsBaseCheap;
-        bool m_cachedVelNodes = false;
-        bool   m_velPatchedToDeltaFull = false;
-        bool   m_velPatchedToDeltaCheap = false;
 
         OnlineVarHost m_adaptDensityErrorHistory{};
         OnlineVarHost m_adaptLambdaVarHistory{};
@@ -153,7 +147,7 @@ namespace sim {
         uint64_t m_simFenceValue =0;
 
         cudaExternalMemory_t m_extRenderHalf = nullptr;
-        void* m_renderHalfMappedPtr = nullptr;
+        void*  m_renderHalfMappedPtr = nullptr;
         size_t m_renderHalfBytes =0;
     };
 } // namespace sim
