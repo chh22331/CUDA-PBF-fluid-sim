@@ -2,10 +2,8 @@
 #include "math_utils.h"
 #include "poisson_disk.h"
 #include "numeric_utils.h"
-#include "emit_params.h"
 #include "stats.h"
 #include "logging.h"
-#include "emitter.h"
 #include <cstdio>
 #include <vector>
 #include <cmath>
@@ -19,9 +17,7 @@
 #include "grid_system.h"
 #include "../engine/core/console.h"
 #include "../engine/core/prof_nvtx.h"
-#include "precision_traits.cuh"
 #include "device_globals.cuh"
-#include "precision_stage.h"
 #include "simulation_context.h"
 #include <limits>
 #include "../engine/gfx/renderer.h"
@@ -101,28 +97,18 @@ namespace sim {
 
 // ===== 外部 CUDA kernel =====
 extern "C" void LaunchHashKeys(uint32_t*, uint32_t*, const float4*, sim::GridBounds, uint32_t, cudaStream_t);
-extern "C" void LaunchHashKeysMP(uint32_t*, uint32_t*, const float4*, const sim::Half4*, sim::GridBounds, uint32_t, cudaStream_t);
 extern "C" void LaunchCellRanges(uint32_t*, uint32_t*, const uint32_t*, uint32_t, uint32_t, cudaStream_t);
 extern "C" void LaunchCellRangesCompact(uint32_t*, uint32_t*, uint32_t*, const uint32_t*, uint32_t, cudaStream_t);
 extern "C" void LaunchLambda(float*, const float4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
 extern "C" void LaunchLambdaCompact(float*, const float4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
-extern "C" void LaunchLambdaCompactMP(float*, const float4*, const sim::Half4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
 extern "C" void LaunchDeltaApply(float4*, float4*, const float*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
 extern "C" void LaunchDeltaApplyCompact(float4*, float4*, const float*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
-extern "C" void LaunchDeltaApplyCompactMP(float4*, float4*, const float*, const float4*, const sim::Half4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
-extern "C" void LaunchLambdaMP(float*, const float4*, const sim::Half4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
-extern "C" void LaunchDeltaApplyMP(float4*, float4*, const float*, const float4*, const sim::Half4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
 extern "C" void LaunchXSPH(float4*, const float4*, const float4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
 extern "C" void LaunchXSPHCompact(float4*, const float4*, const float4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
-extern "C" void LaunchXSPHCompactMP(float4*, const float4*, const sim::Half4*, const float4*, const sim::Half4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
-extern "C" void LaunchXSPHMP(float4*, const float4*, const sim::Half4*, const float4*, const sim::Half4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
 extern "C" bool EnsureCellCompactScratch(uint32_t, uint32_t);
 extern "C" void LaunchSortPairsQuery(size_t*, const uint32_t*, uint32_t*, const uint32_t*, uint32_t*, uint32_t, cudaStream_t);
 extern "C" void LaunchSortPairs(void*, size_t, uint32_t*, uint32_t*, uint32_t*, uint32_t*, uint32_t, cudaStream_t);
-extern "C" void LaunchRecycleToNozzleConst(float4*, float4*, float4*, sim::GridBounds, float, uint32_t, int, cudaStream_t);
-extern "C" void LaunchIntegratePredGlobals(float3 gravity, float dt, uint32_t N, cudaStream_t);
 extern "C" void LaunchVelocityGlobals(float dtInv, uint32_t N, cudaStream_t);
-extern "C" void LaunchBoundaryGlobals(sim::GridBounds, float restitution, uint32_t N, bool xsphApplied, cudaStream_t);
 extern "C" void LaunchLambdaDenseGlobals(const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
 extern "C" void LaunchLambdaCompactGlobals(const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
 extern "C" void LaunchDeltaApplyDenseGlobals(const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
@@ -130,70 +116,11 @@ extern "C" void LaunchDeltaApplyCompactGlobals(const uint32_t*, const uint32_t*,
 extern "C" void LaunchXsphDenseGlobals(const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
 extern "C" void LaunchXsphCompactGlobals(const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
 extern "C" void LaunchIntegratePred(float4*, const float4*, float4*, float3, float, uint32_t, cudaStream_t);
-extern "C" void LaunchIntegratePredMP(float4*, const float4*, float4*, const sim::Half4*, const sim::Half4*, float3, float, uint32_t, cudaStream_t);
 extern "C" void LaunchVelocity(float4*, const float4*, const float4*, float, uint32_t, cudaStream_t);
-extern "C" void LaunchVelocityMP(float4*, const float4*, const float4*, const sim::Half4*, const sim::Half4*, float, uint32_t, cudaStream_t);
 extern "C" void LaunchBoundary(float4*, float4*, sim::GridBounds, float, uint32_t, cudaStream_t);
-
-extern "C" void* GetRecycleKernelPtr();
 
 namespace sim {
     uint64_t g_simFrameIndex = 0;
-
-    // 新增：渲染半精外部缓冲导入
-    bool Simulator::importRenderHalfBuffer(void* sharedHandleWin32, size_t bytes) {
-        if (!sharedHandleWin32 || bytes ==0) return false;
-        if (m_extRenderHalf) {
-            cudaDestroyExternalMemory(m_extRenderHalf);
-            m_extRenderHalf = nullptr;
-            m_renderHalfMappedPtr = nullptr;
-            m_renderHalfBytes =0;
-        }
-        cudaExternalMemoryHandleDesc memDesc{};
-        memDesc.type = cudaExternalMemoryHandleTypeD3D12Resource;
-        memDesc.handle.win32.handle = sharedHandleWin32;
-        memDesc.size = bytes;
-        memDesc.flags = cudaExternalMemoryDedicated;
-        if (cudaImportExternalMemory(&m_extRenderHalf, &memDesc) != cudaSuccess) {
-            std::fprintf(stderr, "[RenderHalf][Import] failed handle=%p bytes=%zu\n", sharedHandleWin32, bytes);
-            return false;
-        }
-        cudaExternalMemoryBufferDesc bufDesc{}; bufDesc.offset =0; bufDesc.size = bytes;
-        void* devPtr = nullptr;
-        if (cudaExternalMemoryGetMappedBuffer(&devPtr, m_extRenderHalf, &bufDesc) != cudaSuccess) {
-            std::fprintf(stderr, "[RenderHalf][Map] failed\n");
-            cudaDestroyExternalMemory(m_extRenderHalf); m_extRenderHalf = nullptr; return false;
-        }
-        m_renderHalfMappedPtr = devPtr;
-        m_renderHalfBytes = bytes;
-        std::fprintf(stderr, "[RenderHalf][Ready] mappedPtr=%p bytes=%zu\n", m_renderHalfMappedPtr, m_renderHalfBytes);
-        return true;
-    }
-
-    void Simulator::publishRenderHalf(uint32_t count) {
-        if (!m_renderHalfMappedPtr || !m_extRenderHalf || count ==0) return;
-        if (!m_bufs.useRenderHalf || !m_bufs.d_render_pos_h4) return;
-        size_t needBytes = size_t(count) * sizeof(sim::Half4);
-        if (needBytes > m_renderHalfBytes) {
-            std::fprintf(stderr, "[RenderHalf][Warn] external buffer too small need=%zu have=%zu\n", needBytes, m_renderHalfBytes); return; }
-        if (m_bufs.nativeHalfActive) {
-            // 原生 half 主存储：直接从当前 half4 指针复制（curr）
-            CUDA_LOGGED_MEMCPY_D2D_ASYNC("RenderHalf.Publish.Native", m_renderHalfMappedPtr, m_bufs.d_pos_h4, needBytes, m_stream);
-        } else {
-            // 非原生：需要先 pack 当前 curr 到渲染镜像
-            m_bufs.packRenderToHalf(count, m_stream);
-            CUDA_LOGGED_MEMCPY_D2D_ASYNC("RenderHalf.Publish", m_renderHalfMappedPtr, m_bufs.d_render_pos_h4, needBytes, m_stream);
-        }
-    }
-
-    void Simulator::releaseRenderHalfExternal() {
-        if (m_extRenderHalf) {
-            cudaDestroyExternalMemory(m_extRenderHalf);
-            m_extRenderHalf = nullptr;
-        }
-        m_renderHalfMappedPtr = nullptr;
-        m_renderHalfBytes =0;
-    }
 
     void Simulator::performPingPongSwap(uint32_t N) {
         if (!m_ctx.pingPongPos) return;
@@ -208,8 +135,6 @@ namespace sim {
 
         if (m_graphExec) {
             patchGraphPositionPointers(oldCurr, oldNext);
-            if (m_bufs.nativeHalfActive)
-                patchGraphHalfPositionPointers(m_bufs.d_pos_h4, m_bufs.d_pos_pred_h4);
         }
     }
 
@@ -281,18 +206,7 @@ namespace sim {
         uint32_t capacity = (p.maxParticles > 0) ? p.maxParticles : p.numParticles;
         if (capacity == 0) capacity = 1;
 
-        bool needHalf = (p.precision.positionStore == NumericType::FP16_Packed) ||
-                        (p.precision.velocityStore == NumericType::FP16_Packed) ||
-                        (p.precision.predictedPosStore == NumericType::FP16_Packed) ||
-                        (p.precision.lambdaStore == NumericType::FP16) ||
-                        (p.precision.densityStore == NumericType::FP16) ||
-                        (p.precision.auxStore == NumericType::FP16_Packed || p.precision.auxStore == NumericType::FP16);
-
-        if (needHalf) m_bufs.allocateWithPrecision(p.precision, capacity);
-        else          m_bufs.allocate(capacity);
-
-        UpdateDevicePrecisionView(m_bufs, p.precision);
-
+        m_bufs.allocate(capacity);
         m_grid.allocateIndices(capacity);
         m_grid.ensureCompactCapacity(capacity);
         if (!buildGrid(m_params)) return false;
@@ -310,7 +224,6 @@ namespace sim {
                                   sizeof(float4) * p.numParticles,
                                   cudaMemcpyDeviceToDevice));
             m_bufs.d_pos_pred = m_bufs.d_pos_next;
-            if (needHalf) m_bufs.packAllToHalf(p.numParticles, m_stream);
         }
         UploadSimPosTableConst(m_bufs.d_pos_curr, m_bufs.d_pos_next);
 
@@ -415,12 +328,6 @@ namespace sim {
         m_posNodeParamsBase.clear();
         m_cachedPosNodes = false;
 
-        void* target = GetRecycleKernelPtr();
-        if (!m_graph) {
-            m_cachedNodesReady = true;
-            return true;
-        }
-
         size_t n = 0;
         CUDA_CHECK(cudaGraphGetNodes(m_graph, nullptr, &n));
         if (!n) {
@@ -437,25 +344,16 @@ namespace sim {
             cudaKernelNodeParams kp{};
             CUDA_CHECK(cudaGraphKernelNodeGetParams(nd, &kp));
 
-            if (kp.func == target) {
-                m_nodeRecycle = nd;
-                m_kpRecycleBase = kp;
-            }
             if (!kp.kernelParams) continue;
             void** params = (void**)kp.kernelParams;
 
             std::unordered_set<const void*> watchVel{ (const void*)m_bufs.d_vel, (const void*)m_bufs.d_delta };
             std::unordered_set<const void*> watchPos;
-            if (m_bufs.nativeHalfActive) {
-                if (m_bufs.d_pos_h4)       watchPos.insert((const void*)m_bufs.d_pos_h4);
-                if (m_bufs.d_pos_pred_h4)  watchPos.insert((const void*)m_bufs.d_pos_pred_h4);
-            }
-            else {
-                if (m_bufs.d_pos_curr) watchPos.insert((const void*)m_bufs.d_pos_curr);
-                if (m_bufs.d_pos_next) watchPos.insert((const void*)m_bufs.d_pos_next);
-                if (m_bufs.d_pos)      watchPos.insert((const void*)m_bufs.d_pos);
-                if (m_bufs.d_pos_pred) watchPos.insert((const void*)m_bufs.d_pos_pred);
-            }
+             
+            if (m_bufs.d_pos_curr) watchPos.insert((const void*)m_bufs.d_pos_curr);
+            if (m_bufs.d_pos_next) watchPos.insert((const void*)m_bufs.d_pos_next);
+            if (m_bufs.d_pos)      watchPos.insert((const void*)m_bufs.d_pos);
+            if (m_bufs.d_pos_pred) watchPos.insert((const void*)m_bufs.d_pos_pred);
 
             bool hasVel = false, hasPos = false;
             for (int i = 0; i < 32; ++i) {
@@ -563,30 +461,12 @@ namespace sim {
             m_frameTimingEnabled = (m_frameTimingEveryN != 0);
         }
 
-        EmitParams ep{};
-        console::BuildEmitParams(console::Instance(), ep);
         uint32_t capacity = m_bufs.capacity;
         if (m_params.maxParticles == 0) m_params.maxParticles = capacity;
         m_params.maxParticles = std::min<uint32_t>(m_params.maxParticles, capacity);
 
-        uint32_t emitted = Emitter::EmitFaucet(m_bufs, m_params,
-            console::Instance(), ep, m_frameIndex, m_stream);
-
-        if (emitted > 0 && m_bufs.anyHalf())
-            m_bufs.packAllToHalf(m_params.numParticles, m_stream);
-
         if (m_params.numParticles > m_bufs.capacity) {
-            const auto& pr = m_params.precision;
-            bool needHalf2 = (pr.positionStore == NumericType::FP16_Packed ||
-                pr.velocityStore == NumericType::FP16_Packed ||
-                pr.lambdaStore == NumericType::FP16 ||
-                pr.densityStore == NumericType::FP16 ||
-                pr.auxStore == NumericType::FP16_Packed || pr.auxStore == NumericType::FP16);
-            if (needHalf2) m_bufs.allocateWithPrecision(pr, m_params.numParticles);
-            else m_bufs.allocate(m_params.numParticles);
-
-            UpdateDevicePrecisionView(m_bufs, m_params.precision);
-
+            m_bufs.allocate(m_params.numParticles);
             m_grid.allocateIndices(m_bufs.capacity);
             std::vector<uint32_t> h_idx(m_bufs.capacity);
             for (uint32_t i = 0; i < m_bufs.capacity; ++i) h_idx[i] = i;
@@ -597,7 +477,6 @@ namespace sim {
             UploadSimPosTableConst(m_bufs.d_pos_curr, m_bufs.d_pos_next);
         }
 
-        SetEmitParamsAsync(&ep, m_stream);
         updateGridIfNeeded(m_params);
 
         bool structuralChanged = m_paramTracker.structuralChanged(m_params, m_numCells);
@@ -628,26 +507,13 @@ namespace sim {
                 std::fprintf(stderr, "[Step][Error] Graph not ready.\n");
             return false;
         }
-        // 更新 recycle 节点 gridDim（若缓存成功）
-        if (m_nodeRecycle) {
-            uint32_t blocks = (m_params.numParticles + 255u) / 256u;
-            if (blocks == 0) blocks = 1;
-            auto kp = m_kpRecycleBase;
-            kp.gridDim = dim3(blocks, 1, 1);
-            cudaGraphExecKernelNodeSetParams(m_graphExec, m_nodeRecycle, &kp);
-        }
-
+ 
         CUDA_CHECK(cudaGraphLaunch(m_graphExec, m_stream));
 
         performPingPongSwap(m_params.numParticles);
         signalSimFence();
-        // Timing 省略：保持原逻辑
 
         ++m_frameIndex;
-        if (p.precision.renderTransfer == NumericType::FP16_Packed ||
-            p.precision.renderTransfer == NumericType::FP16) {
-            publishRenderHalf(m_params.numParticles);
-        }
         return true;
     }
 
@@ -811,7 +677,6 @@ namespace sim {
         CUDA_CHECK(cudaMemcpy(m_bufs.d_pos_next, h_pos.data(), sizeof(float4) * N, cudaMemcpyHostToDevice));
         m_bufs.d_pos_pred = m_bufs.d_pos_next;
         CUDA_CHECK(cudaMemset(m_bufs.d_vel, 0, sizeof(float4) * N));
-        if (m_bufs.anyHalf()) m_bufs.packAllToHalf(N, 0);
     }
 
     void Simulator::seedBoxLatticeAuto(uint32_t total, float3 origin, float spacing) {
@@ -940,7 +805,6 @@ namespace sim {
         CUDA_CHECK(cudaMemcpy(m_bufs.d_pos_next, h_pos.data(), sizeof(float4) * total, cudaMemcpyHostToDevice));
         m_bufs.d_pos_pred = m_bufs.d_pos_next;
         CUDA_CHECK(cudaMemcpy(m_bufs.d_vel, h_vel.data(), sizeof(float4) * total, cudaMemcpyHostToDevice));
-        if (m_bufs.anyHalf()) m_bufs.packAllToHalf(total, 0);
     }
 
     bool Simulator::computeStats(SimStats& out, uint32_t sampleStride) const {
@@ -1048,52 +912,6 @@ namespace sim {
             std::fprintf(stderr,
                 "[Graph][VelPatch] from=%p to=%p patched=%d\n",
                 (const void*)fromPtr, (const void*)toPtr, patched);
-        }
-    }
-
-    void Simulator::patchGraphHalfPositionPointers(sim::Half4* oldCurrH, sim::Half4* oldNextH) {
-        if (!m_bufs.nativeHalfActive) return;
-        if (!oldCurrH || !oldNextH) return;
-        cudaGraphExec_t exec = m_graphExec;
-        if (!exec || m_posNodes.empty()) return;
-
-        const int scanLimit = 512;
-        int patchedPtr = 0, patchedGrid = 0;
-        for (auto nd : m_posNodes) {
-            cudaKernelNodeParams kp{};
-            if (cudaGraphKernelNodeGetParams(nd, &kp) != cudaSuccess) continue;
-            if (!kp.kernelParams) continue;
-            uint32_t blocks = (m_params.numParticles + 255u) / 256u;
-            if (blocks == 0) blocks = 1;
-            if (kp.gridDim.x != blocks) { kp.gridDim.x = blocks; ++patchedGrid; }
-
-            void** params = (void**)kp.kernelParams;
-            bool modified = false;
-            for (int i = 0; i < scanLimit; ++i) {
-                void* slot = params[i];
-                if (!slot) break;
-                if (!hostPtrReadable(slot)) break;
-                void* inner = *(void**)slot;
-                if (inner == (void*)oldCurrH) {
-                    *(void**)slot = (void*)m_bufs.d_pos_h4;
-                    modified = true;
-                }
-                else if (inner == (void*)oldNextH) {
-                    *(void**)slot = (void*)m_bufs.d_pos_pred_h4;
-                    modified = true;
-                }
-            }
-            if (modified || patchedGrid) {
-                if (cudaGraphExecKernelNodeSetParams(exec, nd, &kp) == cudaSuccess && modified)
-                    ++patchedPtr;
-            }
-        }
-        if ((patchedPtr || patchedGrid) && console::Instance().debug.printHints) {
-            std::fprintf(stderr,
-                "[Graph][HalfPosPatch] patchedPtr=%d patchedGrid=%d newCurrH=%p newPredH=%p\n",
-                patchedPtr, patchedGrid,
-                (void*)m_bufs.d_pos_h4,
-                (void*)m_bufs.d_pos_pred_h4);
         }
     }
 } // namespace sim

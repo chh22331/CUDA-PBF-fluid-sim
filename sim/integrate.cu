@@ -3,7 +3,6 @@
 #include "parameters.h"
 #include "cuda_vec_math.cuh"
 #include "device_globals.cuh"
-#include "precision_traits.cuh"
 
 namespace {
 
@@ -22,15 +21,7 @@ namespace {
         float3 pp = make_float3(p.x + v.x * dt,
             p.y + v.y * dt,
             p.z + v.z * dt);
-
-        // 写预测位置（自动 half 分支）
-        sim::PrecisionTraits::storePosPred(sim::g_pos_pred,
-            sim::g_pos_pred_h4,
-            i, pp, p4.w);
     }
-
-
-
 } // namespace
 
 extern "C" {

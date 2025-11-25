@@ -402,9 +402,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     gfx::RenderInitParams rp;
     console::BuildRenderInitParams(cc, rp);
     if (!renderer.Initialize(hwnd, rp)) return 1;
-
-    // 注入相机/可视化运行时参数（清屏色/粒子半径等）
-    console::FitCameraToDomain(cc);
+     
     console::ApplyRendererRuntime(cc, renderer);
     // Debug 初始化：默认开启，启动即暂停
     g_DebugEnabled = cc.debug.enabled;
@@ -459,45 +457,32 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         std::fprintf(stderr, "[App][Warn] bindTimelineFence failed, fallback to sequential usage.\n");
     }
 
-    // 5) 初始布点 - 根据模式选择
-    if (cc.sim.demoMode == console::RuntimeConsole::Simulation::DemoMode::CubeMix) {
-        // CubeMix 模式：生成立方体中心并为每个中心播种一个立方体
-        std::vector<float3> centers;
-        console::GenerateCubeMixCenters(cc, centers);
-        const uint32_t groups = cc.sim.cube_group_count;
-        const uint32_t edge = cc.sim.cube_edge_particles;
-        const float spacing = simParams.kernel.h *
+    // 5) 初始布点 - 仅 CubeMix 模式
+    std::vector<float3> centers;
+    console::GenerateCubeMixCenters(cc, centers);
+    const uint32_t groups = cc.sim.cube_group_count;
+    const uint32_t edge = cc.sim.cube_edge_particles;
+    const float spacing = simParams.kernel.h *
         ((cc.sim.cube_lattice_spacing_factor_h > 0.f) ? cc.sim.cube_lattice_spacing_factor_h : 1.0f);
-            // 使用专用一次性播种接口（避免多次覆盖）
-            simulator.seedCubeMix(groups,
-                centers.data(),
-                edge,
-                spacing,
-                (cc.sim.cube_apply_initial_jitter && cc.sim.initial_jitter_enable),
-                cc.sim.initial_jitter_scale_h * simParams.kernel.h,
-                cc.sim.initial_jitter_seed);
-        // 上传调色板与分组元数据（供 VS/PS 使用）
-        renderer.UpdateGroupPalette(&cc.sim.cube_group_colors[0][0], groups);
-        renderer.SetParticleGrouping(groups, cc.sim.cube_particles_per_group);
-    }
-    else {
-        // Faucet 模式：原有逻辑
-        const float spacing = simParams.kernel.h *
-            ((cc.sim.lattice_spacing_factor_h > 0.f) ? cc.sim.lattice_spacing_factor_h : 1.0f);
-        const float3 origin = make_float3(simParams.grid.mins.x + 0.95f * spacing,
-            simParams.grid.mins.y + 0.5f * spacing,
-            simParams.grid.mins.z + 0.5f * spacing);
-        simulator.seedBoxLatticeAuto(simParams.numParticles, origin, spacing);
-        // 明确关闭分组（防止残留）
-        renderer.UpdateGroupPalette(nullptr, 0);
-        renderer.SetParticleGrouping(0, 0);
-    }
-    {
-        const uint32_t active = simulator.activeParticleCount();
-        simParams.numParticles = active;
-        renderer.SetParticleCount(active);
-    }
 
+    // 7 参数版本：支持可选抖动（使用 Simulation 的初始抖动参数）
+    simulator.seedCubeMix(
+        groups,
+        centers.data(),
+        edge,
+        spacing,
+        (cc.sim.cube_apply_initial_jitter && cc.sim.initial_jitter_enable),
+        cc.sim.initial_jitter_scale_h * simParams.kernel.h,
+        cc.sim.initial_jitter_seed
+        );
+
+    // 上传调色板与分组元数据（供 VS/PS 使用）
+    renderer.UpdateGroupPalette(&cc.sim.cube_group_colors[0][0], groups);
+    renderer.SetParticleGrouping(groups, cc.sim.cube_particles_per_group);
+    const uint32_t active = simulator.activeParticleCount();
+    simParams.numParticles = active;
+    renderer.SetParticleCount(active);
+   
     uint64_t frameIndex = 0;
     MSG msg{};
     bool running = true;
@@ -577,7 +562,6 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
             if (config::TryHotReload(cfgState, cc, &err)) {
                 console::BuildSimParams(cc, simParams);
                 SanitizeRuntime(cc, simParams);
-                console::FitCameraToDomain(cc);
                 console::ApplyRendererRuntime(cc, renderer);
                 if (cc.debug.printHotReload) {
                     std::printf("[HotReload] Applied profile=%s K=%d maxN=%d sortN=%d point_size=%.2f\n",

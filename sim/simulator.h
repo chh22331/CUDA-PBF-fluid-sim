@@ -3,8 +3,6 @@
 #include "parameters.h"
 #include "device_buffers.cuh"
 #include "grid_buffers.cuh"
-#include "emit_params.h"
-#include "emitter.h"
 #include "logging.h"
 #include "stats.h"
 #include <vector>
@@ -57,6 +55,8 @@ namespace sim {
         bool importRenderHalfBuffer(void* sharedHandleWin32, size_t bytes);
         void publishRenderHalf(uint32_t count);
         void releaseRenderHalfExternal();
+
+        const float4* deviceVel() const { return m_bufs.d_vel; }
 
     private:
         friend class GraphBuilder;

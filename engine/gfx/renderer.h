@@ -45,15 +45,10 @@ namespace gfx {
         void RenderFrame(core::Profiler& profiler);
         void Shutdown();
 
-        // 原单缓冲接口（保留兼容）
         bool CreateSharedParticleBuffer(uint32_t numElements, uint32_t strideBytes, HANDLE& outSharedHandle);
-        // 新增：带索引创建（slot=0/1），用于双外部 ping-pong
         bool CreateSharedParticleBufferIndexed(int slot, uint32_t numElements, uint32_t strideBytes, HANDLE& outSharedHandle);
-        // 新增：根据当前 CUDA 设备指针切换显示 SRV
         void UpdateParticleSRVForPingPong(const void* devicePtrCurr);
-        // 原单缓冲导入
         bool ImportSharedBufferAsSRV(HANDLE sharedHandle, uint32_t numElements, uint32_t strideBytes, int& outSrvIndex);
-        // 新增：登记双缓冲 CUDA 设备指针（A=当前，B=下一帧），并立即尝试切换到 A
         void RegisterPingPongCudaPtrs(const void* ptrA, const void* ptrB);
 
         void SetCamera(const CameraParams& p) { m_camera = p; }
@@ -71,25 +66,34 @@ namespace gfx {
         // 时间线同步访问器
         HANDLE SharedTimelineFenceHandle() const { return m_timelineFenceSharedHandle; }
         uint64_t CurrentRenderFenceValue() const { return m_renderFenceValue; }
-        void WaitSimulationFence(uint64_t simValue); // 在渲染前等待模拟完成
-        void SignalRenderComplete(uint64_t lastSimValue); // 在渲染结束后递增并 signal
+        void WaitSimulationFence(uint64_t simValue);
+        void SignalRenderComplete(uint64_t lastSimValue);
 
-        // 双缓冲资源
+        // 新增公开只读访问器（供 Unity 导出函数使用，避免非法访问 private)
+        HANDLE SharedParticleBufferHandle(int slot) const {
+            return (slot >= 0 && slot < 2) ? m_sharedParticleBufferHandles[slot] : nullptr;
+        }
+        int ActivePingIndex() const { return m_activePingIndex; }
+        uint32_t ParticleCount() const { return m_particleCount; }
+
+        // 双缓冲资源（保持 public 以便调试）
         Microsoft::WRL::ComPtr<ID3D12Resource> m_sharedParticleBuffers[2];
         int  m_particleSrvIndexPing[2] = { -1, -1 };
-        void* m_knownCudaPtrs[2] = { nullptr, nullptr }; // 对应设备指针（cudaExternalMemory 映射）
+        void* m_knownCudaPtrs[2] = { nullptr, nullptr };
         int  m_activePingIndex = 0;
 
-    private:
-        void createThicknessResources();
-        void createNormalResources();
-
+        HANDLE   m_timelineFenceSharedHandle = nullptr;
+        uint64_t m_renderFenceValue = 0;
+        uint64_t m_lastSimFenceValue = 0;
         D3D12Device m_device;
-        core::FrameGraph m_fg;
+        uint32_t m_particleStrideBytes = 0;
+        uint32_t m_groups = 0;
+        uint32_t m_particlesPerGroup = 0;
 
+    private:
+        core::FrameGraph m_fg;
         float m_clearColor[4] = { 0.1f, 0.2f, 0.35f, 1.0f };
 
-        // 单缓冲旧字段（仍用于单外部预测）
         Microsoft::WRL::ComPtr<ID3D12Resource> m_sharedParticleBuffer;
         int m_particleSrvIndex = -1;
 
@@ -97,22 +101,18 @@ namespace gfx {
 
         Microsoft::WRL::ComPtr<ID3D12Resource> m_paletteBuffer;
         int m_paletteSrvIndex = -1;
-        uint32_t m_groups = 0;
-        uint32_t m_particlesPerGroup = 0;
-
+        
         CameraParams m_camera{};
         VisualParams m_visual{};
 
-        // 新增：时间线 fence（与 CUDA external semaphore 共享）
-        Microsoft::WRL::ComPtr<ID3D12Fence> m_timelineFence; // 单调递增：偶=render, 奇=sim 完成
-        HANDLE m_timelineFenceSharedHandle = nullptr;
-        uint64_t m_renderFenceValue = 0; // 最近一次渲染完成的偶数值
-        uint64_t m_lastSimFenceValue =0; // 最近一次模拟完成的奇数值
+        HANDLE m_sharedParticleBufferHandles[2]{};
 
-        // 半精渲染链路：根据 precision.renderTransfer选择使用 half版着色器
+        Microsoft::WRL::ComPtr<ID3D12Fence> m_timelineFence;
+        
+
         bool m_useHalfRender = false;
-        Microsoft::WRL::ComPtr<ID3D12PipelineState> m_psoPointsFloat; // 原 float4版
-        Microsoft::WRL::ComPtr<ID3D12PipelineState> m_psoPointsHalf; // half 压缩版 (uint2 解码)
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> m_psoPointsFloat;
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> m_psoPointsHalf;
     };
 
 } // namespace gfx

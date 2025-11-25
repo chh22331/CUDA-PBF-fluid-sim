@@ -7,9 +7,97 @@
 #include <cmath>
 #include <string>
 #include <vector>
+#include <fstream>
 
 #pragma comment(lib, "d3dcompiler.lib")
 
+// 在文件顶部（namespace gfx 之前或紧接 includes 后）添加：
+static gfx::RendererD3D12* g_unityExportRenderer = nullptr;
+static HANDLE g_cachedSharedParticleHandles[2] = { nullptr, nullptr };
+
+extern "C" __declspec(dllexport) uintptr_t Gfx_GetFenceHandle() {
+    if (!g_unityExportRenderer) return 0;
+    return reinterpret_cast<uintptr_t>(g_unityExportRenderer->m_timelineFenceSharedHandle);
+}
+
+extern "C" __declspec(dllexport) bool Gfx_GetPingBufferHandle(int slot, uintptr_t* outHandle) {
+    if (!g_unityExportRenderer || !outHandle) return false;
+    if (slot < 0 || slot > 1) return false;
+
+    auto& res = g_unityExportRenderer->m_sharedParticleBuffers[slot];
+    if (!res) return false;
+
+    if (!g_cachedSharedParticleHandles[slot]) {
+        HANDLE h = nullptr;
+        if (FAILED(g_unityExportRenderer->m_device.device()->CreateSharedHandle(
+            res.Get(), nullptr, GENERIC_ALL, nullptr, &h))) {
+            return false;
+        }
+        g_cachedSharedParticleHandles[slot] = h;
+    }
+
+    *outHandle = reinterpret_cast<uintptr_t>(g_cachedSharedParticleHandles[slot]);
+    return true;
+}
+
+extern "C" __declspec(dllexport) int Gfx_GetActivePingIndex() {
+    if (!g_unityExportRenderer) return -1;
+    return g_unityExportRenderer->ActivePingIndex();
+}
+
+extern "C" __declspec(dllexport) uint32_t Gfx_GetParticleCount() {
+    if (!g_unityExportRenderer) return 0;
+    return g_unityExportRenderer->ParticleCount();
+}
+
+extern "C" __declspec(dllexport) void Gfx_SetActiveCudaDevicePtr(const void* p) {
+    if (!g_unityExportRenderer) return;
+    g_unityExportRenderer->UpdateParticleSRVForPingPong(p);
+}
+
+extern "C" __declspec(dllexport) uint64_t Gfx_GetLastSimFenceValue() {
+    if (!g_unityExportRenderer) return 0;
+    return g_unityExportRenderer->m_lastSimFenceValue;
+}
+ 
+extern "C" __declspec(dllexport) uint32_t Gfx_GetParticleStride() {
+    if (!g_unityExportRenderer) return 0;
+    return g_unityExportRenderer->m_particleStrideBytes;
+}
+
+extern "C" __declspec(dllexport) uint32_t Gfx_GetParticleCapacity() {
+    if (!g_unityExportRenderer) return 0;
+    uint32_t cap = 0;
+    for (int i = 0; i < 2; ++i) {
+        auto& r = g_unityExportRenderer->m_sharedParticleBuffers[i];
+        if (r) {
+            auto d = r->GetDesc();
+            cap = std::max<uint32_t>(cap, (uint32_t)(d.Width / g_unityExportRenderer->m_particleStrideBytes));
+        }
+    }
+    return cap;
+}
+
+extern "C" __declspec(dllexport) bool Gfx_UpdatePaletteRGB(const float* rgbTriples, uint32_t groupCount) {
+    if (!g_unityExportRenderer) return false;
+    return g_unityExportRenderer->UpdateGroupPalette(rgbTriples, groupCount);
+}
+
+extern "C" __declspec(dllexport) void Gfx_SetGroups(uint32_t groups, uint32_t particlesPerGroup) {
+    if (!g_unityExportRenderer) return;
+    g_unityExportRenderer->m_groups = groups;
+    g_unityExportRenderer->m_particlesPerGroup = particlesPerGroup;
+}
+
+extern "C" __declspec(dllexport) void Gfx_ResetSharedHandleCache() {
+    // 当粒子 ping 资源被重建时，可调用本接口释放已缓存的共享句柄
+    for (int i = 0; i < 2; ++i) {
+        if (g_cachedSharedParticleHandles[i]) {
+            CloseHandle(g_cachedSharedParticleHandles[i]);
+            g_cachedSharedParticleHandles[i] = nullptr;
+        }
+    }
+}
 namespace gfx {
 
     namespace {
@@ -250,15 +338,27 @@ namespace gfx {
         m_renderFenceValue = 0; // 渲染完成值（偶数序列）
         m_lastSimFenceValue = 0; // 最近模拟完成值（奇数）
         BuildFrameGraph();
+        g_unityExportRenderer = this;
         return true;
     }
 
-    void RendererD3D12::Shutdown(){
+    void RendererD3D12::Shutdown() {
         m_sharedParticleBuffer.Reset();
         m_paletteBuffer.Reset();
-        if (m_timelineFenceSharedHandle) { CloseHandle(m_timelineFenceSharedHandle); m_timelineFenceSharedHandle=nullptr; }
+
+        // 关闭导出给 Unity 的共享句柄（若存在）
+        for (int i = 0; i < 2; ++i) {
+            if (g_cachedSharedParticleHandles[i]) {
+                CloseHandle(g_cachedSharedParticleHandles[i]);
+                g_cachedSharedParticleHandles[i] = nullptr;
+            }
+        }
+
+        if (m_timelineFenceSharedHandle) { CloseHandle(m_timelineFenceSharedHandle); m_timelineFenceSharedHandle = nullptr; }
         m_timelineFence.Reset();
         m_device.shutdown();
+
+        if (g_unityExportRenderer == this) g_unityExportRenderer = nullptr;
     }
 
     // 新增：等待指定模拟完成 fence 值（只排队 GPU 等待）
@@ -312,7 +412,7 @@ namespace gfx {
         rd.Format = DXGI_FORMAT_UNKNOWN;
         rd.SampleDesc = { 1,0 };
         rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-        rd.Flags = D3D12_RESOURCE_FLAG_NONE;
+        rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 
         Microsoft::WRL::ComPtr<ID3D12Resource> res;
         if (FAILED(m_device.device()->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_SHARED, &rd,
@@ -331,6 +431,7 @@ namespace gfx {
         // 不在此更新 m_particleSrvIndex（由 UpdateParticleSRVForPingPong 决定）
         if (numElements > m_particleCount) m_particleCount = numElements;
         outSharedHandle = handle;
+        m_sharedParticleBufferHandles[slot] = handle;
         return true;
     }
 
@@ -359,20 +460,16 @@ namespace gfx {
         // 若未匹配到，保持原值（可能仍是单缓冲模式）
     }
 
-    void RendererD3D12::BuildFrameGraph(){
-        prof::Range r("Renderer.BuildFrameGraph", prof::Color(0x90,0x40,0x30));
+    void RendererD3D12::BuildFrameGraph() {
+        prof::Range r("Renderer.BuildFrameGraph", prof::Color(0x90, 0x40, 0x30));
         m_fg = core::FrameGraph{};
         auto rsGfx = CreateRootSignatureGfx(m_device.device());
         // 编译 float版着色器
-        auto vsFloat = Compile(L"engine\\gfx\\d3d12_shaders\\points.hlsl","VSMain","vs_5_1");
-        auto psFloat = Compile(L"engine\\gfx\\d3d12_shaders\\points.hlsl","PSMain","ps_5_1");
-        // 编译 half版（独立文件 points_half.hlsl，用 uint2 -> four fp16 解码）
-        auto vsHalf = Compile(L"engine\\gfx\\d3d12_shaders\\points_half.hlsl","VSMain","vs_5_1");
-        auto psHalf = Compile(L"engine\\gfx\\d3d12_shaders\\points_half.hlsl","PSMain","ps_5_1");
+        auto vsFloat = Compile(L"engine\\gfx\\d3d12_shaders\\points.hlsl", "VSMain", "vs_5_1");
+        auto psFloat = Compile(L"engine\\gfx\\d3d12_shaders\\points.hlsl", "PSMain", "ps_5_1");
 
         m_psoPointsFloat.Reset();
-        m_psoPointsHalf.Reset();
-        if(rsGfx && vsFloat && psFloat){
+        if (rsGfx && vsFloat && psFloat) {
             DXGI_FORMAT rtFmt = m_device.currentBackbuffer()->GetDesc().Format;
             D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
             pso.pRootSignature = rsGfx.Get();
@@ -385,90 +482,70 @@ namespace gfx {
             pso.DepthStencilState.StencilEnable = FALSE;
             pso.InputLayout = { nullptr,0 };
             pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-            pso.NumRenderTargets =1;
+            pso.NumRenderTargets = 1;
             pso.RTVFormats[0] = rtFmt;
-            pso.SampleDesc.Count =1;
+            pso.SampleDesc.Count = 1;
             if (SUCCEEDED(m_device.device()->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&m_psoPointsFloat))))
                 OutputDebugStringA("[PSO] Created float points pipeline.\n");
         }
-        if(rsGfx && vsHalf && psHalf){
-            DXGI_FORMAT rtFmt = m_device.currentBackbuffer()->GetDesc().Format;
-            D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
-            pso.pRootSignature = rsGfx.Get();
-            pso.VS = { vsHalf->GetBufferPointer(), vsHalf->GetBufferSize() };
-            pso.PS = { psHalf->GetBufferPointer(), psHalf->GetBufferSize() };
-            pso.BlendState = AlphaBlendDesc();
-            pso.SampleMask = UINT_MAX;
-            pso.RasterizerState = DefaultRasterizerNoCull();
-            pso.DepthStencilState.DepthEnable = FALSE;
-            pso.DepthStencilState.StencilEnable = FALSE;
-            pso.InputLayout = { nullptr,0 };
-            pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-            pso.NumRenderTargets =1;
-            pso.RTVFormats[0] = rtFmt;
-            pso.SampleDesc.Count =1;
-            if (SUCCEEDED(m_device.device()->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&m_psoPointsHalf))))
-                OutputDebugStringA("[PSO] Created half points pipeline.\n");
-        }
 
-        core::PassDesc clear{}; clear.name="clear";
-        clear.execute = [this](){
+        core::PassDesc clear{}; clear.name = "clear";
+        clear.execute = [this]() {
             m_device.beginFrame();
-            std::memcpy(m_clearColor,m_visual.clearColor,sizeof(m_clearColor));
+            std::memcpy(m_clearColor, m_visual.clearColor, sizeof(m_clearColor));
             m_device.clearCurrentRTV(m_clearColor);
             m_device.writeTimestamp();
-        };
+            };
         m_fg.addPass(clear);
 
-        // 替换旧 points pass，选择 PSO
-        if(rsGfx && (m_psoPointsFloat || m_psoPointsHalf)){
+        // 仅使用 float PSO
+        if (rsGfx && m_psoPointsFloat) {
             core::PassDesc points{}; points.name = "points";
             points.execute = [this, rsGfx]() {
                 auto* cl = m_device.cmdList();
                 auto rtvHandle = m_device.currentRTV();
-                cl->OMSetRenderTargets(1,&rtvHandle,FALSE,nullptr);
-                D3D12_VIEWPORT vp{0.f,0.f,(float)m_device.width(),(float)m_device.height(),0.f,1.f};
-                D3D12_RECT sc{0,0,(LONG)m_device.width(),(LONG)m_device.height()};
-                cl->RSSetViewports(1,&vp); cl->RSSetScissorRects(1,&sc);
+                cl->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+                D3D12_VIEWPORT vp{ 0.f,0.f,(float)m_device.width(),(float)m_device.height(),0.f,1.f };
+                D3D12_RECT sc{ 0,0,(LONG)m_device.width(),(LONG)m_device.height() };
+                cl->RSSetViewports(1, &vp); cl->RSSetScissorRects(1, &sc);
                 ID3D12DescriptorHeap* heaps[] = { m_device.srvHeap() }; cl->SetDescriptorHeaps(1, heaps);
                 cl->SetGraphicsRootSignature(rsGfx.Get());
-                bool useHalf = m_useHalfRender && m_psoPointsHalf; //运行时标志
-                cl->SetPipelineState(useHalf ? m_psoPointsHalf.Get() : m_psoPointsFloat.Get());
+                cl->SetPipelineState(m_psoPointsFloat.Get());
                 cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-                if (m_sharedParticleBuffer){
+                if (m_sharedParticleBuffer) {
                     D3D12_RESOURCE_BARRIER b{}; b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
                     b.Transition.pResource = m_sharedParticleBuffer.Get();
                     b.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
                     b.Transition.StateAfter = D3D12_RESOURCE_STATE_GENERIC_READ;
                     b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-                    cl->ResourceBarrier(1,&b);
+                    cl->ResourceBarrier(1, &b);
                 }
-                PerFrameCB cb{}; float3 eye=m_camera.eye, at=m_camera.at, up=m_camera.up;
-                Mat4 V=lookAtRH(eye,at,up); float aspect=(m_device.height()>0)?(float)m_device.width()/(float)m_device.height():1.0f;
-                Mat4 P=perspectiveFovRH_ZO(Deg2Rad(m_camera.fovYDeg),aspect,m_camera.nearZ,m_camera.farZ);
-                Mat4 VP=mul(P,V); std::memcpy(cb.viewProj,VP.m,sizeof(cb.viewProj));
-                cb.screenSize[0]=(float)m_device.width(); cb.screenSize[1]=(float)m_device.height();
-                cb.particleRadiusPx=m_visual.particleRadiusPx; cb.thicknessScale=m_visual.thicknessScale;
-                cb.groups=m_groups; cb.particlesPerGroup=m_particlesPerGroup;
-                cl->SetGraphicsRoot32BitConstants(0,sizeof(PerFrameCB)/4,&cb,0);
-                if(m_particleSrvIndex>=0 && m_particleCount>0){ auto gpuPos=m_device.srvGpuHandleAt((uint32_t)m_particleSrvIndex); cl->SetGraphicsRootDescriptorTable(1,gpuPos); }
-                if(m_paletteSrvIndex>=0){ auto gpuPal=m_device.srvGpuHandleAt((uint32_t)m_paletteSrvIndex); cl->SetGraphicsRootDescriptorTable(2,gpuPal); }
-                UINT instanceCount=m_particleCount; if(instanceCount>0) cl->DrawInstanced(6,instanceCount,0,0);
-                if (m_sharedParticleBuffer){
+                PerFrameCB cb{}; float3 eye = m_camera.eye, at = m_camera.at, up = m_camera.up;
+                Mat4 V = lookAtRH(eye, at, up); float aspect = (m_device.height() > 0) ? (float)m_device.width() / (float)m_device.height() : 1.0f;
+                Mat4 P = perspectiveFovRH_ZO(Deg2Rad(m_camera.fovYDeg), aspect, m_camera.nearZ, m_camera.farZ);
+                Mat4 VP = mul(P, V); std::memcpy(cb.viewProj, VP.m, sizeof(cb.viewProj));
+                cb.screenSize[0] = (float)m_device.width(); cb.screenSize[1] = (float)m_device.height();
+                cb.particleRadiusPx = m_visual.particleRadiusPx; cb.thicknessScale = m_visual.thicknessScale;
+                cb.groups = m_groups; cb.particlesPerGroup = m_particlesPerGroup;
+                cl->SetGraphicsRoot32BitConstants(0, sizeof(PerFrameCB) / 4, &cb, 0);
+                if (m_particleSrvIndex >= 0 && m_particleCount > 0) { auto gpuPos = m_device.srvGpuHandleAt((uint32_t)m_particleSrvIndex); cl->SetGraphicsRootDescriptorTable(1, gpuPos); }
+                if (m_paletteSrvIndex >= 0) { auto gpuPal = m_device.srvGpuHandleAt((uint32_t)m_paletteSrvIndex); cl->SetGraphicsRootDescriptorTable(2, gpuPal); }
+                UINT instanceCount = m_particleCount; if (instanceCount > 0) cl->DrawInstanced(6, instanceCount, 0, 0);
+                if (m_sharedParticleBuffer) {
                     D3D12_RESOURCE_BARRIER b{}; b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
                     b.Transition.pResource = m_sharedParticleBuffer.Get();
                     b.Transition.StateBefore = D3D12_RESOURCE_STATE_GENERIC_READ;
                     b.Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
                     b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-                    cl->ResourceBarrier(1,&b);
+                    cl->ResourceBarrier(1, &b);
                 }
                 m_device.writeTimestamp();
-            };
+                };
             m_fg.addPass(points);
         }
 
-        core::PassDesc present{}; present.name="present";
-        present.execute = [this](){ m_device.present(); };
+        core::PassDesc present{}; present.name = "present";
+        present.execute = [this]() { m_device.present(); };
         m_fg.addPass(present);
 
         m_fg.compile();
@@ -488,13 +565,13 @@ namespace gfx {
         if (!m_device.openSharedResource(sharedHandle, __uuidof(ID3D12Resource), (void**)&res)) return false;
         Microsoft::WRL::ComPtr<ID3D12Resource> local; local.Attach(res);
         int srvIndex = m_device.createBufferSRV(local.Get(), numElements, strideBytes);
-        if (srvIndex <0) return false;
+        if (srvIndex < 0) return false;
         m_sharedParticleBuffer = local;
         m_particleSrvIndex = srvIndex;
         m_particleCount = numElements;
         outSrvIndex = srvIndex;
-        // 根据 strideBytes 判断是否为 half 压缩（8 字节）
-        if (strideBytes ==8) m_useHalfRender = true; //资源导入驱动 half
+ 
+        m_useHalfRender = false;
         return true;
     }
 
@@ -503,9 +580,9 @@ namespace gfx {
         m_device.waitForGPU();
     }
 
-    bool RendererD3D12::UpdateGroupPalette(const float* rgbTriples,uint32_t groupCount){
-        if(!rgbTriples || groupCount==0){
-            m_groups=0; m_paletteSrvIndex=-1; m_paletteBuffer.Reset(); return true;
+    bool RendererD3D12::UpdateGroupPalette(const float* rgbTriples, uint32_t groupCount) {
+        if (!rgbTriples || groupCount == 0) {
+            m_groups = 0; m_paletteSrvIndex = -1; m_paletteBuffer.Reset(); return true;
         }
         size_t bytes = sizeof(float) * 3 * groupCount;
         // 直接使用上传堆，避免初始化阶段显式提交命令的问题
@@ -515,10 +592,10 @@ namespace gfx {
         rd.MipLevels = 1; rd.Format = DXGI_FORMAT_UNKNOWN;
         rd.SampleDesc = { 1,0 }; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
         rd.Flags = D3D12_RESOURCE_FLAG_NONE;
-        
+
         Microsoft::WRL::ComPtr<ID3D12Resource> buf;
         if (FAILED(m_device.device()->CreateCommittedResource(&hpUp, D3D12_HEAP_FLAG_NONE, &rd,
-        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&buf)))) return false;
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&buf)))) return false;
 
         void* mapped = nullptr; D3D12_RANGE range{ 0,0 };
         if (FAILED(buf->Map(0, &range, &mapped))) return false;
@@ -527,8 +604,6 @@ namespace gfx {
 
         m_paletteBuffer = buf;
         m_paletteSrvIndex = m_device.createBufferSRV(m_paletteBuffer.Get(), groupCount, sizeof(float) * 3);
-        return (m_paletteSrvIndex >= 0);
-        return (m_paletteSrvIndex >= 0);
+        return (m_paletteSrvIndex >= 0); // 修复：去除重复的 return
     }
-
 } // namespace gfx

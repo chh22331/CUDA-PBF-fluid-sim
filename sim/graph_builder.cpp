@@ -4,7 +4,6 @@
 #include "phase_pipeline.h"
 #include "post_ops.h"
 #include "simulation_context.h"
-#include "precision_stage.h"
 #include "grid_strategy.h"
 #include "grid_buffers.cuh"
 #include "device_buffers.cuh"

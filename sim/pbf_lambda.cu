@@ -1,15 +1,12 @@
-﻿#include <cuda_runtime.h>
-#include <device_launch_parameters.h>
+﻿#include <device_launch_parameters.h>
 #include <cmath>
 #include "parameters.h"
 #include "cuda_vec_math.cuh"
 #include "cuda_grid_utils.cuh"
-#include "precision_traits.cuh"
 #include "device_globals.cuh"
 
 namespace {
 
-    // Dense / 非压缩版本（使用 cellStart / cellEnd）
     __global__ void KLambdaGlobalsDense(
         const uint32_t* __restrict__ indicesSorted,
         const uint32_t* __restrict__ keysSorted,
@@ -21,15 +18,15 @@ namespace {
         uint32_t sortedIdx = blockIdx.x * blockDim.x + threadIdx.x;
         if (sortedIdx >= N) return;
 
-        const sim::GridBounds& grid = dp.grid;
-        const sim::KernelCoeffs& kc = dp.kernel;
+        const sim::GridBounds&   grid = dp.grid;
+        const sim::KernelCoeffs& kc   = dp.kernel;
         const float restDensity = dp.restDensity;
         const float particleMass = dp.particleMass;
         const sim::PbfTuning& pbf = dp.pbf;
 
         uint32_t i = indicesSorted[sortedIdx];
-        float4 pi4 = sim::PrecisionTraits::loadPosPred(sim::g_pos_pred, sim::g_pos_pred_h4, i);
-        float3 pi = make_float3(pi4.x, pi4.y, pi4.z);
+        float4 pi4 = sim::g_pos_pred[i];
+        float3 pi  = make_float3(pi4.x, pi4.y, pi4.z);
 
         const uint32_t key = keysSorted[sortedIdx];
         int3 ci;
@@ -41,11 +38,11 @@ namespace {
         float density = 0.f;
         float3 gradSum = make_float3(0.f, 0.f, 0.f);
         float sumGrad2 = 0.f;
-        int neighborContrib = 0;
+        int   neighborContrib = 0;
 
         const int cap = dp.maxNeighbors;
         const bool hasCap = (cap > 0);
-        const float h = kc.h;
+        const float h  = kc.h;
         const float cs = grid.cellSize;
         const int reach = (cs > 0.f) ? max(1, int(ceilf(h / cs))) : 1;
 
@@ -65,8 +62,8 @@ namespace {
                 uint32_t j = indicesSorted[k];
                 if (j == i) continue;
 
-                float4 pj4 = sim::PrecisionTraits::loadPosPred(sim::g_pos_pred, sim::g_pos_pred_h4, j);
-                float3 pj = make_float3(pj4.x, pj4.y, pj4.z);
+                float4 pj4 = sim::g_pos_pred[j];
+                float3 pj  = make_float3(pj4.x, pj4.y, pj4.z);
                 float3 rij = make_float3(pi.x - pj.x, pi.y - pj.y, pi.z - pj.z);
                 float r2 = rij.x * rij.x + rij.y * rij.y + rij.z * rij.z;
                 if (r2 > kc.h2) continue;
@@ -110,7 +107,6 @@ namespace {
         sim::g_lambda[i] = lam;
     }
 
-    // Compact / 压缩单元版本
     __global__ void KLambdaGlobalsCompact(
         const uint32_t* __restrict__ indicesSorted,
         const uint32_t* __restrict__ keysSorted,
@@ -123,15 +119,15 @@ namespace {
         uint32_t sortedIdx = blockIdx.x * blockDim.x + threadIdx.x;
         if (sortedIdx >= N) return;
 
-        const sim::GridBounds& grid = dp.grid;
-        const sim::KernelCoeffs& kc = dp.kernel;
+        const sim::GridBounds&   grid = dp.grid;
+        const sim::KernelCoeffs& kc   = dp.kernel;
         const float restDensity = dp.restDensity;
         const float particleMass = dp.particleMass;
         const sim::PbfTuning& pbf = dp.pbf;
 
         uint32_t i = indicesSorted[sortedIdx];
-        float4 pi4 = sim::PrecisionTraits::loadPosPred(sim::g_pos_pred, sim::g_pos_pred_h4, i);
-        float3 pi = make_float3(pi4.x, pi4.y, pi4.z);
+        float4 pi4 = sim::g_pos_pred[i];
+        float3 pi  = make_float3(pi4.x, pi4.y, pi4.z);
 
         const uint32_t key = keysSorted[sortedIdx];
         int3 ci;
@@ -143,11 +139,11 @@ namespace {
         float density = 0.f;
         float3 gradSum = make_float3(0.f, 0.f, 0.f);
         float sumGrad2 = 0.f;
-        int neighborContrib = 0;
+        int   neighborContrib = 0;
 
         const int cap = dp.maxNeighbors;
         const bool hasCap = (cap > 0);
-        const float h = kc.h;
+        const float h  = kc.h;
         const float cs = grid.cellSize;
         const int reach = (cs > 0.f) ? max(1, int(ceilf(h / cs))) : 1;
         const uint32_t M = *compactCount;
@@ -168,8 +164,8 @@ namespace {
                 uint32_t j = indicesSorted[k];
                 if (j == i) continue;
 
-                float4 pj4 = sim::PrecisionTraits::loadPosPred(sim::g_pos_pred, sim::g_pos_pred_h4, j);
-                float3 pj = make_float3(pj4.x, pj4.y, pj4.z);
+                float4 pj4 = sim::g_pos_pred[j];
+                float3 pj  = make_float3(pj4.x, pj4.y, pj4.z);
                 float3 rij = make_float3(pi.x - pj.x, pi.y - pj.y, pi.z - pj.z);
                 float r2 = rij.x * rij.x + rij.y * rij.y + rij.z * rij.z;
                 if (r2 > kc.h2) continue;
@@ -215,7 +211,6 @@ namespace {
 
 } // namespace
 
-// 新的全局指针版 Launch（Dense）
 extern "C" void LaunchLambdaDenseGlobals(
     const uint32_t* indicesSorted,
     const uint32_t* keysSorted,
@@ -231,7 +226,6 @@ extern "C" void LaunchLambdaDenseGlobals(
     KLambdaGlobalsDense<<<grid, block, 0, s>>>(indicesSorted, keysSorted, cellStart, cellEnd, dp, N);
 }
 
-// 新的全局指针版 Launch（Compact）
 extern "C" void LaunchLambdaCompactGlobals(
     const uint32_t* indicesSorted,
     const uint32_t* keysSorted,
@@ -248,16 +242,19 @@ extern "C" void LaunchLambdaCompactGlobals(
     KLambdaGlobalsCompact<<<grid, block, 0, s>>>(indicesSorted, keysSorted, uniqueKeys, offsets, compactCount, dp, N);
 }
 
-// 保留旧接口（兼容未迁移调用，可选择删除）
-extern "C" void LaunchLambda(float* lambda, const float4* pos_pred, const uint32_t* indicesSorted,
+// 兼容旧接口（直接调用新的 FP32 内核）
+extern "C" void LaunchLambda(float* lambda,
+                             const float4* pos_pred,
+                             const uint32_t* indicesSorted,
                              const uint32_t* keysSorted,
-                             const uint32_t* cellStart, const uint32_t* cellEnd,
+                             const uint32_t* cellStart,
+                             const uint32_t* cellEnd,
                              sim::DeviceParams dp,
-                             uint32_t N, cudaStream_t s)
+                             uint32_t N,
+                             cudaStream_t s)
 {
-    const int BS = 256;
-    dim3 block(BS), gridDim((N + BS - 1) / BS);
-    KLambdaGlobalsDense<<<gridDim, block, 0, s>>>(indicesSorted, keysSorted, cellStart, cellEnd, dp, N);
+    (void)lambda; (void)pos_pred; // 输出仍写入 sim::g_lambda
+    LaunchLambdaDenseGlobals(indicesSorted, keysSorted, cellStart, cellEnd, dp, N, s);
 }
 
 extern "C" void LaunchLambdaCompact(
@@ -272,7 +269,6 @@ extern "C" void LaunchLambdaCompact(
     uint32_t N,
     cudaStream_t s)
 {
-    const int BS = 256;
-    dim3 block(BS), gridDim((N + BS - 1) / BS);
-    KLambdaGlobalsCompact<<<gridDim, block, 0, s>>>(indicesSorted, keysSorted, uniqueKeys, offsets, compactCount, dp, N);
+    (void)lambda; (void)pos_pred;
+    LaunchLambdaCompactGlobals(indicesSorted, keysSorted, uniqueKeys, offsets, compactCount, dp, N, s);
 }

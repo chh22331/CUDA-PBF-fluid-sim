@@ -1,4 +1,4 @@
-#include <cuda_runtime.h>
+﻿#include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include "parameters.h"
 #include "cuda_vec_math.cuh"

@@ -5,7 +5,6 @@
 #include "device_buffers.cuh"
 #include "grid_buffers.cuh"
 #include "phase_pipeline.h"
-#include "precision_stage.h"
 
 namespace sim {
 

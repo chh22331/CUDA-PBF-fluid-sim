@@ -1,6 +1,5 @@
 #include "post_ops.h"
 #include "simulation_context.h"
-#include "precision_stage.h"
 #include "logging.h"
 #include "stats.h"
 #include <cstdio>
@@ -8,11 +7,8 @@
 
 // extern kernels
 extern "C" void LaunchBoundary(float4*, float4*, sim::GridBounds, float, uint32_t, cudaStream_t);
-extern "C" void LaunchRecycleToNozzleConst(float4*, float4*, float4*, sim::GridBounds, float, uint32_t, int, cudaStream_t);
 extern "C" void LaunchXSPH(float4*, const float4*, const float4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
 extern "C" void LaunchXSPHCompact(float4*, const float4*, const float4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
-extern "C" void LaunchXSPHMP(float4*, const float4*, const sim::Half4*, const float4*, const sim::Half4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
-extern "C" void LaunchXSPHCompactMP(float4*, const float4*, const sim::Half4*, const float4*, const sim::Half4*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, const uint32_t*, sim::DeviceParams, uint32_t, cudaStream_t);
 
 namespace sim {
 
@@ -36,9 +32,6 @@ void BoundaryOp::run(SimulationContext& ctx, const SimParams& p, cudaStream_t s)
 void RecycleOp::run(SimulationContext& ctx, const SimParams& p, cudaStream_t s) {
     if (!ctx.effectiveVel) ctx.effectiveVel = ctx.bufs->d_vel;
     prof::Range r("PostOp.Recycle", prof::Color(0x90, 0x40, 0xA0));
-
-    LaunchRecycleToNozzleConst(ctx.bufs->d_pos, ctx.bufs->d_pos_pred, ctx.effectiveVel,
-        p.grid, p.dt, p.numParticles, 0, s);
 
     static uint64_t s_lastCopyFrame = UINT64_MAX;
     bool needCopy = (p.numParticles > 0) && !ctx.pingPongPos && !ctx.bufs->posPredExternal && !ctx.bufs->externalPingPong;
@@ -64,32 +57,17 @@ void XsphOp::run(SimulationContext& ctx, const SimParams& p, cudaStream_t s) {
     if (p.xsph_c <= 0.f || p.numParticles == 0) return;
     prof::Range r("PostOp.XSPH", prof::Color(0x30, 0x70, 0xC0));
     DeviceParams dp = MakeDP(p);
-    bool useMP = (UseHalfForPosition(p, Stage::XSPH, *ctx.bufs) && UseHalfForVelocity(p, Stage::XSPH, *ctx.bufs));
     if (ctx.useHashedGrid) {
-        if (useMP)
-            LaunchXSPHCompactMP(ctx.bufs->d_vel, ctx.bufs->d_vel, ctx.bufs->d_vel_h4,
-                ctx.bufs->d_pos_pred, ctx.bufs->d_pos_pred_h4,
-                ctx.grid->d_indices_sorted, ctx.grid->d_cellKeys_sorted,
-                ctx.grid->d_cellUniqueKeys, ctx.grid->d_cellOffsets, ctx.grid->d_compactCount,
-                dp, p.numParticles, s);
-        else
-            LaunchXSPHCompact(ctx.bufs->d_vel, ctx.bufs->d_vel, ctx.bufs->d_pos_pred,
-                ctx.grid->d_indices_sorted, ctx.grid->d_cellKeys_sorted,
-                ctx.grid->d_cellUniqueKeys, ctx.grid->d_cellOffsets, ctx.grid->d_compactCount,
-                dp, p.numParticles, s);
+        LaunchXSPHCompact(ctx.bufs->d_vel, ctx.bufs->d_vel, ctx.bufs->d_pos_pred,
+            ctx.grid->d_indices_sorted, ctx.grid->d_cellKeys_sorted,
+            ctx.grid->d_cellUniqueKeys, ctx.grid->d_cellOffsets, ctx.grid->d_compactCount,
+            dp, p.numParticles, s);
     }
     else {
-        if (useMP)
-            LaunchXSPHMP(ctx.bufs->d_vel, ctx.bufs->d_vel, ctx.bufs->d_vel_h4,
-                ctx.bufs->d_pos_pred, ctx.bufs->d_pos_pred_h4,
-                ctx.grid->d_indices_sorted, ctx.grid->d_cellKeys_sorted,
-                ctx.grid->d_cellStart, ctx.grid->d_cellEnd,
-                dp, p.numParticles, s);
-        else
-            LaunchXSPH(ctx.bufs->d_vel, ctx.bufs->d_vel, ctx.bufs->d_pos_pred,
-                ctx.grid->d_indices_sorted, ctx.grid->d_cellKeys_sorted,
-                ctx.grid->d_cellStart, ctx.grid->d_cellEnd,
-                dp, p.numParticles, s);
+        LaunchXSPH(ctx.bufs->d_vel, ctx.bufs->d_vel, ctx.bufs->d_pos_pred,
+            ctx.grid->d_indices_sorted, ctx.grid->d_cellKeys_sorted,
+            ctx.grid->d_cellStart, ctx.grid->d_cellEnd,
+            dp, p.numParticles, s);
     }
     ctx.effectiveVel = ctx.bufs->d_vel;
 }

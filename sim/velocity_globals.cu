@@ -2,7 +2,6 @@
 #include <device_launch_parameters.h>
 #include "device_globals.cuh"
 #include "cuda_vec_math.cuh"
-#include "precision_traits.cuh"
 
 namespace {
     __global__ void KVelocityGlobals(float dtInv, uint32_t N) {
@@ -17,9 +16,6 @@ namespace {
         float3 v = make_float3((n.x - c.x) * dtInv,
                                (n.y - c.y) * dtInv,
                                (n.z - c.z) * dtInv);
-
-        // 写回 float4 速度 + 可选 half
-        sim::PrecisionTraits::storeVel(sim::g_vel, sim::g_vel_h4, i, v);
     }
 } // namespace
 

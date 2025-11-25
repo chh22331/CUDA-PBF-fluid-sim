@@ -23,7 +23,7 @@
     <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
+    <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
@@ -66,16 +66,14 @@
       <PreprocessorDefinitions>WIN32;WIN64;ENABLE_NVTX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalIncludeDirectories>
-				%(AdditionalIncludeDirectories)
-				$(CudaIncludeDirFallback)
-			</AdditionalIncludeDirectories>
+      <!-- 添加 CUDA 头文件目录 -->
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(CUDA_PATH)\include;$(CudaIncludeDirFallback);"F:\unity\2022.3.61t8\Editor\Data\PluginAPI"</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>cudart_static.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(CudaLibDirFallback);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <!-- 添加 CUDA 库目录 -->
+      <AdditionalLibraryDirectories>$(CUDA_PATH)\lib\x64;$(CudaLibDirFallback);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
@@ -93,18 +91,16 @@
       <PreprocessorDefinitions>WIN32;WIN64;ENABLE_NVTX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalIncludeDirectories>
-				%(AdditionalIncludeDirectories)
-				$(CudaIncludeDirFallback)
-			</AdditionalIncludeDirectories>
+      <!-- 添加 CUDA 头文件目录 -->
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(CUDA_PATH)\include;$(CudaIncludeDirFallback);"F:\unity\2022.3.61t8\Editor\Data\PluginAPI"</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>cudart_static.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(CudaLibDirFallback);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <!-- 添加 CUDA 库目录 -->
+      <AdditionalLibraryDirectories>$(CUDA_PATH)\lib\x64;$(CudaLibDirFallback);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
@@ -115,48 +111,28 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <CudaCompile Include="kernel.cu" />
-    <CudaCompile Include="sim\adaptive_precision.cu" />
     <CudaCompile Include="sim\boundary.cu" />
-    <CudaCompile Include="sim\boundary_half.cu" />
     <CudaCompile Include="sim\cell_compact.cu" />
     <CudaCompile Include="sim\cell_ranges.cu" />
-    <CudaCompile Include="sim\device_buffers_kernels.cu" />
     <CudaCompile Include="sim\device_globals.cu" />
     <CudaCompile Include="sim\device_pos_state.cu" />
-    <CudaCompile Include="sim\eimtter.cu" />
-    <CudaCompile Include="sim\emit_params.cu" />
     <CudaCompile Include="sim\hash_keys.cu" />
     <CudaCompile Include="sim\integrate.cu" />
     <CudaCompile Include="sim\integrate_pred_semi_implicit.cu" />
-    <CudaCompile Include="sim\integrate_velocity_half.cu" />
-    <CudaCompile Include="sim\integrate_velocity_mp.cu" />
-    <CudaCompile Include="sim\neighborhood_mp.cu" />
-    <CudaCompile Include="sim\pack_prev_pos_snapshot.cu" />
     <CudaCompile Include="sim\pbf_delta_apply.cu" />
     <CudaCompile Include="sim\pbf_lambda.cu" />
-    <CudaCompile Include="sim\precision_math.cu" />
-    <CudaCompile Include="sim\precision_traits.cu" />
-    <CudaCompile Include="sim\restore_pos_from_half_prev.cu" />
-    <CudaCompile Include="sim\solver_lambda_delta_xsph_compact_mp.cu" />
-    <CudaCompile Include="sim\solver_lambda_delta_xsph_mp.cu" />
-    <CudaCompile Include="sim\solver_lambda_half.cu" />
-    <CudaCompile Include="sim\solver_lambda_half_compact.cu" />
     <CudaCompile Include="sim\sort_pairs.cu" />
     <CudaCompile Include="sim\stats.cu" />
     <CudaCompile Include="sim\stats_bruteforce.cu" />
-    <CudaCompile Include="sim\velocity_from_half_prev.cu" />
     <CudaCompile Include="sim\velocity_globals.cu" />
     <CudaCompile Include="sim\xsph.cu" />
-    <CudaCompile Include="sim\xsph_half.cu" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="app_main.cpp" />
     <ClCompile Include="engine\core\config.cpp" />
     <ClCompile Include="engine\core\console.cpp" />
-    <ClCompile Include="engine\core\precision_mapping.cpp" />
     <ClCompile Include="engine\gfx\d3d12_device.cpp" />
     <ClCompile Include="engine\gfx\renderer.cpp" />
-    <ClCompile Include="sim\emitter.cpp" />
     <ClCompile Include="sim\graph_builder.cpp" />
     <ClCompile Include="sim\kernel_dispatcher.cpp" />
     <ClCompile Include="sim\kernel_fallback.cpp" />
@@ -170,7 +146,6 @@
     <ClInclude Include="engine\core\console.h" />
     <ClInclude Include="engine\core\frame_graph.h" />
     <ClInclude Include="engine\core\memory_pool.h" />
-    <ClInclude Include="engine\core\precision_mapping.h" />
     <ClInclude Include="engine\core\prof_nvtx.h" />
     <ClInclude Include="engine\core\profiler.h" />
     <ClInclude Include="engine\gfx\d3d12_device.h" />
@@ -181,8 +156,6 @@
     <ClInclude Include="sim\device_buffers.cuh" />
     <ClInclude Include="sim\device_globals.cuh" />
     <ClInclude Include="sim\device_pos_state.cuh" />
-    <ClInclude Include="sim\emitter.h" />
-    <ClInclude Include="sim\emit_params.h" />
     <ClInclude Include="sim\graph_builder.h" />
     <ClInclude Include="sim\grid_buffers.cuh" />
     <ClInclude Include="sim\grid_strategy.h" />
@@ -201,12 +174,11 @@
     <ClInclude Include="sim\phase_pipeline.h" />
     <ClInclude Include="sim\poisson_disk.h" />
     <ClInclude Include="sim\post_ops.h" />
-    <ClInclude Include="sim\precision_math.cuh" />
-    <ClInclude Include="sim\precision_stage.h" />
-    <ClInclude Include="sim\precision_traits.cuh" />
     <ClInclude Include="sim\simulation_context.h" />
     <ClInclude Include="sim\simulator.h" />
     <ClInclude Include="sim\stats.h" />
+    <ClInclude Include="unity_plugin\pch.h" />
+    <ClInclude Include="unity_plugin\SimInterop.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="CMakeLists.txt" />
@@ -219,14 +191,6 @@
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">6.6</ShaderModel>
       <ObjectFileOutput>$(OutDir)points_vs.cso</ObjectFileOutput>
     </FxCompile>
-    <FxCompile Include="engine\gfx\d3d12_shaders\points_half.hlsl">
-      <EntryPointName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">VSMain</EntryPointName>
-      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">6.6</ShaderModel>
-      <EntryPointName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">VSMain</EntryPointName>
-      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">6.6</ShaderModel>
-    </FxCompile>
     <FxCompile Include="engine\gfx\d3d12_shaders\thickness.hlsl">
       <ShaderType>Pixel</ShaderType>
       <ShaderModel>5.0</ShaderModel>
@@ -234,7 +198,9 @@
     </FxCompile>
   </ItemGroup>
   <ItemGroup>
+    <None Include="C# Assets\Scripts\SimBridge.cs" />
     <None Include="diff" />
+    <None Include="unity_plugin\SimBridge.cs" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

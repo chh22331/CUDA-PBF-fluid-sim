@@ -1,7 +1,6 @@
 #pragma once
 #include "simulation_context.h"
 #include "kernel_dispatcher.h"
-#include "precision_stage.h"
 
 namespace sim {
 
