@@ -24,13 +24,22 @@ namespace console {
         struct Renderer {
             float clearColor[4] = { 0.1f, 0.2f, 0.35f, 1.0f };
             float particleRadiusPx = 1.0f;
-            float thicknessScale = 1.0f;
+            float thicknessScale = 1.0f; // 原用途：厚度缩放；在速度模式未自动时被覆盖为 1/maxSpeedHint
             float3 eye = make_float3(350.0f, 50.0f, 300.0f);
             float3 at = make_float3(0.5f, 0.5f, 0.5f);
             float3 up = make_float3(0.0f, 1.0f, 0.0f);
             float  fovYDeg = 45.0f;
             float  nearZ = 0.01f;
             float  farZ = 50000.0f;
+
+            // 新增：渲染模式（与 RendererD3D12::RenderMode 对接）
+            gfx::RendererD3D12::RenderMode renderMode = gfx::RendererD3D12::RenderMode::GroupPalette;
+
+            // 新增：速度着色控制
+            // speedColorAutoScale = true 时：沿用 thicknessScale（需外部或模拟侧维护适当归一化）
+            // speedColorAutoScale = false 时：thicknessScale 会在 ApplyRendererRuntime 中覆盖为 1/maxSpeedHint
+            bool  speedColorAutoScale = true;
+            float speedColorMaxSpeedHint = 50.0f; // 用于非自动归一：颜色插值因子 = speed * (1/maxSpeedHint)
         } renderer;
 
         struct Viewer {
@@ -100,15 +109,13 @@ namespace console {
             sim::PbfTuning pbf{};
             float    xsph_c = 0.05f;
 
-            float    smoothingRadius = 2.0f;
+            float    smoothingRadius = 3.5f;
             float3   gridMins = make_float3(0.0f, 0.0f, 0.0f);
             float3   gridMaxs = make_float3(200.0f, 200.0f, 200.0f);
             float    cellSize = 0.0f;
 
-            int      solverIters = 1;
+            int      solverIters = 2;
             int      maxNeighbors = 64;
-            bool     useMixedPrecision = true;
-            int      sortEveryN = 4;
             float    boundaryRestitution = 0.0f;
 
             bool     auto_tune_h = true;
@@ -122,7 +129,7 @@ namespace console {
 
             bool     cube_auto_partition = false;
             uint32_t cube_group_count = 128;
-            uint32_t cube_edge_particles = 23;
+            uint32_t cube_edge_particles = 20;
             static constexpr uint32_t cube_group_count_max = 512;
             uint32_t cube_layers = 8;
             float    cube_group_spacing_world = 80.0f;

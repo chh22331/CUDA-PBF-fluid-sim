@@ -821,8 +821,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                     (cc.bench.sample_end_seconds > 0.0) ? std::to_string(cc.bench.sample_end_seconds).c_str() : "end");
             }
             std::printf("Frame_ms avg=%.3f min=%.3f max=%.3f\n", avgFrame, frameMsMin, frameMsMax);
-            std::printf("Sim_msGpu avg=%.3f min=%.3f max=%.3f\n", avgSim, simMsMin, simMsMax);
-            std::printf("Render_ms avg=%.3f min=%.3f max=%.3f\n", avgRender, renderMsMin, renderMsMax);
+            //std::printf("Sim_msGpu avg=%.3f min=%.3f max=%.3f\n", avgSim, simMsMin, simMsMax);
+            //std::printf("Render_ms avg=%.3f min=%.3f max=%.3f\n", avgRender, renderMsMin, renderMsMax);
             std::printf("FPS_avg=%.2f\n", fps);
             std::printf("==========================\n");
         } else {

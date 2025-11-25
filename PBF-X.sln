@@ -5,11 +5,6 @@ VisualStudioVersion = 17.14.36518.9
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "PBF-X", "PBF-X.vcxproj", "{3B7D2347-6EBB-11A1-BEED-23434BF7B536}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "NativeSimPlugin", "..\NativeSimPlugin\NativeSimPlugin.vcxproj", "{855ADB13-4AF5-49F8-8D70-739376920A56}"
-	ProjectSection(ProjectDependencies) = postProject
-		{3B7D2347-6EBB-11A1-BEED-23434BF7B536} = {3B7D2347-6EBB-11A1-BEED-23434BF7B536}
-	EndProjectSection
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -20,10 +15,6 @@ Global
 		{3B7D2347-6EBB-11A1-BEED-23434BF7B536}.Debug|x64.Build.0 = Debug|x64
 		{3B7D2347-6EBB-11A1-BEED-23434BF7B536}.Release|x64.ActiveCfg = Release|x64
 		{3B7D2347-6EBB-11A1-BEED-23434BF7B536}.Release|x64.Build.0 = Release|x64
-		{855ADB13-4AF5-49F8-8D70-739376920A56}.Debug|x64.ActiveCfg = Debug|x64
-		{855ADB13-4AF5-49F8-8D70-739376920A56}.Debug|x64.Build.0 = Debug|x64
-		{855ADB13-4AF5-49F8-8D70-739376920A56}.Release|x64.ActiveCfg = Release|x64
-		{855ADB13-4AF5-49F8-8D70-739376920A56}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

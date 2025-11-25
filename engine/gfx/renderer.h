@@ -39,6 +39,11 @@ namespace gfx {
 
     class RendererD3D12 {
     public:
+        enum class RenderMode {
+            GroupPalette = 0,
+            SpeedColor = 1
+        };
+
         bool Initialize(HWND hwnd, const RenderInitParams& p);
         void Resize(uint32_t w, uint32_t h) { m_device.resize(w, h); BuildFrameGraph(); }
         void BuildFrameGraph();
@@ -51,6 +56,9 @@ namespace gfx {
         bool ImportSharedBufferAsSRV(HANDLE sharedHandle, uint32_t numElements, uint32_t strideBytes, int& outSrvIndex);
         void RegisterPingPongCudaPtrs(const void* ptrA, const void* ptrB);
 
+        // 新增：导入速度共享缓冲作为 SRV（外层可把 CUDA 导出的 shared handle 传入）
+        bool ImportSharedVelocityAsSRV(HANDLE sharedHandle, uint32_t numElements, uint32_t strideBytes, int& outSrvIndex);
+
         void SetCamera(const CameraParams& p) { m_camera = p; }
         void SetVisual(const VisualParams& v) { m_visual = v; }
         void SetParticleCount(uint32_t n) { m_particleCount = n; }
@@ -61,7 +69,9 @@ namespace gfx {
             m_groups = groups;
             m_particlesPerGroup = particlesPerGroup;
         }
-        void SetUseHalfRender(bool enable){ m_useHalfRender = enable; }
+        void SetUseHalfRender(bool enable) { m_useHalfRender = enable; }
+
+        void SetRenderMode(RenderMode m) { m_renderMode = m; }
 
         // 时间线同步访问器
         HANDLE SharedTimelineFenceHandle() const { return m_timelineFenceSharedHandle; }
@@ -76,7 +86,6 @@ namespace gfx {
         int ActivePingIndex() const { return m_activePingIndex; }
         uint32_t ParticleCount() const { return m_particleCount; }
 
-        // 双缓冲资源（保持 public 以便调试）
         Microsoft::WRL::ComPtr<ID3D12Resource> m_sharedParticleBuffers[2];
         int  m_particleSrvIndexPing[2] = { -1, -1 };
         void* m_knownCudaPtrs[2] = { nullptr, nullptr };
@@ -101,18 +110,25 @@ namespace gfx {
 
         Microsoft::WRL::ComPtr<ID3D12Resource> m_paletteBuffer;
         int m_paletteSrvIndex = -1;
-        
+
         CameraParams m_camera{};
         VisualParams m_visual{};
 
         HANDLE m_sharedParticleBufferHandles[2]{};
 
         Microsoft::WRL::ComPtr<ID3D12Fence> m_timelineFence;
-        
+
 
         bool m_useHalfRender = false;
         Microsoft::WRL::ComPtr<ID3D12PipelineState> m_psoPointsFloat;
         Microsoft::WRL::ComPtr<ID3D12PipelineState> m_psoPointsHalf;
+
+        // 新增：速度渲染用资源与 PSO
+        Microsoft::WRL::ComPtr<ID3D12Resource> m_sharedVelocityBuffer;
+        int m_velocitySrvIndex = -1;
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> m_psoPointsSpeed;
+
+        RenderMode m_renderMode = RenderMode::GroupPalette;
     };
 
 } // namespace gfx
