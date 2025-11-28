@@ -12,17 +12,12 @@
 # =============================================================================
 
 #############################################
-# localized /showIncludes string
-
-msvc_deps_prefix = 注意: 包含文件:  
-
-
-#############################################
 # Rule for compiling CXX files.
 
 rule CXX_COMPILER__pbf_core_Debug
-  deps = msvc
-  command = C:\PROGRA~1\MIB055~1\2022\COMMUN~1\VC\Tools\MSVC\1444~1.352\bin\Hostx86\x86\cl.exe  /nologo /TP $DEFINES $INCLUDES $FLAGS /showIncludes /Fo$out /Fd$TARGET_COMPILE_PDB /FS -c $in
+  depfile = $DEP_FILE
+  deps = gcc
+  command = C:\PROGRA~1\MIB055~1\2022\COMMUN~1\VC\Tools\Llvm\x64\bin\clang.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building CXX object $out
 
 
@@ -30,7 +25,7 @@ rule CXX_COMPILER__pbf_core_Debug
 # Rule for linking CXX static library.
 
 rule CXX_STATIC_LIBRARY_LINKER__pbf_core_Debug
-  command = cmd.exe /C "$PRE_LINK && C:\PROGRA~1\MIB055~1\2022\COMMUN~1\VC\Tools\MSVC\1444~1.352\bin\Hostx86\x86\lib.exe /nologo $LINK_FLAGS /out:$TARGET_FILE $in  && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\Users\17459\AppData\Local\Programs\Python\Python311\Lib\site-packages\cmake\data\bin\cmake.exe -E rm -f $TARGET_FILE && C:\PROGRA~1\MIB055~1\2022\COMMUN~1\VC\Tools\MSVC\1444~1.352\bin\Hostx64\x64\lib.exe /OUT:$TARGET_FILE $in && $POST_BUILD"
   description = Linking CXX static library $TARGET_FILE
   restat = $RESTAT
 
@@ -39,26 +34,47 @@ rule CXX_STATIC_LIBRARY_LINKER__pbf_core_Debug
 # Rule for compiling CXX files.
 
 rule CXX_COMPILER__pbf_app_Debug
-  deps = msvc
-  command = C:\PROGRA~1\MIB055~1\2022\COMMUN~1\VC\Tools\MSVC\1444~1.352\bin\Hostx86\x86\cl.exe  /nologo /TP $DEFINES $INCLUDES $FLAGS /showIncludes /Fo$out /Fd$TARGET_COMPILE_PDB /FS -c $in
+  depfile = $DEP_FILE
+  deps = gcc
+  command = C:\PROGRA~1\MIB055~1\2022\COMMUN~1\VC\Tools\Llvm\x64\bin\clang.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building CXX object $out
 
 
 #############################################
 # Rule for linking CXX executable.
 
-rule CXX_EXECUTABLE_LINKER__pbf_app_Debug
-  command = cmd.exe /C "$PRE_LINK && C:\Users\17459\AppData\Local\Programs\Python\Python311\Lib\site-packages\cmake\data\bin\cmake.exe -E vs_link_exe --intdir=$OBJECT_DIR --rc="D:\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe" --mt="D:\Windows Kits\10\bin\10.0.26100.0\x86\mt.exe" --manifests $MANIFESTS -- C:\PROGRA~1\MIB055~1\2022\COMMUN~1\VC\Tools\MSVC\1444~1.352\bin\Hostx86\x86\link.exe /nologo $in  /out:$TARGET_FILE /implib:$TARGET_IMPLIB /pdb:$TARGET_PDB /version:0.0 $LINK_FLAGS $LINK_PATH $LINK_LIBRARIES && $POST_BUILD"
+rule CXX_EXECUTABLE_DEVICE_LINKER__pbf_app_Debug
+  command = C:\PROGRA~1\NVIDIA~2\CUDA\v13.0\bin\nvcc.exe -forward-unknown-to-host-compiler $LANGUAGE_COMPILE_FLAGS $LINK_FLAGS -Wno-deprecated-gpu-targets -shared -dlink $in -o $TARGET_FILE $LINK_PATH $LINK_LIBRARIES -Xcompiler=-Fd$TARGET_COMPILE_PDB,-FS
   description = Linking CXX executable $TARGET_FILE
   restat = $RESTAT
+
+
+#############################################
+# Rule for linking CXX executable.
+
+rule CXX_EXECUTABLE_LINKER__pbf_app_Debug
+  command = cmd.exe /C "$PRE_LINK && C:\PROGRA~1\MIB055~1\2022\COMMUN~1\VC\Tools\Llvm\x64\bin\clang.exe -fuse-ld=lld-link -nostartfiles -nostdlib $FLAGS $LINK_FLAGS $in -o $TARGET_FILE -Xlinker /implib:$TARGET_IMPLIB -Xlinker /pdb:$TARGET_PDB -Xlinker /version:0.0  $LINK_PATH $LINK_LIBRARIES && $POST_BUILD"
+  description = Linking CXX executable $TARGET_FILE
+  restat = $RESTAT
+
+
+#############################################
+# Rule for compiling CUDA files.
+
+rule CUDA_COMPILER__pbf_cuda_Debug
+  depfile = $DEP_FILE
+  deps = gcc
+  command = C:\PROGRA~1\NVIDIA~2\CUDA\v13.0\bin\nvcc.exe -forward-unknown-to-host-compiler $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -x cu -dc $in -o $out -Xcompiler=-Fd$TARGET_COMPILE_PDB,-FS
+  description = Building CUDA object $out
 
 
 #############################################
 # Rule for compiling CXX files.
 
 rule CXX_COMPILER__pbf_cuda_Debug
-  deps = msvc
-  command = C:\PROGRA~1\MIB055~1\2022\COMMUN~1\VC\Tools\MSVC\1444~1.352\bin\Hostx86\x86\cl.exe  /nologo /TP $DEFINES $INCLUDES $FLAGS /showIncludes /Fo$out /Fd$TARGET_COMPILE_PDB /FS -c $in
+  depfile = $DEP_FILE
+  deps = gcc
+  command = C:\PROGRA~1\MIB055~1\2022\COMMUN~1\VC\Tools\Llvm\x64\bin\clang.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building CXX object $out
 
 
@@ -66,7 +82,7 @@ rule CXX_COMPILER__pbf_cuda_Debug
 # Rule for linking CXX static library.
 
 rule CXX_STATIC_LIBRARY_LINKER__pbf_cuda_Debug
-  command = cmd.exe /C "$PRE_LINK && C:\PROGRA~1\MIB055~1\2022\COMMUN~1\VC\Tools\MSVC\1444~1.352\bin\Hostx86\x86\lib.exe /nologo $LINK_FLAGS /out:$TARGET_FILE $in  && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\Users\17459\AppData\Local\Programs\Python\Python311\Lib\site-packages\cmake\data\bin\cmake.exe -E rm -f $TARGET_FILE && C:\PROGRA~1\MIB055~1\2022\COMMUN~1\VC\Tools\MSVC\1444~1.352\bin\Hostx64\x64\lib.exe /OUT:$TARGET_FILE $in && $POST_BUILD"
   description = Linking CXX static library $TARGET_FILE
   restat = $RESTAT
 

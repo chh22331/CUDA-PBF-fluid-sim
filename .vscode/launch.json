@@ -1,0 +1,27 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "PBF-X (CMake, MSVC 调试)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/pbf_app.exe",
+            "cwd": "${workspaceFolder}",
+            "args": [],
+            "stopAtEntry": false,
+            "preLaunchTask": "build pbf_app (CMake)"
+        },
+        {
+            "name": "PBF-X.exe (VS 生成, MSVC 调试)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/x64/Release/PBF-X.exe",
+            "cwd": "${workspaceFolder}",
+            "args": [],
+            "stopAtEntry": false
+        }
+    ]
+}

@@ -1,8 +1,7 @@
-ï»¿#include "simulator.h"
+#include "simulator.h"
 #include "math_utils.h"
 #include "poisson_disk.h"
 #include "numeric_utils.h"
-#include "stats.h"
 #include "logging.h"
 #include <cstdio>
 #include <vector>
@@ -45,10 +44,10 @@ extern "C" void LaunchCellRanges(uint32_t* d_cellStart,
     } while (0)
 #endif
 
-// ===================== D2D Memcpy è°ƒè¯•æ’æ¡©è¡¥ä¸ =====================
-// è¯´æ˜Žï¼šæ‰€æœ‰è®¾å¤‡åˆ°è®¾å¤‡æ•´å—å¤åˆ¶ç»Ÿä¸€é€šè¿‡ä¸‹åˆ—å®è®°å½•æ¥æºã€‚
-// è¾“å‡ºæ¡ä»¶ï¼šconsole.debug.printDiagnostics æˆ– console.debug.printWarnings ä¸º true
-// æœç´¢å…³é”®å­—: [D2D-Memcpy]
+// ===================== D2D Memcpy µ÷ÊÔ²å×®²¹¶¡ =====================
+// ËµÃ÷£ºËùÓÐÉè±¸µ½Éè±¸Õû¿é¸´ÖÆÍ³Ò»Í¨¹ýÏÂÁÐºê¼ÇÂ¼À´Ô´¡£
+// Êä³öÌõ¼þ£ºconsole.debug.printDiagnostics »ò console.debug.printWarnings Îª true
+// ËÑË÷¹Ø¼ü×Ö: [D2D-Memcpy]
 namespace sim {
     extern uint64_t g_simFrameIndex;
     static inline bool ShouldLogD2D() {
@@ -93,9 +92,9 @@ namespace sim {
         sim::LogD2DMemcpy(TAG, (const void*)(DST), (const void*)(SRC), (size_t)(BYTES), true);  \
         CUDA_CHECK(cudaMemcpyAsync((DST), (SRC), (BYTES), cudaMemcpyDeviceToDevice, (STREAM))); \
     } while (0)
-// ===================== End D2D Memcpy æ’æ¡© =====================
+// ===================== End D2D Memcpy ²å×® =====================
 
-// ===== å¤–éƒ¨ CUDA kernel =====
+// ===== Íâ²¿ CUDA kernel =====
 extern "C" void LaunchHashKeys(uint32_t*, uint32_t*, const float4*, sim::GridBounds, uint32_t, cudaStream_t);
 extern "C" void LaunchCellRanges(uint32_t*, uint32_t*, const uint32_t*, uint32_t, uint32_t, cudaStream_t);
 extern "C" void LaunchCellRangesCompact(uint32_t*, uint32_t*, uint32_t*, const uint32_t*, uint32_t, cudaStream_t);
@@ -194,7 +193,7 @@ namespace sim {
         m_frameTimingEnabled = (m_frameTimingEveryN != 0);
         m_useHashedGrid = c.perf.use_hashed_grid;
 
-        // ä¸Šä¸‹æ–‡
+        // ÉÏÏÂÎÄ
         m_ctx.bufs = &m_bufs;
         m_ctx.grid = &m_grid;
         m_ctx.useHashedGrid = m_useHashedGrid;
@@ -218,7 +217,7 @@ namespace sim {
                                   sizeof(uint32_t) * capacity, cudaMemcpyHostToDevice));
         }
 
-        // åˆå§‹ï¼šcurr -> nextï¼Œpred è®¾ä¸º nextï¼ˆaliasï¼‰
+        // ³õÊ¼£ºcurr -> next£¬pred ÉèÎª next£¨alias£©
         if (p.numParticles > 0) {
             CUDA_CHECK(cudaMemcpy(m_bufs.d_pos_next, m_bufs.d_pos,
                                   sizeof(float4) * p.numParticles,
@@ -263,6 +262,13 @@ namespace sim {
             m_extPosPred = nullptr;
             m_bufs.detachExternalPosPred();
         }
+        if (m_extVelocityMem) {
+            cudaDestroyExternalMemory(m_extVelocityMem);
+            m_extVelocityMem = nullptr;
+            m_extVelocityPtr = nullptr;
+            m_extVelocityBytes = 0;
+            m_extVelocityStride = 0;
+        }
         if (m_extRenderHalf) {
             cudaDestroyExternalMemory(m_extRenderHalf);
             m_extRenderHalf = nullptr;
@@ -278,7 +284,7 @@ namespace sim {
         if (m_stream) { cudaStreamDestroy(m_stream); m_stream = nullptr; }
     }
 
-    // ===== ç½‘æ ¼ & å‚æ•° =====
+    // ===== Íø¸ñ & ²ÎÊý =====
     bool Simulator::buildGrid(const SimParams& p) {
         int3 dim = GridSystem::ComputeDims(p.grid);
         m_numCells = GridSystem::NumCells(dim);
@@ -314,7 +320,7 @@ namespace sim {
         return true;
     }
 
-    // ===== Graph Node ç¼“å­˜ =====
+    // ===== Graph Node »º´æ =====
     bool Simulator::cacheGraphNodes() {
         m_nodeRecycle = nullptr;
         m_kpRecycleBase = {};
@@ -375,7 +381,7 @@ namespace sim {
         return true;
     }
 
-    // ===== Graph å˜åŒ–æ£€æµ‹ =====
+    // ===== Graph ±ä»¯¼ì²â =====
     bool Simulator::structuralGraphChange(const SimParams& p) const {
         if (!m_graphExec) return true;
         if (p.solverIters != m_captured.solverIters)   return true;
@@ -511,13 +517,14 @@ namespace sim {
         CUDA_CHECK(cudaGraphLaunch(m_graphExec, m_stream));
 
         performPingPongSwap(m_params.numParticles);
+        publishExternalVelocity(m_params.numParticles);
         signalSimFence();
 
         ++m_frameIndex;
         return true;
     }
 
-    // ===== å¤–éƒ¨å…±äº«ç¼“å†² =====
+    // ===== Íâ²¿¹²Ïí»º³å =====
     bool Simulator::importPosPredFromD3D12(void* sharedHandleWin32, size_t bytes) {
         if (!sharedHandleWin32 || bytes == 0) return false;
         if (m_extPosPred) {
@@ -548,7 +555,7 @@ namespace sim {
             std::fprintf(stderr, "[ExternalPosPP][Error] invalid handles or sizes\n");
             return false;
         }
-        // ç¡®ä¿å·²åˆ›å»º CUDA ä¸Šä¸‹æ–‡ï¼ˆé˜²æ­¢é¦–æ¬¡ D3D12 å…±äº«æ˜ å°„åŽç«‹å³ D2D æ‹·è´å‡ºçŽ° invalid valueï¼‰
+        // È·±£ÒÑ´´½¨ CUDA ÉÏÏÂÎÄ£¨·ÀÖ¹Ê×´Î D3D12 ¹²ÏíÓ³ÉäºóÁ¢¼´ D2D ¿½±´³öÏÖ invalid value£©
         cudaFree(0);
 
         cudaExternalMemory_t extA = nullptr, extB = nullptr;
@@ -618,7 +625,45 @@ namespace sim {
         return true;
     }
 
-    // ===== æ’­ç§ =====
+    bool Simulator::bindExternalVelocityBuffer(void* sharedHandleWin32, size_t bytes, uint32_t strideBytes) {
+        if (!sharedHandleWin32 || bytes == 0 || strideBytes == 0) {
+            std::fprintf(stderr, "[ExternalVel][Error] invalid handle/bytes/stride\n");
+            return false;
+        }
+        if (m_extVelocityMem) {
+            cudaDestroyExternalMemory(m_extVelocityMem);
+            m_extVelocityMem = nullptr;
+            m_extVelocityPtr = nullptr;
+            m_extVelocityBytes = 0;
+            m_extVelocityStride = 0;
+        }
+
+        cudaExternalMemoryHandleDesc desc{}; desc.type = cudaExternalMemoryHandleTypeD3D12Resource;
+        desc.handle.win32.handle = sharedHandleWin32;
+        desc.size = bytes;
+        desc.flags = cudaExternalMemoryDedicated;
+        if (cudaImportExternalMemory(&m_extVelocityMem, &desc) != cudaSuccess) {
+            std::fprintf(stderr, "[ExternalVel][Error] import failed\n");
+            m_extVelocityMem = nullptr;
+            return false;
+        }
+
+        cudaExternalMemoryBufferDesc buf{}; buf.offset = 0; buf.size = bytes;
+        void* devPtr = nullptr;
+        if (cudaExternalMemoryGetMappedBuffer(&devPtr, m_extVelocityMem, &buf) != cudaSuccess) {
+            std::fprintf(stderr, "[ExternalVel][Error] map failed\n");
+            cudaDestroyExternalMemory(m_extVelocityMem);
+            m_extVelocityMem = nullptr;
+            return false;
+        }
+
+        m_extVelocityPtr = devPtr;
+        m_extVelocityBytes = bytes;
+        m_extVelocityStride = strideBytes;
+        return true;
+    }
+
+    // ===== ²¥ÖÖ =====
     void Simulator::seedBoxLattice(uint32_t nx, uint32_t ny, uint32_t nz,
                                    float3 origin, float spacing) {
         uint64_t nreq64 = uint64_t(nx) * ny * nz;
@@ -807,48 +852,6 @@ namespace sim {
         CUDA_CHECK(cudaMemcpy(m_bufs.d_vel, h_vel.data(), sizeof(float4) * total, cudaMemcpyHostToDevice));
     }
 
-    bool Simulator::computeStats(SimStats& out, uint32_t sampleStride) const {
-        out = {};
-        if (m_params.numParticles == 0 || m_bufs.capacity == 0) return true;
-        if (m_useHashedGrid) {
-            LaunchCellRanges(m_grid.d_cellStart, m_grid.d_cellEnd,
-                             m_grid.d_cellKeys_sorted,
-                             m_params.numParticles, m_numCells, m_stream);
-            CUDA_CHECK(cudaStreamSynchronize(m_stream));
-        }
-        double avgN = 0.0, avgV = 0.0, avgRhoRel_g = 0.0, avgR_g = 0.0;
-        uint32_t stride = (sampleStride == 0 ? 1u : sampleStride);
-        bool ok = LaunchComputeStats(m_bufs.d_pos_next, m_bufs.d_vel,
-                                     m_grid.d_indices_sorted,
-                                     m_grid.d_cellStart, m_grid.d_cellEnd,
-                                     m_params.grid, m_params.kernel, m_params.particleMass,
-                                     m_params.numParticles, m_numCells, stride,
-                                     &avgN, &avgV, &avgRhoRel_g, &avgR_g, m_stream);
-        if (!ok) return false;
-        out.N = m_params.numParticles;
-        out.avgNeighbors = avgN;
-        out.avgSpeed = avgV;
-        out.avgRho = avgR_g;
-        out.avgRhoRel = (m_params.restDensity > 0.f) ? (avgR_g / (double)m_params.restDensity) : 0.0;
-        return true;
-    }
-
-    bool Simulator::computeStatsBruteforce(SimStats& out, uint32_t sampleStride, uint32_t maxISamples) const {
-        if (m_params.numParticles == 0) { out = {}; return true; }
-        double avgN = 0.0, avgV = 0.0, avgRhoRel = 0.0, avgR = 0.0;
-        bool ok = LaunchComputeStatsBruteforce(m_bufs.d_pos_next, m_bufs.d_vel,
-                                               m_params.kernel, m_params.particleMass,
-                                               m_params.numParticles, (sampleStride == 0 ? 1u : sampleStride),
-                                               maxISamples, &avgN, &avgV, &avgRhoRel, &avgR, m_stream);
-        if (!ok) return false;
-        out.N = m_params.numParticles;
-        out.avgNeighbors = avgN;
-        out.avgSpeed = avgV;
-        out.avgRho = avgR;
-        out.avgRhoRel = (m_params.restDensity > 0.f) ? (avgR / (double)m_params.restDensity) : 0.0;
-        return true;
-    }
-
     void Simulator::syncForRender() {
         if (m_stream) {
             cudaStreamSynchronize(m_stream);
@@ -869,6 +872,15 @@ namespace sim {
         return true;
     }
 
+    void Simulator::publishExternalVelocity(uint32_t count) {
+        if (!m_extVelocityPtr || count == 0) return;
+        if (m_extVelocityStride == 0) return;
+        size_t bytes = size_t(count) * size_t(m_extVelocityStride);
+        if (bytes > m_extVelocityBytes) bytes = m_extVelocityBytes;
+        if (bytes == 0) return;
+        CUDA_CHECK(cudaMemcpyAsync(m_extVelocityPtr, m_bufs.d_vel, bytes, cudaMemcpyDeviceToDevice, m_stream));
+    }
+
     void Simulator::signalSimFence(){
         if(!m_extTimelineSem) return;
         ++m_simFenceValue;
@@ -878,7 +890,7 @@ namespace sim {
         cudaSignalExternalSemaphoresAsync(&m_extTimelineSem,&params,1,m_stream);
     }
 
-    // ===== Graph é€Ÿåº¦æŒ‡é’ˆçƒ­æ›´æ–° =====
+    // ===== Graph ËÙ¶ÈÖ¸ÕëÈÈ¸üÐÂ =====
     void Simulator::patchGraphVelocityPointers(const float4* fromPtr, const float4* toPtr) {
         if (!fromPtr || !toPtr || fromPtr == toPtr) return;
         cudaGraphExec_t exec = m_graphExec;

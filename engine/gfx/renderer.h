@@ -55,6 +55,7 @@ namespace gfx {
         void UpdateParticleSRVForPingPong(const void* devicePtrCurr);
         bool ImportSharedBufferAsSRV(HANDLE sharedHandle, uint32_t numElements, uint32_t strideBytes, int& outSrvIndex);
         void RegisterPingPongCudaPtrs(const void* ptrA, const void* ptrB);
+        bool CreateSharedVelocityBuffer(uint32_t numElements, uint32_t strideBytes, HANDLE& outSharedHandle);
 
         // 新增：导入速度共享缓冲作为 SRV（外层可把 CUDA 导出的 shared handle 传入）
         bool ImportSharedVelocityAsSRV(HANDLE sharedHandle, uint32_t numElements, uint32_t strideBytes, int& outSrvIndex);

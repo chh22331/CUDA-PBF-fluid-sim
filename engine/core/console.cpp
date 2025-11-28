@@ -327,18 +327,21 @@ namespace console {
 
 		// 速度模式下根据控制参数决定 thicknessScale 用作速度归一化系数
 		if (c.renderer.renderMode == gfx::RendererD3D12::RenderMode::SpeedColor) {
-			if (c.renderer.speedColorAutoScale) {
-				// 自动：保持用户设置（外部可动态更新 thicknessScale = 1/maxSpeed）
-				vis.thicknessScale = c.renderer.thicknessScale;
-			}
-			else {
-				float hint = (c.renderer.speedColorMaxSpeedHint > 1e-6f) ? c.renderer.speedColorMaxSpeedHint : 1e-6f;
-				vis.thicknessScale = 1.0f / hint;
-			}
+    		float scale = c.renderer.thicknessScale;
+
+    		if (c.renderer.speedColorAutoScale) {
+        	// 自动：根据 speedColorMaxSpeedHint 把速度映射到 [0,1]
+        	float hint = (c.renderer.speedColorMaxSpeedHint > 1e-6f)
+            ? c.renderer.speedColorMaxSpeedHint
+            : 1e-6f;
+        	scale = 1.0f / hint;
+    		}
+
+    	vis.thicknessScale = scale;
 		}
 		else {
-			// 原模式：厚度缩放
-			vis.thicknessScale = c.renderer.thicknessScale;
+    		// 原 group/palette 模式继续用 thicknessScale 做厚度参数
+   			vis.thicknessScale = c.renderer.thicknessScale;
 		}
 
 		if (c.viewer.enabled) {

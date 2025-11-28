@@ -1,7 +1,6 @@
 #include "post_ops.h"
 #include "simulation_context.h"
 #include "logging.h"
-#include "stats.h"
 #include <cstdio>
 #include "../engine/core/prof_nvtx.h" // NVTX tagging
 
@@ -18,7 +17,7 @@ static inline const char* ClassifyRecycleFallback(const SimulationContext& ctx) 
     if (ext && !pp) return "Both(External+PingPongOff)";
     if (ext && pp)  return "ExternalPredOnly";
     if (!ext && !pp) return "PingPongOffOnly";
-    return "Unexpected(NoCondition)"; // 不应触发复制时调用
+    return "Unexpected(NoCondition)"; // 不应触发复制时调�?
 }
 
 static DeviceParams MakeDP(const SimParams& p){ return MakeDeviceParams(p); }
@@ -50,7 +49,7 @@ void RecycleOp::run(SimulationContext& ctx, const SimParams& p, cudaStream_t s) 
         prof::Range rCopy("D2D.pos_pred->pos", prof::Color(0xE0, 0x30, 0x30));
         cudaMemcpyAsync(ctx.bufs->d_pos, ctx.bufs->d_pos_pred, bytes, cudaMemcpyDeviceToDevice, s);
     }
-    // ctx.effectiveVel 已保持为最终速度缓冲，无需额外赋值
+    // ctx.effectiveVel 已保持为最终速度缓冲，无需额外赋�?
 }
 
 void XsphOp::run(SimulationContext& ctx, const SimParams& p, cudaStream_t s) {

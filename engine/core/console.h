@@ -33,13 +33,13 @@ namespace console {
             float  farZ = 50000.0f;
 
             // 新增：渲染模式（与 RendererD3D12::RenderMode 对接）
-            gfx::RendererD3D12::RenderMode renderMode = gfx::RendererD3D12::RenderMode::GroupPalette;
+            gfx::RendererD3D12::RenderMode renderMode = gfx::RendererD3D12::RenderMode::SpeedColor;
 
             // 新增：速度着色控制
             // speedColorAutoScale = true 时：沿用 thicknessScale（需外部或模拟侧维护适当归一化）
             // speedColorAutoScale = false 时：thicknessScale 会在 ApplyRendererRuntime 中覆盖为 1/maxSpeedHint
             bool  speedColorAutoScale = true;
-            float speedColorMaxSpeedHint = 50.0f; // 用于非自动归一：颜色插值因子 = speed * (1/maxSpeedHint)
+            float speedColorMaxSpeedHint = 30.0f; // 用于非自动归一：颜色插值因子 = speed * (1/maxSpeedHint)
         } renderer;
 
         struct Viewer {

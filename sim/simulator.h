@@ -1,10 +1,9 @@
-﻿#pragma once
+#pragma once
 #include <cuda_runtime.h>
 #include "parameters.h"
 #include "device_buffers.cuh"
 #include "grid_buffers.cuh"
 #include "logging.h"
-#include "stats.h"
 #include <vector>
 #include "param_change_tracker.h"
 #include "phase_pipeline.h"
@@ -43,6 +42,7 @@ namespace sim {
         float4* pingpongPosA() const { return (m_bufs.externalPingPong ? m_bufs.d_pos_curr : nullptr); }
         float4* pingpongPosB() const { return (m_bufs.externalPingPong ? m_bufs.d_pos_next : nullptr); }
         bool externalPingPongEnabled() const { return m_bufs.externalPingPong; }
+        bool bindExternalVelocityBuffer(void* sharedHandle, size_t bytes, uint32_t strideBytes);
         void debugSampleDisplacement(uint32_t sampleStride = 1024);
 
         cudaStream_t cudaStream() const { return m_stream; }
@@ -73,6 +73,7 @@ namespace sim {
         void patchGraphVelocityPointers(const float4* fromPtr, const float4* toPtr);
         void patchGraphHalfPositionPointers(sim::Half4* oldCurrH, sim::Half4* oldNextH);
         void signalSimFence();
+        void publishExternalVelocity(uint32_t count);
 
     private:
         SimParams m_params{};
@@ -125,6 +126,10 @@ namespace sim {
 
         cudaExternalMemory_t m_extPosPred = nullptr;
         cudaExternalMemory_t m_extraExternalMemB = nullptr;
+        cudaExternalMemory_t m_extVelocityMem = nullptr;
+        void*  m_extVelocityPtr = nullptr;
+        size_t m_extVelocityBytes = 0;
+        uint32_t m_extVelocityStride = 0;
 
         cudaGraphNode_t      m_nodeRecycle  = nullptr;
         cudaKernelNodeParams m_kpRecycleBase{};

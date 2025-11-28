@@ -146,9 +146,10 @@ namespace gfx {
 
         static std::wstring GetCwdW() {
             DWORD n = GetCurrentDirectoryW(0, nullptr);
-            std::wstring out(n, L'\0');
+            std::wstring out;
             if (n > 0) {
-                GetCurrentDirectoryW(n, out.data());
+                out.resize(n);
+                GetCurrentDirectoryW(n, &out[0]); // use non-const buffer for WinAPI
                 if (!out.empty() && out.back() == L'\0') out.pop_back();
             }
             return out;
@@ -209,6 +210,9 @@ namespace gfx {
         }
 
         // 修复版 RootSignature：常量 + 粘贴 SRV(t0) + 调色板 SRV(t1)
+        // RootSignature：常量 b0 + 粒子 SRV(t0) + 调色板/速度 SRV(t1)
+        // 为兼容部分不支持 RootSignature 1.1 的旧驱动，这里优先尝试 1.1，
+        // 若序列化失败则自动回退到 1.0，避免 RootSignature 创建失败导致整帧不绘制。
         static Microsoft::WRL::ComPtr<ID3D12RootSignature> CreateRootSignatureGfx(ID3D12Device* dev) {
             using Microsoft::WRL::ComPtr;
 
@@ -234,7 +238,7 @@ namespace gfx {
             params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
             params[0].Constants.ShaderRegister = 0;
             params[0].Constants.RegisterSpace = 0;
-            params[0].Constants.Num32BitValues = sizeof(PerFrameCB)/4;
+            params[0].Constants.Num32BitValues = sizeof(PerFrameCB) / 4;
             // t0 particles
             params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
             params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -250,6 +254,10 @@ namespace gfx {
             tbl1.pDescriptorRanges = &rangePalette;
             params[2].DescriptorTable = tbl1;
 
+            Microsoft::WRL::ComPtr<ID3DBlob> blob;
+            Microsoft::WRL::ComPtr<ID3DBlob> err;
+
+            // 先尝试 1.1 版本
             D3D12_VERSIONED_ROOT_SIGNATURE_DESC vdesc{};
             vdesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
             vdesc.Desc_1_1.NumParameters = _countof(params);
@@ -258,12 +266,61 @@ namespace gfx {
             vdesc.Desc_1_1.pStaticSamplers = nullptr;
             vdesc.Desc_1_1.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
-            ComPtr<ID3DBlob> blob, err;
-            if (FAILED(D3D12SerializeVersionedRootSignature(&vdesc, &blob, &err))) {
-                if (err) OutputDebugStringA((char*)err->GetBufferPointer());
-                return nullptr;
+            HRESULT hr = D3D12SerializeVersionedRootSignature(&vdesc, &blob, &err);
+            if (FAILED(hr)) {
+                // 某些旧运行库不支持 1.1：记录一次日志并回退到 1.0
+                if (err) {
+                    OutputDebugStringA("[RS] SerializeVersionedRootSignature(1.1) failed, fallback to 1.0.\n");
+                    OutputDebugStringA((char*)err->GetBufferPointer());
+                }
+
+                // 将 1.1 参数转换为 1.0 结构
+                D3D12_ROOT_PARAMETER rootParams[3]{};
+
+                rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+                rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+                rootParams[0].Constants.ShaderRegister = 0;
+                rootParams[0].Constants.RegisterSpace = 0;
+                rootParams[0].Constants.Num32BitValues = sizeof(PerFrameCB) / 4;
+
+                rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+                rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+                D3D12_DESCRIPTOR_RANGE range0{};
+                range0.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+                range0.NumDescriptors = 1;
+                range0.BaseShaderRegister = 0;
+                range0.RegisterSpace = 0;
+                range0.OffsetInDescriptorsFromTableStart = 0;
+                rootParams[1].DescriptorTable.NumDescriptorRanges = 1;
+                rootParams[1].DescriptorTable.pDescriptorRanges = &range0;
+
+                rootParams[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+                rootParams[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+                D3D12_DESCRIPTOR_RANGE range1{};
+                range1.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+                range1.NumDescriptors = 1;
+                range1.BaseShaderRegister = 1;
+                range1.RegisterSpace = 0;
+                range1.OffsetInDescriptorsFromTableStart = 0;
+                rootParams[2].DescriptorTable.NumDescriptorRanges = 1;
+                rootParams[2].DescriptorTable.pDescriptorRanges = &range1;
+
+                D3D12_ROOT_SIGNATURE_DESC desc10{};
+                desc10.NumParameters = _countof(rootParams);
+                desc10.pParameters = rootParams;
+                desc10.NumStaticSamplers = 0;
+                desc10.pStaticSamplers = nullptr;
+                desc10.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+                err.Reset();
+                hr = D3D12SerializeRootSignature(&desc10, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err);
+                if (FAILED(hr)) {
+                    if (err) OutputDebugStringA((char*)err->GetBufferPointer());
+                    return nullptr;
+                }
             }
-            ComPtr<ID3D12RootSignature> rs;
+
+            Microsoft::WRL::ComPtr<ID3D12RootSignature> rs;
             if (FAILED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&rs)))) {
                 return nullptr;
             }
@@ -444,12 +501,44 @@ namespace gfx {
 
         m_sharedParticleBuffers[slot] = res;
         m_particleSrvIndexPing[slot] = srvIndex;
-        if (slot == 0) m_activePingIndex = 0;
+        if (slot == 0) {
+            m_activePingIndex = 0;
+            // 防御性：如果还没有当前 SRV，就用 slot0 作为默认
+            if (m_particleSrvIndex < 0)
+                m_particleSrvIndex = srvIndex;
+        }
 
         // 不在此更新 m_particleSrvIndex（由 UpdateParticleSRVForPingPong 决定）
         if (numElements > m_particleCount) m_particleCount = numElements;
         outSharedHandle = handle;
         m_sharedParticleBufferHandles[slot] = handle;
+        return true;
+    }
+
+    bool RendererD3D12::CreateSharedVelocityBuffer(uint32_t numElements, uint32_t strideBytes, HANDLE& outSharedHandle) {
+        outSharedHandle = nullptr;
+        if (numElements == 0 || strideBytes == 0) return false;
+        const UINT64 sizeBytes = UINT64(numElements) * UINT64(strideBytes);
+        D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC rd{}; rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        rd.Width = sizeBytes; rd.Height = 1;
+        rd.DepthOrArraySize = 1; rd.MipLevels = 1; rd.Format = DXGI_FORMAT_UNKNOWN;
+        rd.SampleDesc = { 1,0 }; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+
+        Microsoft::WRL::ComPtr<ID3D12Resource> res;
+        if (FAILED(m_device.device()->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_SHARED, &rd,
+            D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&res)))) return false;
+
+        int srvIndex = m_device.createBufferSRV(res.Get(), numElements, strideBytes);
+        if (srvIndex < 0) return false;
+
+        HANDLE handle = nullptr;
+        if (FAILED(m_device.device()->CreateSharedHandle(res.Get(), nullptr, GENERIC_ALL, nullptr, &handle))) return false;
+
+        m_sharedVelocityBuffer = res;
+        m_velocitySrvIndex = srvIndex;
+        outSharedHandle = handle;
         return true;
     }
 
@@ -604,14 +693,41 @@ namespace gfx {
         }
 
         // speed pass：读取位置(t0) 和 速度(t1)，按速度映射颜色（蓝->红）
+        // speed pass：读取位�?t0) �?速度(t1)，按速度映射颜色（蓝->红）
         if (rsGfx && m_psoPointsSpeed) {
             core::PassDesc pointsSpeed{}; pointsSpeed.name = "points_speed";
             pointsSpeed.execute = [this, rsGfx]() {
-                if (m_renderMode != RendererD3D12::RenderMode::SpeedColor) return; // 非当前模式跳过
+                if (m_renderMode != RendererD3D12::RenderMode::SpeedColor) return; // 非当前模式跳�?
 
-                // 基础可用性检查
+                // 诊断：记录进入速度渲染 pass 时的关键状态（仅前若干次，以免刷屏）
+                static int s_speedPassDebugCounter = 0;
+                if (s_speedPassDebugCounter < 16) {
+                    char dbgEnter[256];
+                    _snprintf_s(dbgEnter, sizeof(dbgEnter), _TRUNCATE,
+                        "[SpeedPass] enter: mode=%d count=%u srvPos=%d srvVel=%d activePing=%d\n",
+                        (int)m_renderMode,
+                        (unsigned)m_particleCount,
+                        (int)m_particleSrvIndex,
+                        (int)m_velocitySrvIndex,
+                        (int)m_activePingIndex);
+                    OutputDebugStringA(dbgEnter);
+                    ++s_speedPassDebugCounter;
+                }
+
+                // 基础可用性检查 + 详细诊断
                 if (m_particleCount == 0 || m_particleSrvIndex < 0) {
-                    OutputDebugStringA("[SpeedPass] particle buffer not ready, skipping draw.\n");
+                    char dbg[512];
+                    _snprintf_s(dbg, sizeof(dbg), _TRUNCATE,
+                        "[SpeedPass] SKIP draw: count=%u srvPos=%d srvVel=%d activePing=%d "
+                        "shared=%p ping0=%p ping1=%p\n",
+                        (unsigned)m_particleCount,
+                        (int)m_particleSrvIndex,
+                        (int)m_velocitySrvIndex,
+                        (int)m_activePingIndex,
+                        m_sharedParticleBuffer.Get(),
+                        m_sharedParticleBuffers[0].Get(),
+                        m_sharedParticleBuffers[1].Get());
+                    OutputDebugStringA(dbg);
                     return;
                 }
 
@@ -683,7 +799,7 @@ namespace gfx {
                 auto gpuPos = m_device.srvGpuHandleAt((uint32_t)m_particleSrvIndex);
                 cl->SetGraphicsRootDescriptorTable(1, gpuPos);
 
-                // 选择要绑定到 t1：优先速度；然后 palette；最后退回位置（保证始终绑定防止未初始化）
+                // 选择 t1：速度 / palette / 位置（原有逻辑保持不变）
                 int srvVel = -1;
                 if (m_velocitySrvIndex >= 0) {
                     srvVel = m_velocitySrvIndex;
@@ -701,27 +817,41 @@ namespace gfx {
                     cl->SetGraphicsRootDescriptorTable(2, gpuVel);
                 }
 
-                // Draw
+                // Draw（再打一次关键状态）
                 UINT instanceCount = m_particleCount;
-                if (instanceCount > 0) cl->DrawInstanced(6, instanceCount, 0, 0);
+                if (instanceCount > 0) {
+                    char dbgDraw[256];
+                    _snprintf_s(dbgDraw, sizeof(dbgDraw), _TRUNCATE,
+                        "[SpeedPass] DRAW: count=%u srvPos=%d srvVel=%d activePing=%d\n",
+                        (unsigned)instanceCount,
+                        (int)m_particleSrvIndex,
+                        (int)m_velocitySrvIndex,
+                        (int)m_activePingIndex);
+                    OutputDebugStringA(dbgDraw);
 
-                // 回写状态：仅对实际转换过的主缓冲
+                    cl->DrawInstanced(6, instanceCount, 0, 0);
+                }
+
+                // 回写状态（原样保留）
                 auto barrierBack = [&](Microsoft::WRL::ComPtr<ID3D12Resource>& res) {
                     if (!res) return;
                     D3D12_RESOURCE_BARRIER b{};
                     b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
                     b.Transition.pResource = res.Get();
                     b.Transition.StateBefore = D3D12_RESOURCE_STATE_GENERIC_READ;
-                    b.Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
+                    b.Transition.StateAfter  = D3D12_RESOURCE_STATE_COMMON;
                     b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
                     cl->ResourceBarrier(1, &b);
-                    };
-                if (m_sharedParticleBuffer) barrierBack(m_sharedParticleBuffer);
-                else if (m_activePingIndex >= 0 && m_activePingIndex < 2) barrierBack(m_sharedParticleBuffers[m_activePingIndex]);
-                if (m_sharedVelocityBuffer) barrierBack(m_sharedVelocityBuffer);
+                };
+                if (m_sharedParticleBuffer)
+                    barrierBack(m_sharedParticleBuffer);
+                else if (m_activePingIndex >= 0 && m_activePingIndex < 2)
+                    barrierBack(m_sharedParticleBuffers[m_activePingIndex]);
+                if (m_sharedVelocityBuffer)
+                    barrierBack(m_sharedVelocityBuffer);
 
                 m_device.writeTimestamp();
-                };
+            };
             m_fg.addPass(pointsSpeed);
         }
 
@@ -733,13 +863,31 @@ namespace gfx {
     }
 
     void RendererD3D12::RenderFrame(core::Profiler& profiler) {
-        prof::Range r("Renderer.RenderFrame", prof::Color(0x40, 0x90, 0x50));
-        // 保持 m_useHalfRender（由资源导入或外部接口控制）
-        std::vector<double> gpuMs;
-        m_fg.execute([&](const std::string& name, double ms) { profiler.addRow(name, ms); });
-        if (m_device.readbackPassTimesMs(gpuMs))
-            for (size_t i = 0; i < gpuMs.size(); ++i) profiler.addRow(std::string("gpu_") + std::to_string(i), gpuMs[i]);
+    prof::Range r("Renderer.RenderFrame", prof::Color(0x40, 0x90, 0x50));
+
+    static uint64_t s_debugFrame = 0;
+    if (s_debugFrame < 8 || (s_debugFrame % 120) == 0) {
+        char dbg[256];
+        _snprintf_s(dbg, sizeof(dbg), _TRUNCATE,
+            "[Renderer] frame=%llu mode=%d count=%u srvPos=%d srvVel=%d activePing=%d\n",
+            (unsigned long long)s_debugFrame,
+            (int)m_renderMode,
+            (unsigned)m_particleCount,
+            (int)m_particleSrvIndex,
+            (int)m_velocitySrvIndex,
+            (int)m_activePingIndex);
+        OutputDebugStringA(dbg);
     }
+    ++s_debugFrame;
+
+    // 保持原有逻辑
+    std::vector<double> gpuMs;
+    m_fg.execute([&](const std::string& name, double ms) { profiler.addRow(name, ms); });
+    if (m_device.readbackPassTimesMs(gpuMs))
+        for (size_t i = 0; i < gpuMs.size(); ++i)
+            profiler.addRow(std::string("gpu_") + std::to_string(i), gpuMs[i]);
+}
+
 
     bool RendererD3D12::ImportSharedBufferAsSRV(HANDLE sharedHandle, uint32_t numElements, uint32_t strideBytes, int& outSrvIndex) {
         ID3D12Resource* res = nullptr;
