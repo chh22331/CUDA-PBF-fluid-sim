@@ -51,6 +51,21 @@ namespace sim {
 
         int   semi_implicit_integration_enable = 0;
     };
+
+    struct AudioForceParams {
+        int      enabled = 0;
+        uint32_t keyCount = 0;
+        float    domainMinX = 0.0f;
+        float    invDomainWidth = 0.0f;
+        float    surfaceY = 0.0f;
+        float    surfaceFalloff = 1.0f;
+        float    baseStrength = 0.0f;
+        float    lateralScale = 0.0f;
+        float    turbulenceScale = 0.0f;
+        float    beatImpulseStrength = 0.0f;
+        float    globalEnergyScale = 1.0f;
+        float    dt = 0.0f;
+    };
  
     struct SimParams {
         uint32_t numParticles;
@@ -72,6 +87,7 @@ namespace sim {
 
         // 最大速度夹紧（来自 CFL 推导），<0 禁用
         float maxSpeedClamp = -1.0f;
+        AudioForceParams audio{};
     };
 
     struct DeviceParams {
@@ -86,6 +102,7 @@ namespace sim {
         float        particleMass;
         PbfTuning    pbf;
         float        xsph_c;
+        AudioForceParams audio{};
     };
 
     inline KernelCoeffs MakeKernelCoeffs(float h) {
@@ -116,6 +133,7 @@ namespace sim {
         dp.particleMass = sp.particleMass;
         dp.pbf = sp.pbf;
         dp.xsph_c = sp.xsph_c;
+        dp.audio = sp.audio;
         return dp;
     }
 

@@ -31,6 +31,16 @@ rule CXX_STATIC_LIBRARY_LINKER__pbf_core_Debug
 
 
 #############################################
+# Rule for compiling C files.
+
+rule C_COMPILER__pbf_app_Debug
+  depfile = $DEP_FILE
+  deps = gcc
+  command = C:\PROGRA~1\MIB055~1\2022\COMMUN~1\VC\Tools\Llvm\x64\bin\clang.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  description = Building C object $out
+
+
+#############################################
 # Rule for compiling CXX files.
 
 rule CXX_COMPILER__pbf_app_Debug

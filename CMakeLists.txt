@@ -12,7 +12,7 @@ if (PBFX_ENABLE_CUDA)
   enable_language(CUDA)
 endif()
 
-project(PBF_X LANGUAGES CXX)
+project(PBF_X LANGUAGES CXX C)
 
 # Use C++17 – required by std::filesystem, std::clamp, inline variables, etc.
 set(CMAKE_CXX_STANDARD 17)
@@ -75,6 +75,7 @@ if (PBFX_ENABLE_CUDA)
     sim/cell_ranges.cu
     sim/device_globals.cu
     sim/device_pos_state.cu
+    sim/audio_forces.cu
     sim/hash_keys.cu
     sim/integrate.cu
     sim/integrate_pred_semi_implicit.cu
@@ -96,7 +97,11 @@ endif()
 # App + Gfx (WIN32 to use wWinMain)
 add_executable(pbf_app WIN32 app_main.cpp
   engine/gfx/d3d12_device.cpp
-  engine/gfx/renderer.cpp)
+  engine/gfx/renderer.cpp
+  engine/audio/audio_reactive.cpp
+  audio/kissfft/kiss_fft.c
+  audio/kissfft/kiss_fftr.c
+  audio/miniaudio/extras/stb_vorbis.c)
 
 target_link_libraries(pbf_app PRIVATE pbf_cuda pbf_core)
 if (PBFX_ENABLE_CUDA)

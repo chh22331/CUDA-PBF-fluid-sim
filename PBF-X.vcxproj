@@ -110,6 +110,7 @@
     <FxCompile />
   </ItemDefinitionGroup>
   <ItemGroup>
+    <CudaCompile Include="sim\audio_forces.cu" />
     <CudaCompile Include="kernel.cu" />
     <CudaCompile Include="sim\boundary.cu" />
     <CudaCompile Include="sim\cell_compact.cu" />
@@ -128,7 +129,10 @@
     <CudaCompile Include="sim\xsph.cu" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="audio\kissfft\kiss_fft.c" />
+    <ClCompile Include="audio\kissfft\kiss_fftr.c" />
     <ClCompile Include="app_main.cpp" />
+    <ClCompile Include="engine\audio\audio_reactive.cpp" />
     <ClCompile Include="engine\core\config.cpp" />
     <ClCompile Include="engine\core\console.cpp" />
     <ClCompile Include="engine\gfx\d3d12_device.cpp" />
@@ -142,6 +146,7 @@
     <ClCompile Include="sim\simulator.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="engine\audio\audio_reactive.h" />
     <ClInclude Include="engine\core\config.h" />
     <ClInclude Include="engine\core\console.h" />
     <ClInclude Include="engine\core\frame_graph.h" />
@@ -214,3 +219,5 @@
     <Import Project="$(CudaBCDir)\CUDA 13.0.targets" Condition="'$(CudaBCDir)'!='' and Exists('$(CudaBCDir)\CUDA 13.0.targets')" />
   </ImportGroup>
 </Project>
+    <ClInclude Include="sim\audio_forces.h" />
+    <ClInclude Include="sim\audio_frame.h" />

@@ -26,6 +26,26 @@
 },
 {
   "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\MIB055~1\\2022\\COMMUN~1\\VC\\Tools\\Llvm\\x64\\bin\\clang.exe -DNOMINMAX -DUNICODE -D_UNICODE -I../ -isystem \"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -std=gnu++17 -o CMakeFiles\\pbf_app.dir\\engine\\audio\\audio_reactive.cpp.obj -c D:\\projects\\PBF-X\\engine\\audio\\audio_reactive.cpp",
+  "file": "D:/projects/PBF-X/engine/audio/audio_reactive.cpp"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\MIB055~1\\2022\\COMMUN~1\\VC\\Tools\\Llvm\\x64\\bin\\clang.exe -DNOMINMAX -DUNICODE -D_UNICODE -I../ -isystem \"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -o CMakeFiles\\pbf_app.dir\\audio\\kissfft\\kiss_fft.c.obj -c D:\\projects\\PBF-X\\audio\\kissfft\\kiss_fft.c",
+  "file": "D:/projects/PBF-X/audio/kissfft/kiss_fft.c"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\MIB055~1\\2022\\COMMUN~1\\VC\\Tools\\Llvm\\x64\\bin\\clang.exe -DNOMINMAX -DUNICODE -D_UNICODE -I../ -isystem \"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -o CMakeFiles\\pbf_app.dir\\audio\\kissfft\\kiss_fftr.c.obj -c D:\\projects\\PBF-X\\audio\\kissfft\\kiss_fftr.c",
+  "file": "D:/projects/PBF-X/audio/kissfft/kiss_fftr.c"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\MIB055~1\\2022\\COMMUN~1\\VC\\Tools\\Llvm\\x64\\bin\\clang.exe -DNOMINMAX -DUNICODE -D_UNICODE -I../ -isystem \"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -o CMakeFiles\\pbf_app.dir\\audio\\miniaudio\\extras\\stb_vorbis.c.obj -c D:\\projects\\PBF-X\\audio\\miniaudio\\extras\\stb_vorbis.c",
+  "file": "D:/projects/PBF-X/audio/miniaudio/extras/stb_vorbis.c"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
   "command": "C:\\PROGRA~1\\NVIDIA~2\\CUDA\\v13.0\\bin\\nvcc.exe -forward-unknown-to-host-compiler -I../ -isystem=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -D_WINDOWS -Xcompiler=\" /EHsc\" -Xcompiler=\"-Zi -Ob0 -Od /RTC1\" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17 -x cu -dc D:\\projects\\PBF-X\\kernel.cu -o CMakeFiles\\pbf_cuda.dir\\kernel.cu.obj -Xcompiler=-FdTARGET_COMPILE_PDB,-FS",
   "file": "D:/projects/PBF-X/kernel.cu"
 },
@@ -83,6 +103,11 @@
   "directory": "D:/projects/PBF-X/build",
   "command": "C:\\PROGRA~1\\NVIDIA~2\\CUDA\\v13.0\\bin\\nvcc.exe -forward-unknown-to-host-compiler -I../ -isystem=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -D_WINDOWS -Xcompiler=\" /EHsc\" -Xcompiler=\"-Zi -Ob0 -Od /RTC1\" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17 -x cu -dc D:\\projects\\PBF-X\\sim\\device_pos_state.cu -o CMakeFiles\\pbf_cuda.dir\\sim\\device_pos_state.cu.obj -Xcompiler=-FdTARGET_COMPILE_PDB,-FS",
   "file": "D:/projects/PBF-X/sim/device_pos_state.cu"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\NVIDIA~2\\CUDA\\v13.0\\bin\\nvcc.exe -forward-unknown-to-host-compiler -I../ -isystem=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -D_WINDOWS -Xcompiler=\" /EHsc\" -Xcompiler=\"-Zi -Ob0 -Od /RTC1\" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17 -x cu -dc D:\\projects\\PBF-X\\sim\\audio_forces.cu -o CMakeFiles\\pbf_cuda.dir\\sim\\audio_forces.cu.obj -Xcompiler=-FdTARGET_COMPILE_PDB,-FS",
+  "file": "D:/projects/PBF-X/sim/audio_forces.cu"
 },
 {
   "directory": "D:/projects/PBF-X/build",
