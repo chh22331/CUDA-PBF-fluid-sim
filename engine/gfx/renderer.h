@@ -80,7 +80,7 @@ namespace gfx {
         void WaitSimulationFence(uint64_t simValue);
         void SignalRenderComplete(uint64_t lastSimValue);
 
-        // Expose read-only accessors for Unity exports without breaking encapsulation.
+        // Expose read-only accessors for external integrations without breaking encapsulation.
         HANDLE SharedParticleBufferHandle(int slot) const {
             return (slot >= 0 && slot < 2) ? m_sharedParticleBufferHandles[slot] : nullptr;
         }

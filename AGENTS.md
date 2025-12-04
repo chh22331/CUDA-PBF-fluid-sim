@@ -3,7 +3,6 @@
 ## Project Structure & Modules
 - Core engine code lives in `engine/` (`core/`, `gfx/`, `interop/`).
 - Simulation logic and CUDA kernels are in `sim/` (e.g. `simulator.{h,cpp}`, `*.cu`).
-- The native Unity plugin is in `unity_plugin/` with C# bridges under `unity_plugin/Assets/Scripts/`.
 - CMake/Ninja builds land in `build/`; Visual Studio builds land in `x64/Release/`.
 
 ## Build, Run, and Development
@@ -16,7 +15,7 @@
 - When editing CUDA code, keep `PBFX_ENABLE_CUDA` enabled so kernels are compiled.
 
 ## Coding Style & Naming
-- Language: C++17 and CUDA C++ for core/sim, C# for Unity glue.
+- Language: C++17 and CUDA C++ for core/sim.
 - Indent with 4 spaces, no tabs; brace on same line as control statement/declaration.
 - Types use `PascalCase` (`Simulator`, `FreeFlyCamera`); functions/methods use `camelCase` (`initialize`, `seedBoxLattice`); members are prefixed with `m_`, globals with `g_`.
 - Prefer small, focused headers in `sim/` and `engine/core/` and keep GPU/CPU boundaries explicit (see `device_buffers.cuh`, `simulation_context.h`).
@@ -33,4 +32,3 @@
   - A brief high-level description and rationale.
   - Notes on performance impact (FPS, GPU time) and how you measured it.
   - Any new configuration flags or console commands added for debugging.
-

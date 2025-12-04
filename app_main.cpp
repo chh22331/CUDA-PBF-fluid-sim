@@ -1,3 +1,4 @@
+#define NOMINMAX
 #include <cstdio>
 #include <vector>
 #include <cstdint>
@@ -157,6 +158,53 @@ static float ComputeBaseSpeedFromDomain(const float3& mins, const float3& maxs) 
     float3 ext = f3_sub(maxs, mins);
     float diag = f3_len(ext);
     return std::max(0.3f, diag * 0.3f);
+}
+
+// Update camera speed so traversal roughly matches the domain size. When responsiveness
+// is < 1 the update is smoothed, otherwise it applies instantly.
+static void ApplyCameraSpeedFromDomain(
+    FreeFlyCamera& cam,
+    const float3& mins,
+    const float3& maxs,
+    float responsiveness = 1.0f
+) {
+    float desired = ComputeBaseSpeedFromDomain(mins, maxs);
+    responsiveness = std::clamp(responsiveness, 0.0f, 1.0f);
+    if (responsiveness <= 0.0f) return;
+    if (responsiveness >= 1.0f) {
+        cam.moveSpeed = desired;
+        return;
+    }
+    cam.moveSpeed = cam.moveSpeed + (desired - cam.moveSpeed) * responsiveness;
+}
+
+// Fit camera eye/target to the current simulation domain so the demo starts centered.
+static void AutoFrameCameraFromDomain(
+    console::RuntimeConsole& cc,
+    FreeFlyCamera& cam,
+    const sim::SimParams& simParams
+) {
+    if (cc.sim.demoMode != console::RuntimeConsole::Simulation::DemoMode::CubeMix)
+        return;
+
+    const float3 mins = simParams.grid.mins;
+    const float3 maxs = simParams.grid.maxs;
+    float3 ext = f3_sub(maxs, mins);
+    float diag = f3_len(ext);
+    if (diag < 1e-3f)
+        return;
+
+    float3 center = f3_scale(f3_add(mins, maxs), 0.5f);
+    float planar = std::max(ext.x, ext.z);
+    float distance = std::max(planar * 1.35f, diag * 0.5f);
+    float height = std::max(ext.y * 1.2f, diag * 0.25f);
+    float3 offset = f3_make(distance, height, distance);
+
+    cc.renderer.at = center;
+    cc.renderer.eye = f3_add(center, offset);
+    cc.renderer.up = f3_make(0.f, 1.f, 0.f);
+
+    cam = MakeCameraFromCc(cc);
 }
 
 // Update camera each frame using keyboard/scrollwheel input (dtSec = wall time delta).
@@ -596,10 +644,6 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     g_DebugPaused = cc.debug.pauseOnStart && g_DebugEnabled;
     g_DebugStepRequested = false;
 
-    // Initialize free-fly camera from console configuration.
-    g_Camera = MakeCameraFromCc(cc);
-    g_cam = &g_Camera;
-
     core::Profiler profiler;
 
     // CubeMix demo mode: partition particle sets, fit bounds, assign colors.
@@ -613,10 +657,17 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     console::BuildSimParams(cc, simParams);
     SanitizeRuntime(cc, simParams);
 
-    g_Camera.moveSpeed = ComputeBaseSpeedFromDomain(
+    // Initialize free-fly camera from (potentially adjusted) console configuration.
+    g_Camera = MakeCameraFromCc(cc);
+    g_cam = &g_Camera;
+    AutoFrameCameraFromDomain(cc, g_Camera, simParams);
+    console::ApplyRendererRuntime(cc, renderer);
+
+    ApplyCameraSpeedFromDomain(
+        g_Camera,
         simParams.grid.mins,
-        simParams.grid.maxs
-    );
+        simParams.grid.maxs,
+        1.0f);
 
     if (!simulator.initialize(simParams)) {
         MessageBoxW(hwnd, L"Simulator initialize failed.", L"PBF-X", MB_ICONERROR);
@@ -809,6 +860,13 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         // Update camera with wall clock delta time.
         float dtSec = std::chrono::duration<float>(frameStart - s_prevFrameEnd).count();
         dtSec = std::clamp(dtSec, 0.0f, 0.2f);
+
+        // Continuously adapt move speed so it stays proportional to the latest domain bounds.
+        ApplyCameraSpeedFromDomain(
+            g_Camera,
+            simParams.grid.mins,
+            simParams.grid.maxs,
+            0.25f);
         UpdateFreeFlyCamera(g_Camera, dtSec);
         SyncCameraToRenderer(cc, renderer, g_Camera);
 

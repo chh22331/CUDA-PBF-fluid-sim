@@ -10,123 +10,6 @@
 #include <fstream>
 #pragma comment(lib, "d3dcompiler.lib")
 
-// Unity interop globals (exported handles and cached shared handles).
-static gfx::RendererD3D12* g_unityExportRenderer = nullptr;
-static HANDLE g_cachedSharedParticleHandles[2] = { nullptr, nullptr };
-
-// Export: timeline fence shared handle for CUDA/Unity interop.
-extern "C" __declspec(dllexport) uintptr_t Gfx_GetFenceHandle() {
-    if (!g_unityExportRenderer) return 0;
-    return reinterpret_cast<uintptr_t>(g_unityExportRenderer->m_timelineFenceSharedHandle);
-}
-
-// Export: particle ping buffer shared handle (lazily created).
-extern "C" __declspec(dllexport) bool Gfx_GetPingBufferHandle(int slot, uintptr_t* outHandle) {
-    if (!g_unityExportRenderer || !outHandle) return false;
-    if (slot < 0 || slot > 1) return false;
-
-    auto& res = g_unityExportRenderer->m_sharedParticleBuffers[slot];
-    if (!res) return false;
-
-    if (!g_cachedSharedParticleHandles[slot]) {
-        HANDLE h = nullptr;
-        if (FAILED(g_unityExportRenderer->m_device.device()->CreateSharedHandle(
-                res.Get(), nullptr, GENERIC_ALL, nullptr, &h))) {
-            return false;
-        }
-        g_cachedSharedParticleHandles[slot] = h;
-    }
-    *outHandle = reinterpret_cast<uintptr_t>(g_cachedSharedParticleHandles[slot]);
-    return true;
-}
-
-// Export: active ping index (0/1), -1 if none.
-extern "C" __declspec(dllexport) int Gfx_GetActivePingIndex() {
-    if (!g_unityExportRenderer) return -1;
-    return g_unityExportRenderer->ActivePingIndex();
-}
-
-// Export: particle count.
-extern "C" __declspec(dllexport) uint32_t Gfx_GetParticleCount() {
-    if (!g_unityExportRenderer) return 0;
-    return g_unityExportRenderer->ParticleCount();
-}
-
-// Export: notify renderer about active CUDA device pointer to select SRV.
-extern "C" __declspec(dllexport) void Gfx_SetActiveCudaDevicePtr(const void* p) {
-    if (!g_unityExportRenderer) return;
-    g_unityExportRenderer->UpdateParticleSRVForPingPong(p);
-}
-
-// Export: last simulation fence value recorded by renderer.
-extern "C" __declspec(dllexport) uint64_t Gfx_GetLastSimFenceValue() {
-    if (!g_unityExportRenderer) return 0;
-    return g_unityExportRenderer->m_lastSimFenceValue;
-}
-
-// Export: particle stride (in bytes).
-extern "C" __declspec(dllexport) uint32_t Gfx_GetParticleStride() {
-    if (!g_unityExportRenderer) return 0;
-    return g_unityExportRenderer->m_particleStrideBytes;
-}
-
-// Export: particle capacity across ping buffers.
-extern "C" __declspec(dllexport) uint32_t Gfx_GetParticleCapacity() {
-    if (!g_unityExportRenderer) return 0;
-    uint32_t cap = 0;
-    for (int i = 0; i < 2; ++i) {
-        auto& r = g_unityExportRenderer->m_sharedParticleBuffers[i];
-        if (r) {
-            auto d = r->GetDesc();
-            cap = std::max<uint32_t>(cap, (uint32_t)(d.Width / g_unityExportRenderer->m_particleStrideBytes));
-        }
-    }
-    return cap;
-}
-
-// Export: update palette RGB triples (group-count sized).
-extern "C" __declspec(dllexport) bool Gfx_UpdatePaletteRGB(const float* rgbTriples, uint32_t groupCount) {
-    if (!g_unityExportRenderer) return false;
-    return g_unityExportRenderer->UpdateGroupPalette(rgbTriples, groupCount);
-}
-
-// Export: update grouping info for palette mode.
-extern "C" __declspec(dllexport) void Gfx_SetGroups(uint32_t groups, uint32_t particlesPerGroup) {
-    if (!g_unityExportRenderer) return;
-    g_unityExportRenderer->m_groups = groups;
-    g_unityExportRenderer->m_particlesPerGroup = particlesPerGroup;
-}
-
-// Export: switch render mode (0 = GroupPalette, 1 = SpeedColor).
-extern "C" __declspec(dllexport) void Gfx_SetRenderMode(int mode) {
-    if (!g_unityExportRenderer) return;
-    if (mode == 1) {
-        g_unityExportRenderer->SetRenderMode(gfx::RendererD3D12::RenderMode::SpeedColor);
-    } else {
-        g_unityExportRenderer->SetRenderMode(gfx::RendererD3D12::RenderMode::GroupPalette);
-    }
-}
-
-// Export: import external velocity buffer as SRV (returns descriptor index).
-extern "C" __declspec(dllexport) bool Gfx_ImportVelocityShared(uintptr_t sharedHandle, uint32_t numElements, uint32_t strideBytes, int* outSrvIndex) {
-    if (!g_unityExportRenderer || !outSrvIndex) return false;
-    HANDLE h = reinterpret_cast<HANDLE>(sharedHandle);
-    int idx = -1;
-    bool ok = g_unityExportRenderer->ImportSharedVelocityAsSRV(h, numElements, strideBytes, idx);
-    if (ok) *outSrvIndex = idx;
-    return ok;
-}
-
-// Export: reset cached shared handle mirror (on resource rebuild).
-extern "C" __declspec(dllexport) void Gfx_ResetSharedHandleCache() {
-    for (int i = 0; i < 2; ++i) {
-        if (g_cachedSharedParticleHandles[i]) {
-            CloseHandle(g_cachedSharedParticleHandles[i]);
-            g_cachedSharedParticleHandles[i] = nullptr;
-        }
-    }
-}
-
 namespace gfx {
 namespace {
 
@@ -526,7 +409,6 @@ bool RendererD3D12::Initialize(HWND hwnd, const RenderInitParams& p) {
     m_lastSimFenceValue = 0;
 
     BuildFrameGraph();
-    g_unityExportRenderer = this;
     return true;
 }
 
@@ -536,13 +418,6 @@ void RendererD3D12::Shutdown() {
     m_paletteBuffer.Reset();
     m_sharedVelocityBuffer.Reset();
 
-    for (int i = 0; i < 2; ++i) {
-        if (g_cachedSharedParticleHandles[i]) {
-            CloseHandle(g_cachedSharedParticleHandles[i]);
-            g_cachedSharedParticleHandles[i] = nullptr;
-        }
-    }
-
     if (m_timelineFenceSharedHandle) {
         CloseHandle(m_timelineFenceSharedHandle);
         m_timelineFenceSharedHandle = nullptr;
@@ -550,8 +425,6 @@ void RendererD3D12::Shutdown() {
 
     m_timelineFence.Reset();
     m_device.shutdown();
-
-    if (g_unityExportRenderer == this) g_unityExportRenderer = nullptr;
 }
 
 // Queue-side wait on simulation fence; track last waited value.

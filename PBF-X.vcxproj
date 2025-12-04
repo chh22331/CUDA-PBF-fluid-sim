@@ -67,7 +67,7 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <!-- Inject CUDA include directory. -->
-      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(CUDA_PATH)\include;$(CudaIncludeDirFallback);"F:\unity\2022.3.61t8\Editor\Data\PluginAPI"</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(CUDA_PATH)\include;$(CudaIncludeDirFallback)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -118,7 +118,6 @@
     <CudaCompile Include="sim\device_pos_state.cu" />
     <CudaCompile Include="sim\hash_keys.cu" />
     <CudaCompile Include="sim\integrate.cu" />
-    <CudaCompile Include="sim\integrate_pred_semi_implicit.cu" />
     <CudaCompile Include="sim\pbf_delta_apply.cu" />
     <CudaCompile Include="sim\pbf_lambda.cu" />
     <CudaCompile Include="sim\sort_pairs.cu" />
@@ -203,9 +202,7 @@
     </FxCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="C# Assets\Scripts\SimBridge.cs" />
     <None Include="diff" />
-    <None Include="unity_plugin\SimBridge.cs" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

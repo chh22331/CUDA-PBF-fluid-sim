@@ -330,6 +330,7 @@ namespace config {
 #else
         MergeIntoConsole_Safe(io, raw, state);
 #endif
+        console::PrepareCubeMix(io);
         return true;
     }
 
@@ -349,6 +350,7 @@ namespace config {
 
         const auto& wl = ResolveWhitelist(&state);
         ApplyWhitelistDiff(wl, tmp, io, state);
+        console::PrepareCubeMix(io);
 
         state.lastWrite = tmpState.lastWrite;
         state.activeProfile = tmpState.activeProfile;

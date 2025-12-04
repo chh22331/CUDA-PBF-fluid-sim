@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstring>
 #include <vector>
+#include <limits>
 #include "../../sim/numeric_utils.h"
 #include "../../sim/logging.h" // shared logging helpers
 
@@ -24,12 +25,169 @@ namespace {
 		if (len <= 1e-20f) return make_float3(0, 0, 1);
 		return f3_mul(v, 1.0f / len);
 	}
-	inline float f3_proj_extent(const float3& halfExt, const float3& axisUnit) {
-		return std::fabs(halfExt.x * axisUnit.x) + std::fabs(halfExt.y * axisUnit.y) + std::fabs(halfExt.z * axisUnit.z);
-	}
+inline float f3_proj_extent(const float3& halfExt, const float3& axisUnit) {
+	return std::fabs(halfExt.x * axisUnit.x) + std::fabs(halfExt.y * axisUnit.y) + std::fabs(halfExt.z * axisUnit.z);
+}
 } // namespace
 
 namespace console {
+
+	static inline uint32_t round_cuberoot(uint64_t v) {
+		if (v == 0) return 0;
+		double r = std::cbrt(double(v));
+		return (uint32_t)std::max<int64_t>(1, (int64_t)llround(r));
+	}
+
+	namespace {
+
+		struct CubeMixLayout {
+			int layer;
+			int ix;
+			int iz;
+		};
+
+		static inline uint32_t clamp_u64_to_u32(uint64_t v) {
+			return (v > std::numeric_limits<uint32_t>::max())
+				? std::numeric_limits<uint32_t>::max()
+				: static_cast<uint32_t>(v);
+		}
+
+		static void UpdateCubeMixDerived(RuntimeConsole::Simulation& s,
+			std::vector<CubeMixLayout>* outLayouts)
+		{
+			using Simulation = RuntimeConsole::Simulation;
+			if (s.demoMode != Simulation::DemoMode::CubeMix)
+				return;
+
+			s.cube_group_count = std::max<uint32_t>(
+				1u,
+				std::min<uint32_t>(s.cube_group_count, Simulation::cube_group_count_max));
+
+			if (s.cube_auto_partition) {
+				uint64_t target = (uint64_t)std::max<uint32_t>(1u, s.numParticles);
+				uint32_t L = round_cuberoot(target);
+				if (L == 0) L = 1;
+				uint64_t per = (uint64_t)L * (uint64_t)L * (uint64_t)L;
+				uint32_t G = (uint32_t)std::max<uint64_t>(1ull, target / per);
+				if (G == 0) G = 1;
+				while ((uint64_t)G * (uint64_t)L * (uint64_t)L * (uint64_t)L > target && L > 1) { --L; }
+				while ((uint64_t)G * (uint64_t)(L + 1) * (uint64_t)(L + 1) * (uint64_t)(L + 1) <= target) { ++L; }
+				per = (uint64_t)L * (uint64_t)L * (uint64_t)L;
+				while ((uint64_t)(G + 1) * per <= target && (G + 1) <= Simulation::cube_group_count_max) { ++G; }
+				s.cube_edge_particles = L;
+				s.cube_group_count = std::min<uint32_t>(G, Simulation::cube_group_count_max);
+				s.cube_particles_per_group = clamp_u64_to_u32((uint64_t)L * (uint64_t)L * (uint64_t)L);
+				s.numParticles = s.cube_group_count * s.cube_particles_per_group;
+			}
+			else {
+				s.cube_particles_per_group = clamp_u64_to_u32(
+					(uint64_t)s.cube_edge_particles *
+					(uint64_t)s.cube_edge_particles *
+					(uint64_t)s.cube_edge_particles);
+				s.numParticles = s.cube_group_count * s.cube_particles_per_group;
+			}
+
+			if (s.cube_layers < 1) s.cube_layers = 1;
+			if (s.cube_layers > s.cube_group_count) s.cube_layers = s.cube_group_count;
+
+			std::vector<uint32_t> layerCounts;
+			layerCounts.resize(s.cube_layers, 0);
+			uint32_t remaining = s.cube_group_count;
+			for (uint32_t L = 0; L < s.cube_layers && remaining > 0; ++L) {
+				uint32_t toAssign = remaining / (s.cube_layers - L);
+				if (toAssign == 0) toAssign = 1;
+				layerCounts[L] = toAssign;
+				remaining -= toAssign;
+			}
+
+			const float h = (s.smoothingRadius > 1e-6f) ? s.smoothingRadius : 1e-6f;
+			const float spacing = h * s.cube_lattice_spacing_factor_h;
+			const float cubeSideWorld = spacing * s.cube_edge_particles;
+			const float halfSide = cubeSideWorld * 0.5f;
+
+			const bool collectLayouts = (outLayouts != nullptr);
+			if (collectLayouts) {
+				outLayouts->clear();
+				outLayouts->reserve(s.cube_group_count);
+			}
+
+			float minX = 1e30f, maxX = -1e30f;
+			float minY = 1e30f, maxY = -1e30f;
+			float minZ = 1e30f, maxZ = -1e30f;
+
+			uint32_t gCursor = 0;
+			for (uint32_t layer = 0; layer < s.cube_layers && gCursor < s.cube_group_count; ++layer) {
+				uint32_t groupsInLayer = layerCounts[layer];
+				if (groupsInLayer == 0) continue;
+				uint32_t nx = (uint32_t)std::ceil(std::sqrt(double(groupsInLayer)));
+				uint32_t nz = (uint32_t)std::ceil(double(groupsInLayer) / std::max<uint32_t>(1u, nx));
+				float layerY = s.cube_base_height + layer * s.cube_layer_spacing_world;
+				if (s.cube_layer_jitter_enable) {
+					std::mt19937 lrng(s.cube_layer_jitter_seed ^ layer);
+					std::uniform_real_distribution<float> U(-1.f, 1.f);
+					float amp = s.cube_layer_jitter_scale_h * h;
+					layerY += U(lrng) * amp;
+				}
+				for (uint32_t k = 0; k < groupsInLayer && gCursor < s.cube_group_count; ++k) {
+					uint32_t ix = k % nx;
+					uint32_t iz = k / nx;
+					float cx = ix * s.cube_group_spacing_world;
+					float cz = iz * s.cube_group_spacing_world;
+					float cy = layerY;
+					minX = std::min(minX, cx - halfSide);
+					maxX = std::max(maxX, cx + halfSide);
+					minY = std::min(minY, cy - halfSide);
+					maxY = std::max(maxY, cy + halfSide);
+					minZ = std::min(minZ, cz - halfSide);
+					maxZ = std::max(maxZ, cz + halfSide);
+					if (collectLayouts) {
+						outLayouts->push_back({ (int)layer, (int)ix, (int)iz });
+					}
+					++gCursor;
+				}
+			}
+
+			if (minX > maxX || minY > maxY || minZ > maxZ) {
+				minX = minY = minZ = -halfSide;
+				maxX = maxY = maxZ = halfSide;
+				if (collectLayouts) {
+					outLayouts->clear();
+					outLayouts->push_back({ 0, 0, 0 });
+				}
+			}
+
+			if (s.cube_auto_fit_domain) {
+				float3 size = make_float3(maxX - minX, maxY - minY, maxZ - minZ);
+				float3 mins = make_float3(minX,
+					std::min(0.f, minY - halfSide),
+					minZ);
+				float3 maxs = make_float3(minX + size.x, minY + size.y, minZ + size.z);
+				float3 center = make_float3((mins.x + maxs.x) * 0.5f,
+					(mins.y + maxs.y) * 0.5f,
+					(mins.z + maxs.z) * 0.5f);
+				float scale = (s.cube_domain_margin_scale < 1.0f)
+					? 1.0f
+					: s.cube_domain_margin_scale;
+				float3 half = make_float3((maxs.x - mins.x) * 0.5f * scale,
+					(maxs.y - mins.y) * 0.5f * scale,
+					(maxs.z - mins.z) * 0.5f * scale);
+				s.gridMins = make_float3(center.x - half.x,
+					std::max(0.f, center.y - half.y),
+					center.z - half.z);
+				s.gridMaxs = make_float3(center.x + half.x,
+					center.y + half.y,
+					center.z + half.z);
+			}
+		}
+	} // namespace
+
+	RuntimeConsole::Simulation::Simulation() {
+		refreshCubeMixDerived();
+	}
+
+	void RuntimeConsole::Simulation::refreshCubeMixDerived() {
+		UpdateCubeMixDerived(*this, nullptr);
+	}
 
 	RuntimeConsole& Instance() {
 		static RuntimeConsole g_console;
@@ -164,12 +322,6 @@ namespace console {
 		out.vsync = c.app.vsync;
 	}
 
-	static inline uint32_t round_cuberoot(uint64_t v) {
-		if (v == 0) return 0;
-		double r = std::cbrt(double(v));
-		return (uint32_t)std::max<int64_t>(1, (int64_t)llround(r));
-	}
-
 	static bool GenDistinctColor(std::mt19937& rng,
 		float minComp,
 		float minDist,
@@ -209,88 +361,8 @@ namespace console {
 		if (c.sim.demoMode != RuntimeConsole::Simulation::DemoMode::CubeMix)
 			return;
 		auto& s = c.sim;
-		if (s.cube_auto_partition) {
-			uint64_t target = (uint64_t)std::max<uint32_t>(1u, s.numParticles);
-			uint32_t L = round_cuberoot(target);
-			if (L == 0) L = 1;
-			uint64_t per = (uint64_t)L * (uint64_t)L * (uint64_t)L;
-			uint32_t G = (uint32_t)std::max<uint64_t>(1ull, target / per);
-			if (G == 0) G = 1;
-			while ((uint64_t)G * (uint64_t)L * (uint64_t)L * (uint64_t)L > target && L > 1) { --L; }
-			while ((uint64_t)G * (uint64_t)(L + 1) * (uint64_t)(L + 1) * (uint64_t)(L + 1) <= target) { ++L; }
-			per = (uint64_t)L * (uint64_t)L * (uint64_t)L;
-			while ((uint64_t)(G + 1) * per <= target && (G + 1) <= s.cube_group_count_max) { ++G; }
-			s.cube_edge_particles = L;
-			s.cube_group_count = std::min<uint32_t>(G, s.cube_group_count_max);
-			s.cube_particles_per_group = L * L * L;
-			s.numParticles = s.cube_group_count * s.cube_particles_per_group;
-		}
-		else {
-			s.cube_particles_per_group = s.cube_edge_particles * s.cube_edge_particles * s.cube_edge_particles;
-			s.numParticles = s.cube_group_count * s.cube_particles_per_group;
-		}
-		if (s.cube_layers < 1) s.cube_layers = 1;
-		if (s.cube_layers > s.cube_group_count) s.cube_layers = s.cube_group_count;
-		std::vector<uint32_t> layerCounts;
-		layerCounts.resize(s.cube_layers, 0);
-		{
-			uint32_t remaining = s.cube_group_count;
-			for (uint32_t L = 0; L < s.cube_layers; ++L) {
-				uint32_t toAssign = remaining / (s.cube_layers - L);
-				if (toAssign == 0) toAssign = 1;
-				layerCounts[L] = toAssign;
-				remaining -= toAssign;
-			}
-		}
-		const float h = (((1e-6f) > (s.smoothingRadius)) ? (1e-6f) : (s.smoothingRadius));
-		const float spacing = h * s.cube_lattice_spacing_factor_h;
-		const float cubeSideWorld = spacing * s.cube_edge_particles;
-		struct GroupLayout { int layer; int ix; int iz; };
-		std::vector<GroupLayout> layouts; layouts.reserve(s.cube_group_count);
-		float minX = 1e30f, maxX = -1e30f;
-		float minY = 1e30f, maxY = -1e30f;
-		float minZ = 1e30f, maxZ = -1e30f;
-		uint32_t gCursor = 0;
-		for (uint32_t layer = 0; layer < s.cube_layers; ++layer) {
-			uint32_t groupsInLayer = layerCounts[layer];
-			uint32_t nx = (uint32_t)std::ceil(std::sqrt(double(groupsInLayer)));
-			uint32_t nz = (uint32_t)std::ceil(double(groupsInLayer) / std::max<uint32_t>(1u, nx));
-			float layerY = s.cube_base_height + layer * s.cube_layer_spacing_world;
-			if (s.cube_layer_jitter_enable) {
-				std::mt19937 lrng(s.cube_layer_jitter_seed ^ layer);
-				std::uniform_real_distribution<float> U(-1.f, 1.f);
-				float amp = s.cube_layer_jitter_scale_h * h;
-				float dy = U(lrng) * amp; layerY += dy;
-			}
-			for (uint32_t k = 0; k < groupsInLayer && gCursor < s.cube_group_count; ++k) {
-				uint32_t ix = k % nx; uint32_t iz = k / nx;
-				float cx = ix * s.cube_group_spacing_world;
-				float cz = iz * s.cube_group_spacing_world;
-				float cy = layerY;
-				minX = std::min(minX, cx - cubeSideWorld * 0.5f);
-				maxX = std::max(maxX, cx + cubeSideWorld * 0.5f);
-				minY = std::min(minY, cy - cubeSideWorld * 0.5f);
-				maxY = std::max(maxY, cy + cubeSideWorld * 0.5f);
-				minZ = std::min(minZ, cz - cubeSideWorld * 0.5f);
-				maxZ = std::max(maxZ, cz + cubeSideWorld * 0.5f);
-				layouts.push_back({ (int)layer, (int)ix, (int)iz });
-				++gCursor;
-			}
-		}
-		if (layouts.empty()) {
-			layouts.push_back({ 0,0,0 });
-			minX = minY = minZ = 0.f; maxX = maxY = maxZ = cubeSideWorld;
-		}
-		if (s.cube_auto_fit_domain) {
-			float3 size = make_float3(maxX - minX, maxY - minY, maxZ - minZ);
-			float3 mins = make_float3(minX, (((0.f) < (minY - cubeSideWorld * 0.5f)) ? (0.f) : (minY - cubeSideWorld * 0.5f)), minZ);
-			float3 maxs = make_float3(minX + size.x, minY + size.y, minZ + size.z);
-			float3 center = make_float3((mins.x + maxs.x) * 0.5f, (mins.y + maxs.y) * 0.5f, (mins.z + maxs.z) * 0.5f);
-			float scale = (((1.0f) > (s.cube_domain_margin_scale)) ? (1.0f) : (s.cube_domain_margin_scale));
-			float3 half = make_float3((maxs.x - mins.x) * 0.5f * scale, (maxs.y - mins.y) * 0.5f * scale, (maxs.z - mins.z) * 0.5f * scale);
-			s.gridMins = make_float3(center.x - half.x, (((0.f) > (center.y - half.y)) ? (0.f) : (center.y - half.y)), center.z - half.z);
-			s.gridMaxs = make_float3(center.x + half.x, center.y + half.y, center.z + half.z);
-		}
+		std::vector<CubeMixLayout> layouts;
+		UpdateCubeMixDerived(s, s.cube_color_enable ? &layouts : nullptr);
 		if (s.cube_color_enable) {
 			std::mt19937 rng(s.cube_color_seed);
 			std::vector<std::array<float, 3>> colors; colors.resize(s.cube_group_count);

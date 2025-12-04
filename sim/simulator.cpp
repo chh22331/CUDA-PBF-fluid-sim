@@ -27,6 +27,10 @@
 #include "phase_pipeline.h"
 #include "post_ops.h"
 
+namespace sim {
+    uint64_t g_simFrameIndex = 0;
+}
+
 // =====================================================================
 // External CUDA Kernel Declarations
 // =====================================================================
