@@ -21,8 +21,6 @@ namespace gfx {
         uint32_t particlesPerGroup;
         uint32_t pad0;
         uint32_t pad1;
-        float4 audioDebug0; // (enabled, domainMinX, invDomainWidth, unused)
-        float4 audioDebug1; // (surfaceY, surfaceFalloff, keyCount, invKeyCount)
     };
 
     struct CameraParams {
@@ -59,20 +57,11 @@ namespace gfx {
         void RegisterPingPongCudaPtrs(const void* ptrA, const void* ptrB);
         bool CreateSharedVelocityBuffer(uint32_t numElements, uint32_t strideBytes, HANDLE& outSharedHandle);
 
-        // 新增：导入速度共享缓冲作为 SRV（外层可把 CUDA 导出的 shared handle 传入）
+        // Allow importing a shared velocity buffer (e.g., CUDA-exported handle) as an SRV.
         bool ImportSharedVelocityAsSRV(HANDLE sharedHandle, uint32_t numElements, uint32_t strideBytes, int& outSrvIndex);
 
         void SetCamera(const CameraParams& p) { m_camera = p; }
         void SetVisual(const VisualParams& v) { m_visual = v; }
-        void SetAudioDebugInfo(bool enabled, float domainMinX, float invDomainWidth, float surfaceY, float surfaceFalloff, uint32_t keyCount) {
-            m_audioDebug.enabled = enabled ? 1.0f : 0.0f;
-            m_audioDebug.domainMinX = domainMinX;
-            m_audioDebug.invDomainWidth = invDomainWidth;
-            m_audioDebug.surfaceY = surfaceY;
-            m_audioDebug.surfaceFalloff = surfaceFalloff;
-            m_audioDebug.keyCount = keyCount;
-        }
-        void SetAudioDebugIntensities(const float* values, uint32_t keyCount);
         void SetParticleCount(uint32_t n) { m_particleCount = n; }
         void WaitForGPU();
 
@@ -85,13 +74,13 @@ namespace gfx {
 
         void SetRenderMode(RenderMode m) { m_renderMode = m; }
 
-        // 时间线同步访问器
+        // Timeline sync accessors.
         HANDLE SharedTimelineFenceHandle() const { return m_timelineFenceSharedHandle; }
         uint64_t CurrentRenderFenceValue() const { return m_renderFenceValue; }
         void WaitSimulationFence(uint64_t simValue);
         void SignalRenderComplete(uint64_t lastSimValue);
 
-        // 新增公开只读访问器（供 Unity 导出函数使用，避免非法访问 private)
+        // Expose read-only accessors for Unity exports without breaking encapsulation.
         HANDLE SharedParticleBufferHandle(int slot) const {
             return (slot >= 0 && slot < 2) ? m_sharedParticleBufferHandles[slot] : nullptr;
         }
@@ -122,11 +111,6 @@ namespace gfx {
 
         Microsoft::WRL::ComPtr<ID3D12Resource> m_paletteBuffer;
         int m_paletteSrvIndex = -1;
-        Microsoft::WRL::ComPtr<ID3D12Resource> m_audioDebugBuffer;
-        float* m_audioDebugCpuPtr = nullptr;
-        uint32_t m_audioDebugKeyCapacity = 0;
-        int m_audioDebugSrvIndex = -1;
-
         CameraParams m_camera{};
         VisualParams m_visual{};
 
@@ -139,22 +123,12 @@ namespace gfx {
         Microsoft::WRL::ComPtr<ID3D12PipelineState> m_psoPointsFloat;
         Microsoft::WRL::ComPtr<ID3D12PipelineState> m_psoPointsHalf;
 
-        // 新增：速度渲染用资源与 PSO
+        // Additional state for speed-color rendering (resources + PSO).
         Microsoft::WRL::ComPtr<ID3D12Resource> m_sharedVelocityBuffer;
         int m_velocitySrvIndex = -1;
         Microsoft::WRL::ComPtr<ID3D12PipelineState> m_psoPointsSpeed;
 
         RenderMode m_renderMode = RenderMode::GroupPalette;
-        struct AudioDebugInfo {
-            float enabled = 0.0f;
-            float domainMinX = 0.0f;
-            float invDomainWidth = 0.0f;
-            float surfaceY = 0.0f;
-            float surfaceFalloff = 0.0f;
-            uint32_t keyCount = 0;
-        } m_audioDebug;
-
-        bool EnsureAudioDebugBuffer(uint32_t minCapacity);
     };
 
 } // namespace gfx

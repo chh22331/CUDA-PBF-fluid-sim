@@ -27,15 +27,6 @@ namespace {
 	inline float f3_proj_extent(const float3& halfExt, const float3& axisUnit) {
 		return std::fabs(halfExt.x * axisUnit.x) + std::fabs(halfExt.y * axisUnit.y) + std::fabs(halfExt.z * axisUnit.z);
 	}
-	inline int3 make_grid_dim(const float3& mins, const float3& maxs, float cell) {
-		auto clamp_ge1 = [](int v) { return (((1) > (v)) ? (1) : (v)); };
-		float3 size = f3_sub(maxs, mins);
-		int dx = clamp_ge1(static_cast<int>(std::ceil(size.x / cell)));
-		int dy = clamp_ge1(static_cast<int>(std::ceil(size.y / cell)));
-		int dz = clamp_ge1(static_cast<int>(std::ceil(size.z / cell)));
-		return make_int3(dx, dy, dz);
-	}
-
 } // namespace
 
 namespace console {
@@ -45,6 +36,7 @@ namespace console {
 		return g_console;
 	}
 
+	// Mirrors the editable RuntimeConsole state into a compact SimParams blob.
 	void BuildSimParams(const RuntimeConsole& c, sim::SimParams& out) {
 		// Basic parameter copy
 		out.numParticles = c.sim.numParticles;
@@ -58,8 +50,6 @@ namespace console {
 		out.boundaryRestitution = c.sim.boundaryRestitution;
 		out.pbf = c.sim.pbf;
 		out.xsph_c = c.sim.xsph_c;
-
-        auto audioLayout = BuildAudioPoolLayout(c);
 
 		// Override dynamic stability toggles exposed via RuntimeConsole
 		out.pbf.xpbd_enable = c.sim.xpbd_enable ? 1 : 0;
@@ -104,10 +94,6 @@ namespace console {
 		}
         float3 gridMins = c.sim.gridMins;
         float3 gridMaxs = c.sim.gridMaxs;
-        if (audioLayout.enabled) {
-            gridMins = audioLayout.gridMins;
-            gridMaxs = audioLayout.gridMaxs;
-        }
 		out.grid.mins = gridMins;
 		out.grid.maxs = gridMaxs;
 		out.grid.cellSize = cell;
@@ -120,65 +106,16 @@ namespace console {
 		int dz = clamp_ge1((int)std::ceil(size.z / cell));
         out.grid.dim = make_int3(dx, dy, dz);
 
-        if (audioLayout.enabled) {
-            out.numParticles = audioLayout.total;
-            if (out.maxParticles < out.numParticles)
-                out.maxParticles = out.numParticles;
-        }
-
-        // Audio-reactive force parameters.
-        uint32_t keyCount = c.audio.keyCount;
-        if (keyCount == 0) keyCount = sim::kAudioKeyCount;
-        keyCount = (keyCount > sim::kAudioKeyCount) ? sim::kAudioKeyCount : keyCount;
-        out.audio.enabled = c.audio.enabled ? 1 : 0;
-        out.audio.keyCount = keyCount;
-        if (audioLayout.enabled) {
-            out.audio.domainMinX = audioLayout.poolMins.x;
-            float spanX = std::max(1e-6f, audioLayout.poolMaxs.x - audioLayout.poolMins.x);
-            out.audio.invDomainWidth = 1.0f / spanX;
-        } else {
-            out.audio.domainMinX = out.grid.mins.x;
-            float widthX = std::max(1e-6f, out.grid.maxs.x - out.grid.mins.x);
-            out.audio.invDomainWidth = 1.0f / widthX;
-        }
-        float surfaceY = c.audio.surfaceHeightWorld;
-        float surfaceFalloff = std::max(1.0f, c.audio.surfaceFalloffWorld);
-        if (audioLayout.enabled && c.audio.pool.autoSurfaceFromPool) {
-            float fluidHeight = std::max(1.0f, audioLayout.fluidHeight);
-            float top = audioLayout.fluidTopY;
-            float bottom = audioLayout.fluidBottomY;
-
-            float offsetFrac = std::max(0.0f, c.audio.pool.surfaceTopOffsetFraction);
-            float offsetWorld = std::max(0.0f, c.audio.pool.surfaceTopOffsetWorld);
-            float offset = std::max(offsetWorld, offsetFrac * fluidHeight);
-            surfaceY = std::clamp(top - offset, bottom, top);
-
-            float falloffFrac = std::max(0.0f, c.audio.pool.surfaceFalloffFraction);
-            float falloffWorld = falloffFrac * fluidHeight;
-            float falloffMin = std::max(1.0f, c.audio.pool.surfaceFalloffMinWorld);
-            float falloffMax = (c.audio.pool.surfaceFalloffMaxWorld > falloffMin)
-                ? c.audio.pool.surfaceFalloffMaxWorld
-                : falloffMin;
-            falloffWorld = std::clamp(falloffWorld, falloffMin, falloffMax);
-            falloffWorld = std::min(falloffWorld, fluidHeight);
-            surfaceFalloff = std::max(1.0f, falloffWorld);
-        }
-        out.audio.surfaceY = surfaceY;
-        out.audio.surfaceFalloff = surfaceFalloff;
-        out.audio.baseStrength = c.audio.forceScale;
-        out.audio.lateralScale = c.audio.lateralSplashScale;
-        out.audio.turbulenceScale = c.audio.turbulenceScale;
-        out.audio.beatImpulseStrength = c.audio.beatImpulseScale;
-        out.audio.globalEnergyScale = (c.audio.globalEnergyScale > 0.0f) ? c.audio.globalEnergyScale : 1.0f;
-        out.audio.dt = out.dt;
     }
 
+	// Convenience helper that reuses BuildSimParams before trimming it for GPU.
 	void BuildDeviceParams(const RuntimeConsole& c, sim::DeviceParams& out) {
 		sim::SimParams sp{};
 		BuildSimParams(c, sp);
 		out = sim::MakeDeviceParams(sp);
 	}
 
+	// Computes spawn centers for each CubeMix group so host seeding can align with UI sliders.
 	void GenerateCubeMixCenters(const RuntimeConsole& c, std::vector<float3>& outCenters) {
 		outCenters.clear();
 		if (c.sim.demoMode != RuntimeConsole::Simulation::DemoMode::CubeMix)
@@ -220,85 +157,7 @@ namespace console {
 		}
 	}
 
-    AudioPoolLayout BuildAudioPoolLayout(const RuntimeConsole& c) {
-        AudioPoolLayout layout{};
-        if (!c.audio.enabled || !c.audio.pool.overrideScene)
-            return layout;
-
-        layout.enabled = true;
-        const auto& pool = c.audio.pool;
-        float spacing = std::max(1e-3f, pool.particleSpacing);
-        layout.spacing = spacing;
-
-        uint32_t desiredParticles = (pool.particleCount > 0) ? pool.particleCount : 1u;
-        double fillInput = std::max(1e-4, (double)pool.fillFraction);
-        if (fillInput > 1.0)
-            fillInput *= 0.01;
-        double fill = std::clamp(fillInput, 1e-3, 0.999);
-
-        auto clampAspect = [](float v) -> float { return (v > 1e-3f) ? v : 1.0f; };
-        float ax = clampAspect(pool.aspectX);
-        float ay = clampAspect(pool.aspectY);
-        float az = clampAspect(pool.aspectZ);
-        float axisProduct = std::max(1e-6f, ax * ay * az);
-
-        double volPerParticle = double(spacing) * double(spacing) * double(spacing);
-        double fluidVolume = double(desiredParticles) * volPerParticle;
-        double domainScale = std::cbrt(fluidVolume / (axisProduct * fill));
-        float domainX = std::max(spacing, float(ax * domainScale));
-        float domainY = std::max(spacing, float(ay * domainScale));
-        float domainZ = std::max(spacing, float(az * domainScale));
-        float fluidX = domainX;
-        float fluidY = std::max(spacing, domainY * float(fill));
-        float fluidZ = domainZ;
-
-        auto axisCount = [&](float len) -> uint32_t {
-            return std::max(1u, (uint32_t)std::round(len / spacing));
-        };
-        layout.nx = axisCount(fluidX);
-        layout.nz = axisCount(fluidZ);
-        layout.ny = axisCount(fluidY);
-
-        auto safeMul = [](uint64_t a, uint64_t b) -> uint64_t {
-            if (a == 0 || b == 0) return 0;
-            if (a > UINT64_MAX / b) return UINT64_MAX;
-            return a * b;
-        };
-        uint64_t total64 = safeMul(layout.nx, safeMul(layout.ny, layout.nz));
-        layout.total = (uint32_t)std::min<uint64_t>(UINT64_MAX, (total64 == 0 ? 1 : total64));
-
-        auto occupiedSpan = [&](uint32_t count) -> float {
-            return (count > 1u) ? float(count - 1u) * spacing : 0.0f;
-        };
-        float fluidSpanX = occupiedSpan(layout.nx);
-        float fluidSpanY = occupiedSpan(layout.ny);
-        float fluidSpanZ = occupiedSpan(layout.nz);
-
-        float centerX = pool.centerX;
-        float centerZ = pool.centerZ;
-        float bottomY = pool.bottomY;
-        layout.poolMins = make_float3(centerX - 0.5f * fluidSpanX,
-                                      bottomY,
-                                      centerZ - 0.5f * fluidSpanZ);
-        layout.poolMaxs = make_float3(centerX + 0.5f * fluidSpanX,
-                                      bottomY + fluidSpanY,
-                                      centerZ + 0.5f * fluidSpanZ);
-        layout.fluidBottomY = bottomY;
-        layout.fluidTopY = bottomY + fluidSpanY;
-        layout.fluidHeight = fluidSpanY;
-
-        float padding = std::max(0.0f, pool.borderPadding);
-        layout.gridMins = make_float3(centerX - 0.5f * domainX - padding,
-                                      bottomY - padding,
-                                      centerZ - 0.5f * domainZ - padding);
-        layout.gridMaxs = make_float3(centerX + 0.5f * domainX + padding,
-                                      bottomY + domainY + padding * 0.5f,
-                                      centerZ + 0.5f * domainZ + padding);
-
-        if (layout.total == 0) layout.enabled = false;
-        return layout;
-    }
-
+	// Extracts the render-surface bootstrap parameters (swapchain resolution / vsync).
 	void BuildRenderInitParams(const RuntimeConsole& c, gfx::RenderInitParams& out) {
 		out.width = c.app.width;
 		out.height = c.app.height;
@@ -344,6 +203,8 @@ namespace console {
 		return false;
 	}
 
+	// Mutates RuntimeConsole::Simulation when CubeMix mode is active so particle counts,
+	// layout, and optional color coding stay deterministic frame-to-frame.
 	void PrepareCubeMix(RuntimeConsole& c) {
 		if (c.sim.demoMode != RuntimeConsole::Simulation::DemoMode::CubeMix)
 			return;
@@ -452,6 +313,7 @@ namespace console {
 		}
 	}
 
+	// Synchronizes renderer state (camera, render mode, palette) from runtime console edits.
 	void ApplyRendererRuntime(const RuntimeConsole& c, gfx::RendererD3D12& r) {
 		gfx::CameraParams cam{};
 		cam.eye = c.renderer.eye; cam.at = c.renderer.at; cam.up = c.renderer.up;

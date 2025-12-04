@@ -4,7 +4,6 @@
 #include "grid_strategy.h"
 #include "grid_buffers.cuh"
 #include "device_globals.cuh"
-#include "audio_forces.h"
 
 extern "C" void LaunchVelocityGlobals(float dtInv, uint32_t N, cudaStream_t);
 extern "C" void LaunchHashKeys(uint32_t*, uint32_t*, const float4*, sim::GridBounds, uint32_t, cudaStream_t);
@@ -34,9 +33,6 @@ public:
     void run(SimulationContext& ctx, const SimParams& p, cudaStream_t s) override {
         LaunchIntegratePred(ctx.bufs->d_pos, ctx.bufs->d_vel, ctx.bufs->d_pos_pred,
                             p.gravity, p.dt, p.numParticles, s);
-        if (p.audio.enabled) {
-            LaunchAudioForces(ctx.bufs->d_pos_pred, p.numParticles, s);
-        }
         LaunchBoundary(ctx.bufs->d_pos_pred, ctx.bufs->d_vel, p.grid, 0.0f, p.numParticles, s);
     }
 };

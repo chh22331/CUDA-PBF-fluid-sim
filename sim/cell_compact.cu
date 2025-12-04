@@ -4,11 +4,7 @@
 #include <cstdio>
 #include <cub/cub.cuh>
 
-// 可选：调试回退
-//#define USE_SEQUENTIAL_FALLBACK 0
-//#define USE_TILED_FALLBACK 0
-
-// ==== 原始顺序版本（保留以便调试） ====
+// Optional sequential fallback used only when scratch allocation fails.
 __global__ void KBuildCompactSequential(
     const uint32_t* keysSorted,
     uint32_t N,
@@ -39,72 +35,16 @@ __global__ void KBuildCompactSequential(
     *compactCount = segCount + 1u;
 }
 
-// ==== 第一阶段单块分块版本（保留回退） ====
-__global__ void KBuildCompactTiled(
-    const uint32_t* __restrict__ keysSorted,
-    uint32_t N,
-    uint32_t* __restrict__ uniqueKeys,
-    uint32_t* __restrict__ offsets,
-    uint32_t* __restrict__ compactCount)
-{
-    if (blockIdx.x != 0) return;
-    constexpr int TILE = 256;
-    if (N == 0u) { offsets[0] = 0u; *compactCount = 0u; return; }
-    if (N == 1u) {
-        uniqueKeys[0] = keysSorted[0];
-        offsets[0] = 0u; offsets[1] = 1u; *compactCount = 1u; return;
-    }
-    uint32_t segCount = 0u;
-    if (threadIdx.x == 0) {
-        uniqueKeys[0] = keysSorted[0];
-        offsets[0] = 0u;
-        segCount = 1u;
-    }
-    __syncthreads();
-    for (uint32_t base = 1u; base < N; base += TILE) {
-        uint32_t end = base + TILE; if (end > N) end = N;
-        uint32_t i = base + threadIdx.x;
-        __shared__ uint32_t sFlags[TILE];
-        __shared__ uint32_t sRanks[TILE];
-        uint32_t flag = 0u;
-        if (i < end) flag = (keysSorted[i] != keysSorted[i - 1]) ? 1u : 0u;
-        sFlags[threadIdx.x] = flag;
-        __syncthreads();
-        if (threadIdx.x == 0) {
-            uint32_t running = 0u;
-            for (int t = 0; t < TILE; ++t) {
-                sRanks[t] = running;
-                running += sFlags[t];
-            }
-            sRanks[TILE - 1] = running; // 存放本 tile 新段数
-        }
-        __syncthreads();
-        uint32_t newSeg = sRanks[TILE - 1];
-        if (flag) {
-            uint32_t outIdx = segCount + sRanks[threadIdx.x];
-            uniqueKeys[outIdx] = keysSorted[i];
-            offsets[outIdx] = i;
-        }
-        __syncthreads();
-        if (threadIdx.x == 0) segCount += newSeg;
-        __syncthreads();
-    }
-    if (threadIdx.x == 0) {
-        offsets[segCount] = N;
-        *compactCount = segCount;
-    }
-}
-
 // =====================================================
-// 最终完全并行版本
-// Phase1: KMarkAndCountWarp (标记段起点 + 每块段数)
-// Phase2: CUB DeviceScan ExclusiveSum (块段数前缀和 -> blockOffsets)
-// Phase3: KScatterSegmentsWarp (warp ballot + 局部 rank + 全局写入)
-// Scratch:
-//   g_flags (uint8_t[N])
-//   g_blockCounts (numBlocks)
-//   g_blockOffsets (numBlocks)
-//   g_scanTemp (CUB 临时)
+// fully parallel path:
+// Phase 1: KMarkAndCountWarp  -> marks segment starts & counts per block
+// Phase 2: CUB ExclusiveScan  -> scans per-block counts into global offsets
+// Phase 3: KScatterSegmentsWarp -> writes unique keys + segment offsets
+// Scratch buffers:
+//   g_flags        (uint8_t[N])
+//   g_blockCounts  (uint32_t[numBlocks])
+//   g_blockOffsets (uint32_t[numBlocks])
+//   g_scanTemp     (dynamic CUB temporary)
 // =====================================================
 
 static uint8_t*  g_flags         = nullptr;
@@ -123,14 +63,14 @@ extern "C" bool EnsureCellCompactScratch(uint32_t N, uint32_t threadsPerBlock = 
 
     bool ok = true;
 
-    // 重新分配元素级 flags
+    // Reallocate element-level flag buffer if required.
     if (N > g_scratchCapacityElems) {
         if (g_flags) cudaFree(g_flags);
         if (cudaMalloc((void**)&g_flags, sizeof(uint8_t) * N) != cudaSuccess) ok = false;
         g_scratchCapacityElems = N;
     }
 
-    // 重新分配块级缓冲
+    // Reallocate per-block counters if current capacity is insufficient.
     if (numBlocks > g_scratchCapacityBlocks) {
         if (g_blockCounts)  cudaFree(g_blockCounts);
         if (g_blockOffsets) cudaFree(g_blockOffsets);
@@ -141,7 +81,7 @@ extern "C" bool EnsureCellCompactScratch(uint32_t N, uint32_t threadsPerBlock = 
 
     if (!ok) return false;
 
-    // 预查询 CUB 扫描临时
+    // Query CUB for temporary storage requirements.
     size_t needed = 0;
     cub::DeviceScan::ExclusiveSum(nullptr, needed, g_blockCounts, g_blockOffsets, numBlocks);
     if (needed > g_scanTempBytes) {
@@ -152,7 +92,7 @@ extern "C" bool EnsureCellCompactScratch(uint32_t N, uint32_t threadsPerBlock = 
     return true;
 }
 
-// Phase1: 标记 + 统计块段数 (无全局原子，块内 warp 归约)
+// Phase 1: mark segment starts & count per block without global atomics.
 __global__ void KMarkAndCountWarp(
     const uint32_t* __restrict__ keysSorted,
     uint32_t N,
@@ -167,12 +107,12 @@ __global__ void KMarkAndCountWarp(
         flags[gid] = static_cast<uint8_t>(flag);
     }
 
-    // warp ballot 汇总
+    // Aggregate per-warp counts via ballot.
     unsigned mask = __ballot_sync(0xFFFFFFFFu, (gid < N && flag));
     uint32_t warpCount = __popc(mask);
 
-    // 每 warp 写共享内存，再由 0 号线程归约
-    __shared__ uint32_t sWarpCounts[32]; // 支持最多 32 warps (blockDim<=1024)
+    // Stash counts per warp in shared memory for block-level reduction.
+    __shared__ uint32_t sWarpCounts[32]; // Up to 32 warps (blockDim <= 1024).
     int warpId = threadIdx.x >> 5;
     int lane   = threadIdx.x & 31;
     if (lane == 0) sWarpCounts[warpId] = warpCount;
@@ -186,7 +126,7 @@ __global__ void KMarkAndCountWarp(
     }
 }
 
-// Phase3: 根据块基址 + warp 局部 rank 写段起点与 uniqueKeys
+// Phase 3: use block offsets + warp-local ranks to scatter out segments.
 __global__ void KScatterSegmentsWarp(
     const uint32_t* __restrict__ keysSorted,
     uint32_t N,
@@ -200,20 +140,20 @@ __global__ void KScatterSegmentsWarp(
     uint32_t gid = blockIdx.x * blockDim.x + threadIdx.x;
     uint32_t f = (gid < N) ? (uint32_t)flags[gid] : 0u;
 
-    // warp 内 rank 利用 ballot + laneMask
+    // Compute warp-local rank via ballot + lane mask.
     unsigned ballot = __ballot_sync(0xFFFFFFFFu, f);
     int lane = threadIdx.x & 31;
     uint32_t laneMaskLess = (1u << lane) - 1u;
     uint32_t localRank = f ? __popc(ballot & laneMaskLess) : 0u;
     uint32_t warpCount = __popc(ballot);
 
-    // 共享内存存各 warp 段计数
+    // Cache warp segment counts.
     __shared__ uint32_t sWarpBase[32];
     int warpId = threadIdx.x >> 5;
     if (lane == 0) sWarpBase[warpId] = warpCount;
     __syncthreads();
 
-    // 0 号线程做 warp 级前缀，写回 sWarpBase 为每 warp 基址
+    // Thread 0 builds an exclusive prefix over warp counts.
     if (threadIdx.x == 0) {
         uint32_t running = 0u;
         int warps = (blockDim.x + 31) >> 5;
@@ -225,7 +165,7 @@ __global__ void KScatterSegmentsWarp(
     }
     __syncthreads();
 
-    // 计算全局段索引
+    // Emit unique keys and offsets using the scanned bases.
     if (f) {
         uint32_t blockBase = blockOffsets[blockIdx.x];
         uint32_t warpBase  = sWarpBase[warpId];
@@ -234,7 +174,7 @@ __global__ void KScatterSegmentsWarp(
         offsets[globalIdx]    = gid;
     }
 
-    // 末块写封口与段总数
+    // Last block writes the terminator and total segment count.
     if (blockIdx.x == gridDim.x - 1 && threadIdx.x == 0) {
         uint32_t lastBlock = blockIdx.x;
         uint32_t totalSegments = blockOffsets[lastBlock] + blockCounts[lastBlock];
@@ -243,7 +183,7 @@ __global__ void KScatterSegmentsWarp(
     }
 }
 
-// === 启动封装：默认使用最终并行版本 ===
+// Single public launch entry; always prefers the warp-optimized path.
 extern "C" void LaunchCellRangesCompact(
     uint32_t* d_uniqueKeys,
     uint32_t* d_offsets,
@@ -252,15 +192,6 @@ extern "C" void LaunchCellRangesCompact(
     uint32_t N,
     cudaStream_t s)
 {
-#if defined(USE_SEQUENTIAL_FALLBACK)
-    dim3 g(1), b(1);
-    KBuildCompactSequential<<<g, b, 0, s>>>(d_keysSorted, N, d_uniqueKeys, d_offsets, d_compactCount);
-    return;
-#elif defined(USE_TILED_FALLBACK)
-    dim3 g(1), b(256);
-    KBuildCompactTiled<<<g, b, 0, s>>>(d_keysSorted, N, d_uniqueKeys, d_offsets, d_compactCount);
-    return;
-#else
     if (N == 0u) {
         cudaMemsetAsync(d_offsets, 0, sizeof(uint32_t), s);
         cudaMemsetAsync(d_compactCount, 0, sizeof(uint32_t), s);
@@ -270,25 +201,25 @@ extern "C" void LaunchCellRangesCompact(
     uint32_t numBlocks = (N + blockDimThreads - 1u) / blockDimThreads;
     if (numBlocks == 0) numBlocks = 1;
 
-    // Graph 捕获前请先调用 EnsureCellCompactScratch(N)
+    // Capture-time callers must pre-size scratch via EnsureCellCompactScratch.
     if (!EnsureCellCompactScratch(N, blockDimThreads)) {
-        // 安全回退
+        // Guaranteed fallback keeps simulation functional albeit slower.
         dim3 g(1), b(1);
         KBuildCompactSequential<<<g, b, 0, s>>>(d_keysSorted, N, d_uniqueKeys, d_offsets, d_compactCount);
         return;
     }
 
-    // Phase1: 标记 + 统计
+    // Phase 1: mark segment starts & count per block.
     KMarkAndCountWarp<<<numBlocks, blockDimThreads, 0, s>>>(
         d_keysSorted, N, g_flags, g_blockCounts);
 
-    // Phase2: 块段数前缀和
+    // Phase 2: prefix-sum block segment counts.
     cub::DeviceScan::ExclusiveSum(
         g_scanTemp, g_scanTempBytes,
         g_blockCounts, g_blockOffsets,
         numBlocks, s);
 
-    // Phase3: 散射写段与封口
+    // Phase 3: scatter segments and finish with a terminator.
     KScatterSegmentsWarp<<<numBlocks, blockDimThreads, 0, s>>>(
         d_keysSorted, N,
         g_flags,
@@ -297,5 +228,4 @@ extern "C" void LaunchCellRangesCompact(
         d_uniqueKeys,
         d_offsets,
         d_compactCount);
-#endif
 }

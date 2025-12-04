@@ -117,46 +117,6 @@ build CMakeFiles/pbf_app.dir/engine/gfx/renderer.cpp.obj: CXX_COMPILER__pbf_app_
   TARGET_COMPILE_PDB = CMakeFiles\pbf_app.dir\
   TARGET_PDB = pbf_app.pdb
 
-build CMakeFiles/pbf_app.dir/engine/audio/audio_reactive.cpp.obj: CXX_COMPILER__pbf_app_Debug ../engine/audio/audio_reactive.cpp || cmake_object_order_depends_target_pbf_app
-  DEFINES = -DNOMINMAX -DUNICODE -D_UNICODE
-  DEP_FILE = CMakeFiles\pbf_app.dir\engine\audio\audio_reactive.cpp.obj.d
-  FLAGS = -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -std=gnu++17
-  INCLUDES = -I../ -isystem "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include"
-  OBJECT_DIR = CMakeFiles\pbf_app.dir
-  OBJECT_FILE_DIR = CMakeFiles\pbf_app.dir\engine\audio
-  TARGET_COMPILE_PDB = CMakeFiles\pbf_app.dir\
-  TARGET_PDB = pbf_app.pdb
-
-build CMakeFiles/pbf_app.dir/audio/kissfft/kiss_fft.c.obj: C_COMPILER__pbf_app_Debug ../audio/kissfft/kiss_fft.c || cmake_object_order_depends_target_pbf_app
-  DEFINES = -DNOMINMAX -DUNICODE -D_UNICODE
-  DEP_FILE = CMakeFiles\pbf_app.dir\audio\kissfft\kiss_fft.c.obj.d
-  FLAGS = -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd
-  INCLUDES = -I../ -isystem "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include"
-  OBJECT_DIR = CMakeFiles\pbf_app.dir
-  OBJECT_FILE_DIR = CMakeFiles\pbf_app.dir\audio\kissfft
-  TARGET_COMPILE_PDB = CMakeFiles\pbf_app.dir\
-  TARGET_PDB = pbf_app.pdb
-
-build CMakeFiles/pbf_app.dir/audio/kissfft/kiss_fftr.c.obj: C_COMPILER__pbf_app_Debug ../audio/kissfft/kiss_fftr.c || cmake_object_order_depends_target_pbf_app
-  DEFINES = -DNOMINMAX -DUNICODE -D_UNICODE
-  DEP_FILE = CMakeFiles\pbf_app.dir\audio\kissfft\kiss_fftr.c.obj.d
-  FLAGS = -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd
-  INCLUDES = -I../ -isystem "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include"
-  OBJECT_DIR = CMakeFiles\pbf_app.dir
-  OBJECT_FILE_DIR = CMakeFiles\pbf_app.dir\audio\kissfft
-  TARGET_COMPILE_PDB = CMakeFiles\pbf_app.dir\
-  TARGET_PDB = pbf_app.pdb
-
-build CMakeFiles/pbf_app.dir/audio/miniaudio/extras/stb_vorbis.c.obj: C_COMPILER__pbf_app_Debug ../audio/miniaudio/extras/stb_vorbis.c || cmake_object_order_depends_target_pbf_app
-  DEFINES = -DNOMINMAX -DUNICODE -D_UNICODE
-  DEP_FILE = CMakeFiles\pbf_app.dir\audio\miniaudio\extras\stb_vorbis.c.obj.d
-  FLAGS = -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd
-  INCLUDES = -I../ -isystem "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include"
-  OBJECT_DIR = CMakeFiles\pbf_app.dir
-  OBJECT_FILE_DIR = CMakeFiles\pbf_app.dir\audio\miniaudio\extras
-  TARGET_COMPILE_PDB = CMakeFiles\pbf_app.dir\
-  TARGET_PDB = pbf_app.pdb
-
 
 # =============================================================================
 # Device Link build statements for EXECUTABLE target pbf_app
@@ -165,7 +125,7 @@ build CMakeFiles/pbf_app.dir/audio/miniaudio/extras/stb_vorbis.c.obj: C_COMPILER
 #############################################
 # Link the executable CMakeFiles\pbf_app.dir\cmake_device_link.obj
 
-build CMakeFiles/pbf_app.dir/cmake_device_link.obj: CXX_EXECUTABLE_DEVICE_LINKER__pbf_app_Debug CMakeFiles/pbf_app.dir/app_main.cpp.obj CMakeFiles/pbf_app.dir/engine/gfx/d3d12_device.cpp.obj CMakeFiles/pbf_app.dir/engine/gfx/renderer.cpp.obj CMakeFiles/pbf_app.dir/engine/audio/audio_reactive.cpp.obj CMakeFiles/pbf_app.dir/audio/kissfft/kiss_fft.c.obj CMakeFiles/pbf_app.dir/audio/kissfft/kiss_fftr.c.obj CMakeFiles/pbf_app.dir/audio/miniaudio/extras/stb_vorbis.c.obj | pbf_cuda.lib pbf_core.lib C$:/Program$ Files/NVIDIA$ GPU$ Computing$ Toolkit/CUDA/v13.0/lib/x64/cudart.lib || pbf_core.lib pbf_cuda.lib
+build CMakeFiles/pbf_app.dir/cmake_device_link.obj: CXX_EXECUTABLE_DEVICE_LINKER__pbf_app_Debug CMakeFiles/pbf_app.dir/app_main.cpp.obj CMakeFiles/pbf_app.dir/engine/gfx/d3d12_device.cpp.obj CMakeFiles/pbf_app.dir/engine/gfx/renderer.cpp.obj | pbf_cuda.lib pbf_core.lib C$:/Program$ Files/NVIDIA$ GPU$ Computing$ Toolkit/CUDA/v13.0/lib/x64/cudart.lib || pbf_core.lib pbf_cuda.lib
   LANGUAGE_COMPILE_FLAGS = -D_WINDOWS -Xcompiler=" /EHsc" -Xcompiler="-Zi -Ob0 -Od /RTC1" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd
   LINK_LIBRARIES = pbf_cuda.lib pbf_core.lib -ld3d12.lib -ldxgi.lib "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/lib/x64/cudart.lib" -lcudadevrt.lib -lcudart.lib -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32 -loldnames
   LINK_PATH = -LC:/PROGRA~1/NVIDIA~2/CUDA/v13.0/lib/x64
@@ -182,7 +142,7 @@ build CMakeFiles/pbf_app.dir/cmake_device_link.obj: CXX_EXECUTABLE_DEVICE_LINKER
 #############################################
 # Link the executable pbf_app.exe
 
-build pbf_app.exe: CXX_EXECUTABLE_LINKER__pbf_app_Debug CMakeFiles/pbf_app.dir/app_main.cpp.obj CMakeFiles/pbf_app.dir/engine/gfx/d3d12_device.cpp.obj CMakeFiles/pbf_app.dir/engine/gfx/renderer.cpp.obj CMakeFiles/pbf_app.dir/engine/audio/audio_reactive.cpp.obj CMakeFiles/pbf_app.dir/audio/kissfft/kiss_fft.c.obj CMakeFiles/pbf_app.dir/audio/kissfft/kiss_fftr.c.obj CMakeFiles/pbf_app.dir/audio/miniaudio/extras/stb_vorbis.c.obj CMakeFiles/pbf_app.dir/cmake_device_link.obj | pbf_cuda.lib pbf_core.lib C$:/Program$ Files/NVIDIA$ GPU$ Computing$ Toolkit/CUDA/v13.0/lib/x64/cudart.lib || pbf_core.lib pbf_cuda.lib
+build pbf_app.exe: CXX_EXECUTABLE_LINKER__pbf_app_Debug CMakeFiles/pbf_app.dir/app_main.cpp.obj CMakeFiles/pbf_app.dir/engine/gfx/d3d12_device.cpp.obj CMakeFiles/pbf_app.dir/engine/gfx/renderer.cpp.obj CMakeFiles/pbf_app.dir/cmake_device_link.obj | pbf_cuda.lib pbf_core.lib C$:/Program$ Files/NVIDIA$ GPU$ Computing$ Toolkit/CUDA/v13.0/lib/x64/cudart.lib || pbf_core.lib pbf_cuda.lib
   FLAGS = -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd
   LINK_FLAGS = -Xlinker /debug -Xlinker /INCREMENTAL -Xlinker /subsystem:windows
   LINK_LIBRARIES = pbf_cuda.lib  pbf_core.lib  -ld3d12.lib  -ldxgi.lib  "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/lib/x64/cudart.lib"  -lcudadevrt.lib  -lcudart.lib  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32 -loldnames
@@ -312,15 +272,6 @@ build CMakeFiles/pbf_cuda.dir/sim/device_pos_state.cu.obj: CUDA_COMPILER__pbf_cu
   TARGET_COMPILE_PDB = CMakeFiles\pbf_cuda.dir\pbf_cuda.pdb
   TARGET_PDB = pbf_cuda.pdb
 
-build CMakeFiles/pbf_cuda.dir/sim/audio_forces.cu.obj: CUDA_COMPILER__pbf_cuda_Debug ../sim/audio_forces.cu || cmake_object_order_depends_target_pbf_cuda
-  DEP_FILE = CMakeFiles\pbf_cuda.dir\sim\audio_forces.cu.obj.d
-  FLAGS = -D_WINDOWS -Xcompiler=" /EHsc" -Xcompiler="-Zi -Ob0 -Od /RTC1" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17
-  INCLUDES = -I../ -isystem="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include"
-  OBJECT_DIR = CMakeFiles\pbf_cuda.dir
-  OBJECT_FILE_DIR = CMakeFiles\pbf_cuda.dir\sim
-  TARGET_COMPILE_PDB = CMakeFiles\pbf_cuda.dir\pbf_cuda.pdb
-  TARGET_PDB = pbf_cuda.pdb
-
 build CMakeFiles/pbf_cuda.dir/sim/hash_keys.cu.obj: CUDA_COMPILER__pbf_cuda_Debug ../sim/hash_keys.cu || cmake_object_order_depends_target_pbf_cuda
   DEP_FILE = CMakeFiles\pbf_cuda.dir\sim\hash_keys.cu.obj.d
   FLAGS = -D_WINDOWS -Xcompiler=" /EHsc" -Xcompiler="-Zi -Ob0 -Od /RTC1" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17
@@ -332,15 +283,6 @@ build CMakeFiles/pbf_cuda.dir/sim/hash_keys.cu.obj: CUDA_COMPILER__pbf_cuda_Debu
 
 build CMakeFiles/pbf_cuda.dir/sim/integrate.cu.obj: CUDA_COMPILER__pbf_cuda_Debug ../sim/integrate.cu || cmake_object_order_depends_target_pbf_cuda
   DEP_FILE = CMakeFiles\pbf_cuda.dir\sim\integrate.cu.obj.d
-  FLAGS = -D_WINDOWS -Xcompiler=" /EHsc" -Xcompiler="-Zi -Ob0 -Od /RTC1" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17
-  INCLUDES = -I../ -isystem="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include"
-  OBJECT_DIR = CMakeFiles\pbf_cuda.dir
-  OBJECT_FILE_DIR = CMakeFiles\pbf_cuda.dir\sim
-  TARGET_COMPILE_PDB = CMakeFiles\pbf_cuda.dir\pbf_cuda.pdb
-  TARGET_PDB = pbf_cuda.pdb
-
-build CMakeFiles/pbf_cuda.dir/sim/integrate_pred_semi_implicit.cu.obj: CUDA_COMPILER__pbf_cuda_Debug ../sim/integrate_pred_semi_implicit.cu || cmake_object_order_depends_target_pbf_cuda
-  DEP_FILE = CMakeFiles\pbf_cuda.dir\sim\integrate_pred_semi_implicit.cu.obj.d
   FLAGS = -D_WINDOWS -Xcompiler=" /EHsc" -Xcompiler="-Zi -Ob0 -Od /RTC1" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17
   INCLUDES = -I../ -isystem="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include"
   OBJECT_DIR = CMakeFiles\pbf_cuda.dir
@@ -419,7 +361,7 @@ build CMakeFiles/pbf_cuda.dir/sim/xsph.cu.obj: CUDA_COMPILER__pbf_cuda_Debug ../
 #############################################
 # Link the static library pbf_cuda.lib
 
-build pbf_cuda.lib: CXX_STATIC_LIBRARY_LINKER__pbf_cuda_Debug CMakeFiles/pbf_cuda.dir/kernel.cu.obj CMakeFiles/pbf_cuda.dir/sim/graph_builder.cpp.obj CMakeFiles/pbf_cuda.dir/sim/kernel_dispatcher.cpp.obj CMakeFiles/pbf_cuda.dir/sim/phases.cpp.obj CMakeFiles/pbf_cuda.dir/sim/poisson_disk.cpp.obj CMakeFiles/pbf_cuda.dir/sim/post_ops.cpp.obj CMakeFiles/pbf_cuda.dir/sim/simulator.cpp.obj CMakeFiles/pbf_cuda.dir/sim/boundary.cu.obj CMakeFiles/pbf_cuda.dir/sim/cell_compact.cu.obj CMakeFiles/pbf_cuda.dir/sim/cell_ranges.cu.obj CMakeFiles/pbf_cuda.dir/sim/device_globals.cu.obj CMakeFiles/pbf_cuda.dir/sim/device_pos_state.cu.obj CMakeFiles/pbf_cuda.dir/sim/audio_forces.cu.obj CMakeFiles/pbf_cuda.dir/sim/hash_keys.cu.obj CMakeFiles/pbf_cuda.dir/sim/integrate.cu.obj CMakeFiles/pbf_cuda.dir/sim/integrate_pred_semi_implicit.cu.obj CMakeFiles/pbf_cuda.dir/sim/pbf_delta_apply.cu.obj CMakeFiles/pbf_cuda.dir/sim/pbf_lambda.cu.obj CMakeFiles/pbf_cuda.dir/sim/sort_pairs.cu.obj CMakeFiles/pbf_cuda.dir/sim/stats.cu.obj CMakeFiles/pbf_cuda.dir/sim/stats_bruteforce.cu.obj CMakeFiles/pbf_cuda.dir/sim/velocity_globals.cu.obj CMakeFiles/pbf_cuda.dir/sim/xsph.cu.obj || pbf_core.lib
+build pbf_cuda.lib: CXX_STATIC_LIBRARY_LINKER__pbf_cuda_Debug CMakeFiles/pbf_cuda.dir/kernel.cu.obj CMakeFiles/pbf_cuda.dir/sim/graph_builder.cpp.obj CMakeFiles/pbf_cuda.dir/sim/kernel_dispatcher.cpp.obj CMakeFiles/pbf_cuda.dir/sim/phases.cpp.obj CMakeFiles/pbf_cuda.dir/sim/poisson_disk.cpp.obj CMakeFiles/pbf_cuda.dir/sim/post_ops.cpp.obj CMakeFiles/pbf_cuda.dir/sim/simulator.cpp.obj CMakeFiles/pbf_cuda.dir/sim/boundary.cu.obj CMakeFiles/pbf_cuda.dir/sim/cell_compact.cu.obj CMakeFiles/pbf_cuda.dir/sim/cell_ranges.cu.obj CMakeFiles/pbf_cuda.dir/sim/device_globals.cu.obj CMakeFiles/pbf_cuda.dir/sim/device_pos_state.cu.obj CMakeFiles/pbf_cuda.dir/sim/hash_keys.cu.obj CMakeFiles/pbf_cuda.dir/sim/integrate.cu.obj CMakeFiles/pbf_cuda.dir/sim/pbf_delta_apply.cu.obj CMakeFiles/pbf_cuda.dir/sim/pbf_lambda.cu.obj CMakeFiles/pbf_cuda.dir/sim/sort_pairs.cu.obj CMakeFiles/pbf_cuda.dir/sim/stats.cu.obj CMakeFiles/pbf_cuda.dir/sim/stats_bruteforce.cu.obj CMakeFiles/pbf_cuda.dir/sim/velocity_globals.cu.obj CMakeFiles/pbf_cuda.dir/sim/xsph.cu.obj || pbf_core.lib
   LANGUAGE_COMPILE_FLAGS = -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd
   OBJECT_DIR = CMakeFiles\pbf_cuda.dir
   POST_BUILD = cd .

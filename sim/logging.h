@@ -23,8 +23,8 @@ namespace sim {
         case LC::Hint:      return c.debug.printHints;
         case LC::Diag:      return c.debug.printDiagnostics;
         case LC::HotReload: return c.debug.printHotReload;
-        case LC::Precision: return true; // 精度日志总是允许（可再加开关）
-        case LC::Perf:      return true; // 性能类默认允许
+        case LC::Precision: return true; 
+        case LC::Perf:      return true;  
         default:            return true;
         }
     }

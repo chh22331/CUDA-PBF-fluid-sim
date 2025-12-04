@@ -23,8 +23,6 @@ __global__ void StatsBruteKernel(const float4* pos_pred,
     float locSpeed = 0.f;
     float locSumW = 0.f;
     uint32_t locSamples = 0;
-
-    // 仅取前 maxISamples 个满足 stride 的 i，避免 O(N^2) 过大
     uint32_t taken = 0;
     for (uint32_t i = tid; i < N && taken < maxISamples; i += tstride) {
         if (sampleStride > 1 && (i % sampleStride) != 0) continue;
@@ -66,7 +64,7 @@ __global__ void StatsBruteKernel(const float4* pos_pred,
 extern "C" bool LaunchComputeStatsBruteforce(const float4* pos_pred,
     const float4* vel,
     sim::KernelCoeffs kc,
-    float particleMass,           // 改为传粒子质量
+    float particleMass,
     uint32_t N,
     uint32_t sampleStride,
     uint32_t maxISamples,
@@ -96,7 +94,6 @@ extern "C" bool LaunchComputeStatsBruteforce(const float4* pos_pred,
     cudaMemsetAsync(dSM, 0, sizeof(uint32_t), s);
 
     const dim3 bs(128);
-    // 让块数不要太大，防止取样超过 maxISamples
     const dim3 gs((maxISamples + bs.x - 1) / bs.x);
     StatsBruteKernel << <gs, bs, 0, s >> > (pos_pred, vel, kc, N, sampleStride, maxISamples, dSN, dSS, dSW, dSM);
 
@@ -113,7 +110,7 @@ extern "C" bool LaunchComputeStatsBruteforce(const float4* pos_pred,
     const double avgNeighbors = double(hSN) / samples;
     const double avgSpeed = double(hSS) / samples;
     const double avgRhoRel = double(hSW) / samples;
-    const double avgRho = avgRhoRel * double(particleMass); // 统一口径：ρ = m * ∑W
+    const double avgRho = avgRhoRel * double(particleMass); 
 
     if (outAvgNeighbors) *outAvgNeighbors = avgNeighbors;
     if (outAvgSpeed)     *outAvgSpeed = avgSpeed;

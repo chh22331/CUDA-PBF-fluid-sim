@@ -39,8 +39,7 @@ extern "C" {
 
         float4 p4 = posCurr[i];
         float4 v4 = velSrc[i];
-
-        // v = v + g*dt (不写回 velSrc，仅用于预测位置)
+ 
         float vx = v4.x + gravity.x * dt;
         float vy = v4.y + gravity.y * dt;
         float vz = v4.z + gravity.z * dt;
@@ -48,8 +47,7 @@ extern "C" {
         float3 pp = make_float3(p4.x + vx * dt,
             p4.y + vy * dt,
             p4.z + vz * dt);
-
-        // 直接写 FP32 预测位置 (半精包装由其它路径处理)
+ 
         posPred[i] = make_float4(pp.x, pp.y, pp.z, p4.w);
     }
 
@@ -71,7 +69,7 @@ extern "C" {
         float vz = (p.z - c.z) * invDt;
 
         float4 vOut = velOut[i];
-        vOut.x = vx; vOut.y = vy; vOut.z = vz; // 保留 w (可能用于标识/组ID)
+        vOut.x = vx; vOut.y = vy; vOut.z = vz;
         velOut[i] = vOut;
     }
 

@@ -3,7 +3,6 @@
 #include <cmath>
 
 namespace sim {
-// 基础 float3 工具函数（统一定义，避免 simulator.cpp 多处重复 lambda）
 static inline float3 make3(float x, float y, float z) { return make_float3(x, y, z); }
 static inline float3 add3(float3 a, float3 b) { return make3(a.x + b.x, a.y + b.y, a.z + b.z); }
 static inline float3 sub3(float3 a, float3 b) { return make3(a.x - b.x, a.y - b.y, a.z - b.z); }

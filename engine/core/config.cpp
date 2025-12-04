@@ -47,9 +47,9 @@ namespace {
             } else if (k == "viewer.point_size_px") {
                 io.viewer.point_size_px = tmp.viewer.point_size_px;
             } else if (k == "performance.sort_frequency") {
-                // 保留占位（未实现）
+                // Placeholder for unimplemented options.
             } else if (k == "viewer.color_mode") {
-                // 未实现
+                // Not implemented.
             } else if (k == "profile") {
             }
         }
@@ -196,7 +196,7 @@ namespace config {
             if (p.contains("neighbor_cap")) cc.perf.neighbor_cap = p["neighbor_cap"].get<int>();
             if (p.contains("launch_bounds_tbs")) cc.perf.launch_bounds_tbs = p["launch_bounds_tbs"].get<int>();
             if (p.contains("min_blocks_per_sm")) cc.perf.min_blocks_per_sm = p["min_blocks_per_sm"].get<int>();
-            // use_cuda_graphs 已移除：忽略输入配置
+            // use_cuda_graphs was removed; ignore any persisted entries.
             if (p.contains("use_hashed_grid")) cc.perf.use_hashed_grid = p["use_hashed_grid"].get<bool>();
             if (p.contains("sort_compact_every_n")) cc.perf.sort_compact_every_n = p["sort_compact_every_n"].get<int>();
             if (p.contains("compact_binary_search")) cc.perf.compact_binary_search = p["compact_binary_search"].get<bool>();
@@ -262,7 +262,7 @@ namespace config {
             double ncap = 0.0; if (findNumberInObject(pf, "neighbor_cap", ncap)) cc.perf.neighbor_cap = int(ncap);
             bool hashed = false; if (findBoolInObject(pf, "use_hashed_grid", hashed)) cc.perf.use_hashed_grid = hashed;
             double every = 0.0; if (findNumberInObject(pf, "sort_compact_every_n", every)) cc.perf.sort_compact_every_n = int(every);
-            // use_cuda_graphs 已移除，不再解析
+            // use_cuda_graphs was removed and is no longer parsed.
         }
         if (findObject(raw, "simulation", 0, objB, objE)) {
             std::string sm = raw.substr(objB, objE - objB);

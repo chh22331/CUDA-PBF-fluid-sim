@@ -21,7 +21,7 @@ struct DeviceInitParams {
     uint32_t height = 720;
     DXGI_FORMAT backbufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
     uint32_t bufferCount = 3;
-    bool vsync = false; // P0: 新增
+    bool vsync = false; // Explicit vsync toggle propagated from runtime config.
 };
 
 struct FrameResources {

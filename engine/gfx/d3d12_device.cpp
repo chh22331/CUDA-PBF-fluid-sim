@@ -85,7 +85,7 @@ void D3D12Device::present() {
 
     endFrame();
 
-    // P0: 按配置控制 VSync（syncInterval 0/1）
+    // Drive vsync (syncInterval) directly from runtime config.
     m_swapchain->Present(m_params.vsync ? 1 : 0, 0);
 
     const UINT64 fenceToSignal = ++m_fenceValues[m_frameIndex];

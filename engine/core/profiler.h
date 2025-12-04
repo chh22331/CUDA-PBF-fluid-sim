@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -9,7 +9,7 @@
 namespace core {
 
 struct StatRow { std::string name; double ms = 0.0; };
-// 文本字段（如 profile 名、设备名等）
+// Text fields such as profile/device names.
 struct TextRow { std::string name; std::string value; };
 
 class CpuTimer {
@@ -35,21 +35,21 @@ public:
 
         if (frameIndex == 0) {
             f << "frame";
-            // 数值列
+            // Numeric column.
             for (auto& r : rows) f << "," << r.name;
-            // 文本列
+            // Text column.
             for (auto& t : texts) f << "," << t.name;
             f << "\n";
         }
 
         f << frameIndex;
-        // 数值列
+        // Numeric column.
         for (auto& r : rows) f << "," << r.ms;
-        // 文本列（用引号包裹，内部引号翻倍转义）
+        // Text column (quoted with doubled inner quotes).
         for (auto& t : texts) {
             std::string v = t.value;
             std::replace(v.begin(), v.end(), '\n', ' ');
-            // 简易 CSV 转义：双引号转义为两个双引号
+            // Basic CSV escaping: double quotes become doubled.
             std::string out; out.reserve(v.size() + 2);
             out.push_back('"');
             for (char c : v) {

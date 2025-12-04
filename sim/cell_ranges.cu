@@ -10,45 +10,71 @@
 #endif
 
 namespace {
-    // 假设 keysSorted 已按 cell key 升序
-    // 写入每个 cell 的 [start, end)，空 cell: start=0xFFFFFFFF, end=0
-    __global__ void KBuildRanges(const uint32_t* keysSorted, uint32_t N,
-        uint32_t* start, uint32_t* end) {
-        uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
-        if (i >= N) return;
 
-        uint32_t k = keysSorted[i];
+// Build per-cell ranges [start, end) for a sorted key array.
+// Preconditions:
+// - keysSorted contains cell keys in non-decreasing order.
+// - cellStart is initialized to 0xFFFFFFFF, cellEnd to 0 (caller).
+// Postconditions:
+// - For a cell with elements: start[idx] is the first position, end[idx] is one past the last.
+// - For an empty cell: start[idx] stays 0xFFFFFFFF, end[idx] stays 0.
+__global__ void KBuildRanges(const uint32_t* __restrict__ keysSorted,
+                             uint32_t N,
+                             uint32_t numCells,
+                             uint32_t* __restrict__ start,
+                             uint32_t* __restrict__ end) {
+    // Grid-stride loop to cover arbitrary N robustly.
+    for (uint32_t i = blockIdx.x * blockDim.x + threadIdx.x; i < N; i += blockDim.x * gridDim.x) {
+        const uint32_t k = keysSorted[i];
+        if (k >= numCells) {
+            // Defensive: ignore out-of-range keys.
+            continue;
+        }
 
         if (i == 0) {
-            // 第一个元素所在 cell 起始为 0
+            // First element opens its cell at position 0.
             start[k] = 0;
-        }
-        else {
-            uint32_t kPrev = keysSorted[i - 1];
+        } else {
+            const uint32_t kPrev = keysSorted[i - 1];
             if (k != kPrev) {
-                // 发生 cell 变化：关闭前一个 cell，开启当前 cell
-                end[kPrev] = i;
+                // Cell boundary: close previous cell at i, open current cell at i.
+                if (kPrev < numCells) end[kPrev] = i;
                 start[k] = i;
             }
         }
+
         if (i == N - 1) {
-            // 最后一个元素关闭其 cell 的 end=N
+            // Last element closes its cell at N.
             end[k] = N;
         }
     }
 }
 
-extern "C" void LaunchCellRanges(uint32_t* cellStart, uint32_t* cellEnd,
-    const uint32_t* keysSorted, uint32_t N,
-    uint32_t numCells, cudaStream_t s) {
-    // 初始化：start=0xFFFFFFFF, end=0
-    cudaMemsetAsync(cellStart, 0xFF, sizeof(uint32_t) * numCells, s);
-    cudaMemsetAsync(cellEnd, 0x00, sizeof(uint32_t) * numCells, s);
+} // namespace
+
+extern "C" void LaunchCellRanges(uint32_t* cellStart,
+                                 uint32_t* cellEnd,
+                                 const uint32_t* keysSorted,
+                                 uint32_t N,
+                                 uint32_t numCells,
+                                 cudaStream_t s) {
+    // Initialize to "empty": start=0xFFFFFFFF, end=0.
+    CUDA_CHECK(cudaMemsetAsync(cellStart, 0xFF, sizeof(uint32_t) * numCells, s));
+    CUDA_CHECK(cudaMemsetAsync(cellEnd,   0x00, sizeof(uint32_t) * numCells, s));
+
+    if (N == 0 || numCells == 0) {
+        // Nothing to do.
+        return;
+    }
 
     const int BS = 256;
-    dim3 b(BS), g((N + BS - 1) / BS);
-    KBuildRanges << <g, b, 0, s >> > (keysSorted, N, cellStart, cellEnd);
+    const int maxBlocks = 1024; // reasonable cap to avoid oversubscription
+    int blocks = (int)((N + BS - 1) / BS);
+    if (blocks > maxBlocks) blocks = maxBlocks;
 
-    // 健壮性：检查 launch 错误
+    // Launch builder.
+    KBuildRanges<<<blocks, BS, 0, s>>>(keysSorted, N, numCells, cellStart, cellEnd);
+
+    // Robustness: check for launch errors.
     CUDA_CHECK(cudaGetLastError());
 }

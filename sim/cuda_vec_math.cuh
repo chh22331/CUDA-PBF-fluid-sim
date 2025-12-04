@@ -3,13 +3,10 @@
 #include <cuda_runtime.h>
 #include <math.h>
 
-// float4 -> float3 (drop w)
 __host__ __device__ inline float3 to_float3(const float4& a)
 {
     return make_float3(a.x, a.y, a.z);
 }
-
-// ===== float3 arithmetic =====
 
 __host__ __device__ inline float3 operator+(const float3& a, const float3& b)
 {

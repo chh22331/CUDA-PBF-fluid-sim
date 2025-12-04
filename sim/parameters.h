@@ -1,9 +1,11 @@
-﻿#pragma once
+#pragma once
+
 #include <cstdint>
 #include <cuda_runtime.h>
 
 namespace sim {
 
+    // Precomputed smoothing-kernel constants shared across CPU/GPU hot paths.
     struct KernelCoeffs {
         float h;
         float inv_h;
@@ -13,6 +15,7 @@ namespace sim {
         float visc;
     };
 
+    // Axis-aligned simulation container plus derived discretization data.
     struct GridBounds {
         float3 mins;
         float3 maxs;
@@ -20,6 +23,7 @@ namespace sim {
         int3   dim;
     };
 
+    // PBF-specific toggles kept together so UI->simulation sync is explicit.
     struct PbfTuning {
         int   scorr_enable = 1;
         float scorr_k = 0.003f;
@@ -52,21 +56,7 @@ namespace sim {
         int   semi_implicit_integration_enable = 0;
     };
 
-    struct AudioForceParams {
-        int      enabled = 0;
-        uint32_t keyCount = 0;
-        float    domainMinX = 0.0f;
-        float    invDomainWidth = 0.0f;
-        float    surfaceY = 0.0f;
-        float    surfaceFalloff = 1.0f;
-        float    baseStrength = 0.0f;
-        float    lateralScale = 0.0f;
-        float    turbulenceScale = 0.0f;
-        float    beatImpulseStrength = 0.0f;
-        float    globalEnergyScale = 1.0f;
-        float    dt = 0.0f;
-    };
- 
+    // Host-side aggregate of all frequently tuned simulation constants.
     struct SimParams {
         uint32_t numParticles;
         uint32_t maxParticles;
@@ -83,13 +73,10 @@ namespace sim {
         float    xsph_c = 0.05f;
         KernelCoeffs kernel{};
         GridBounds  grid{};
-        uint32_t ghostParticleCount = 0;
-
-        // 最大速度夹紧（来自 CFL 推导），<0 禁用
-        float maxSpeedClamp = -1.0f;
-        AudioForceParams audio{};
+        uint32_t ghostParticleCount = 0; // Derived from boundary builders when enabled.
     };
 
+    // POD snapshot copied into constant memory/device-visible buffers.
     struct DeviceParams {
         KernelCoeffs kernel;
         GridBounds   grid;
@@ -102,7 +89,6 @@ namespace sim {
         float        particleMass;
         PbfTuning    pbf;
         float        xsph_c;
-        AudioForceParams audio{};
     };
 
     inline KernelCoeffs MakeKernelCoeffs(float h) {
@@ -133,7 +119,6 @@ namespace sim {
         dp.particleMass = sp.particleMass;
         dp.pbf = sp.pbf;
         dp.xsph_c = sp.xsph_c;
-        dp.audio = sp.audio;
         return dp;
     }
 

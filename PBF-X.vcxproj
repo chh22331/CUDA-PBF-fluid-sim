@@ -30,21 +30,21 @@
     <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
-  <!-- CUDA 集成多级回退（避免前置空白/换行导致 Exists 失败） -->
+  <!-- CUDA integration multi-level fallback (guards against whitespace breaking Exists). -->
   <PropertyGroup Label="CudaIntegration">
-    <!-- 1. VS2026 期待位置 -->
+    <!-- 1. Primary VS2026 path. -->
     <CudaBCDir Condition="Exists('$(VCTargetsPath)BuildCustomizations\CUDA 13.0.props')">$(VCTargetsPath)BuildCustomizations</CudaBCDir>
     <!-- 2. VS2022 Community -->
     <CudaBCDir Condition="'$(CudaBCDir)'=='' and Exists('C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VC\v170\BuildCustomizations\CUDA 13.0.props')">C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VC\v170\BuildCustomizations</CudaBCDir>
-    <!-- 3. CUDA extras 目录 -->
+    <!-- 3. CUDA extras directory. -->
     <CudaBCDir Condition="'$(CudaBCDir)'=='' and Exists('$(CUDA_PATH)\extras\visual_studio_integration\MSBuildExtensions\CUDA 13.0.props')">$(CUDA_PATH)\extras\visual_studio_integration\MSBuildExtensions</CudaBCDir>
-    <!-- 记录是否成功找到（用于诊断或条件） -->
+    <!-- Cache the detection result for diagnostics/conditions. -->
     <FoundCudaBuildCustomizations Condition="'$(CudaBCDir)'!=''">true</FoundCudaBuildCustomizations>
   </PropertyGroup>
   <ImportGroup Label="ExtensionSettings">
     <Import Project="$(CudaBCDir)\CUDA 13.0.props" Condition="'$(CudaBCDir)'!='' and Exists('$(CudaBCDir)\CUDA 13.0.props')" />
   </ImportGroup>
-  <!-- 若 props 未导入，提供兜底包含/库路径（仅当 nvcc/props 未设置时） -->
+  <!-- Provide last-resort include/lib paths when CUDA props fail to import. -->
   <PropertyGroup Label="CudaFallback" Condition="'$(FoundCudaBuildCustomizations)'!='true'">
     <CudaIncludeDirFallback Condition="Exists('$(CUDA_PATH)\include')">$(CUDA_PATH)\include</CudaIncludeDirFallback>
     <CudaLibDirFallback Condition="Exists('$(CUDA_PATH)\lib\x64')">$(CUDA_PATH)\lib\x64</CudaLibDirFallback>
@@ -66,13 +66,13 @@
       <PreprocessorDefinitions>WIN32;WIN64;ENABLE_NVTX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
-      <!-- 添加 CUDA 头文件目录 -->
+      <!-- Inject CUDA include directory. -->
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(CUDA_PATH)\include;$(CudaIncludeDirFallback);"F:\unity\2022.3.61t8\Editor\Data\PluginAPI"</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Console</SubSystem>
-      <!-- 添加 CUDA 库目录 -->
+      <!-- Inject CUDA library directory. -->
       <AdditionalLibraryDirectories>$(CUDA_PATH)\lib\x64;$(CudaLibDirFallback);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <CudaCompile>
@@ -91,7 +91,7 @@
       <PreprocessorDefinitions>WIN32;WIN64;ENABLE_NVTX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
-      <!-- 添加 CUDA 头文件目录 -->
+      <!-- Inject CUDA include directory for Release. -->
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(CUDA_PATH)\include;$(CudaIncludeDirFallback)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
@@ -99,7 +99,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <SubSystem>Console</SubSystem>
-      <!-- 添加 CUDA 库目录 -->
+      <!-- Inject CUDA library directory for Release. -->
       <AdditionalLibraryDirectories>$(CUDA_PATH)\lib\x64;$(CudaLibDirFallback);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <CudaCompile>
@@ -110,7 +110,6 @@
     <FxCompile />
   </ItemDefinitionGroup>
   <ItemGroup>
-    <CudaCompile Include="sim\audio_forces.cu" />
     <CudaCompile Include="kernel.cu" />
     <CudaCompile Include="sim\boundary.cu" />
     <CudaCompile Include="sim\cell_compact.cu" />
@@ -129,10 +128,7 @@
     <CudaCompile Include="sim\xsph.cu" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="audio\kissfft\kiss_fft.c" />
-    <ClCompile Include="audio\kissfft\kiss_fftr.c" />
     <ClCompile Include="app_main.cpp" />
-    <ClCompile Include="engine\audio\audio_reactive.cpp" />
     <ClCompile Include="engine\core\config.cpp" />
     <ClCompile Include="engine\core\console.cpp" />
     <ClCompile Include="engine\gfx\d3d12_device.cpp" />
@@ -146,7 +142,6 @@
     <ClCompile Include="sim\simulator.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="engine\audio\audio_reactive.h" />
     <ClInclude Include="engine\core\config.h" />
     <ClInclude Include="engine\core\console.h" />
     <ClInclude Include="engine\core\frame_graph.h" />
@@ -182,8 +177,6 @@
     <ClInclude Include="sim\simulation_context.h" />
     <ClInclude Include="sim\simulator.h" />
     <ClInclude Include="sim\stats.h" />
-    <ClInclude Include="unity_plugin\pch.h" />
-    <ClInclude Include="unity_plugin\SimInterop.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="CMakeLists.txt" />
@@ -219,5 +212,3 @@
     <Import Project="$(CudaBCDir)\CUDA 13.0.targets" Condition="'$(CudaBCDir)'!='' and Exists('$(CudaBCDir)\CUDA 13.0.targets')" />
   </ImportGroup>
 </Project>
-    <ClInclude Include="sim\audio_forces.h" />
-    <ClInclude Include="sim\audio_frame.h" />

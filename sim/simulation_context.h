@@ -15,10 +15,9 @@ namespace sim {
         // Post-ops mutable state
         float4* effectiveVel = nullptr;
         bool               xsphApplied = false;
-        bool               pingPongPos = true; // new: runtime flag
+        bool               pingPongPos = true; 
         // Graph / pipeline capture helpers
-        bool               sortTempPreEnsured = false; // true 时 PhaseGridBuildFull 跳过 Query
+        bool               sortTempPreEnsured = false; 
     };
-    // ===== 新增：全局帧索引（供日志定位回退帧） =====
     extern uint64_t g_simFrameIndex;
 } // namespace sim

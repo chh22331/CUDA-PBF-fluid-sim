@@ -4,7 +4,6 @@
 #include <vector>
 #include <cuda_runtime.h> // for float3/make_float3, int3/make_int3
 #include "../../sim/parameters.h"
-#include "../../sim/audio_frame.h"
 #include "../../engine/gfx/renderer.h"
 
 namespace console {
@@ -220,61 +219,6 @@ struct RuntimeConsole {
         uint32_t initial_jitter_seed = 0xC0FFEEu;
     } sim;
 
-    // Audio-reactive controls for the "invisible pianist" force field.
-    struct Audio {
-        bool     enabled = false;                // master toggle
-        uint32_t sampleRate = 48000;           // capture sample rate (Hz)
-        uint32_t channels = 1;                 // channel count requested from miniaudio
-        bool     capturePlayback = true;       // legacy toggle (kept for compatibility)
-        bool     preferLoopback = true;        // attempt OS loopback (speaker capture)
-        bool     fallbackToCapture = true;     // fallback to microphone input if loopback fails
-        uint32_t fftSize = 2048;               // analysis window size (power of two)
-        uint32_t ringBufferMs = 250;           // capture ring buffer length (ms)
-        uint32_t keyCount = sim::kAudioKeyCount; // logical piano key bins (<= 88)
-        float    minFrequencyHz = 27.5f;       // lowest band edge (A0)
-        float    maxFrequencyHz = 4200.0f;     // highest band edge
-        float    intensityGain =30.0f;        // linear gain applied before compression
-        float    noiseGateDb = -80.0f;         // gate floor in decibels
-        float    smoothingAttackSec = 0.05f;   // rise smoothing (seconds)
-        float    smoothingReleaseSec = 0.18f;  // decay smoothing (seconds)
-        float    beatThreshold = 2.25f;        // multiplier relative to EMA to trigger beats
-        float    beatHoldSeconds = 0.02f;      // minimum spacing between beats
-        float    beatReleaseSeconds = 0.25f;   // EMA decay for beat detector
-        float    globalEnergyEmaSeconds = 0.35f; // smoothing for global energy meter
-        float    forceScale = 250.0f;          // base downward impulse strength
-        float    lateralSplashScale = 55.0f;   // horizontal jitter scale
-        float    turbulenceScale = 60.0f;      // multiplier for ambient energy coupling
-        float    beatImpulseScale = 320.0f;    // extra impulse when beats fire
-        float    surfaceHeightWorld = 140.0f;  // Y threshold to consider "surface"
-        float    surfaceFalloffWorld = 50.0f;  // blend distance for surface weighting
-        float    globalEnergyScale = 5.0f;     // global multiplier for GPU turbulence usage
-        bool     printDebug = true;           // verbose logging for capture/analysis
-
-        struct PoolDemo {
-            bool  overrideScene = true;        // replace default demo with audio pool
-            uint32_t particleCount = 200000;   // desired particle count
-            float   aspectX = 20.0f;            // domain aspect ratio X
-            float   aspectY = 1.0f;            // domain aspect ratio Y
-            float   aspectZ = 3.0f;            // domain aspect ratio Z
-            float   fillFraction = 0.2f;       // volume fraction particles should occupy (0,1]
-            float   particleSpacing = 1.05f;    // lattice spacing for initial fill
-            float   centerX = 0.0f;            // domain center X (world units)
-            float   centerZ = 0.0f;            // domain center Z
-            float   bottomY = 20.0f;           // domain floor height
-            float   borderPadding = 20.0f;     // extra domain margin around pool
-            bool    overrideCamera = true;     // apply dedicated camera preset
-            float3  cameraEye = make_float3(0.0f, 280.0f, 720.0f);
-            float3  cameraAt = make_float3(0.0f, 80.0f, 0.0f);
-            bool    autoSurfaceFromPool = true;        // derive surface target from pool bounds
-            float   surfaceTopOffsetWorld = 5.0f;      // subtract from pool top to get surface level
-            float   surfaceTopOffsetFraction = 0.02f;  // relative offset = fraction * fluid height
-            float   surfaceFalloffFraction = 0.35f;    // falloff derived from fraction of fluid height
-            float   surfaceFalloffMinWorld = 5.0f;    // clamp falloff to [min,max]
-            float   surfaceFalloffMaxWorld = 200.0f;
-            bool    debugKeySweep = true;     // ignore audio capture, sweep keys sequentially
-        } pool;
-    } audio;
-
     // Performance tuning knobs. These affect grid sizing, kernel launches,
     // sorting/compaction behavior and graph update heuristics.
     struct Performance {
@@ -331,23 +275,5 @@ void BuildRenderInitParams(const RuntimeConsole& c, gfx::RenderInitParams& out);
 void ApplyRendererRuntime(const RuntimeConsole& c, gfx::RendererD3D12& r);
 void PrepareCubeMix(RuntimeConsole& c);
 void GenerateCubeMixCenters(const RuntimeConsole& c, std::vector<float3>& outCenters);
-
-struct AudioPoolLayout {
-    bool   enabled = false;
-    float3 poolMins = make_float3(0.0f, 0.0f, 0.0f);
-    float3 poolMaxs = make_float3(0.0f, 0.0f, 0.0f);
-    float3 gridMins = make_float3(0.0f, 0.0f, 0.0f);
-    float3 gridMaxs = make_float3(0.0f, 0.0f, 0.0f);
-    float  spacing = 1.0f;
-    uint32_t nx = 0;
-    uint32_t ny = 0;
-    uint32_t nz = 0;
-    uint32_t total = 0;
-    float fluidBottomY = 0.0f;
-    float fluidTopY = 0.0f;
-    float fluidHeight = 0.0f;
-};
-
-AudioPoolLayout BuildAudioPoolLayout(const RuntimeConsole& c);
 
 } // namespace console

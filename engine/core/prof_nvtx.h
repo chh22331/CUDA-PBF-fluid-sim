@@ -3,19 +3,17 @@
 #include <optional>
 
 #if defined(ENABLE_NVTX)
-    // 引入 NVTX3 C & C++ 接口
-    //#include <nvtx3/nvtx3.h>
     #include <nvtx3/nvtx3.hpp>
 #endif
 
 namespace prof {
 
-    // 颜色 (ARGB)
+    // Color palette (ARGB).
     static inline uint32_t Color(uint8_t r, uint8_t g, uint8_t b, uint8_t a = 0xFF) {
         return (uint32_t(a) << 24) | (uint32_t(r) << 16) | (uint32_t(g) << 8) | uint32_t(b);
     }
 
-    // 运行时开关
+    // Runtime toggle.
     inline bool& NvtxEnabledFlag() {
         static bool g = true;
         return g;
@@ -24,13 +22,13 @@ namespace prof {
 
 #if defined(ENABLE_NVTX)
 
-    // 可选：统一一个 domain，便于在 Nsight Systems 里过滤
+    // Shared domain makes Nsight Systems filtering easier.
     inline nvtxDomainHandle_t NvtxDomain() {
         static nvtxDomainHandle_t h = nvtxDomainCreateA("PBF-X");
         return h;
     }
 
-    // RAII 范围（优先使用 NVTX3 C++，若需要携带自定义 color+name）
+    // RAII range helper leveraging NVTX3 C++ for color/name metadata.
     class Range {
     public:
         Range(const char* name, uint32_t argb = Color(0x30, 0x90, 0xFF)) {
@@ -42,7 +40,7 @@ namespace prof {
             ev.color = argb;
             ev.messageType = NVTX_MESSAGE_TYPE_ASCII;
             ev.message.ascii = name;
-            // 使用 domain 版本，方便区分
+            // Use the domain variant to keep lanes separate.
             nvtxDomainRangePushEx(NvtxDomain(), &ev);
             m_active = true;
         }
@@ -57,7 +55,7 @@ namespace prof {
         bool m_active = false;
     };
 
-    // 简单事件标记（瞬时 Mark）
+    // Instantaneous event markers.
     inline void Mark(const char* name, uint32_t argb = Color(0xAA, 0xAA, 0xAA)) {
         if (!NvtxEnabledFlag()) return;
         nvtxEventAttributes_t ev{};
@@ -70,7 +68,7 @@ namespace prof {
         nvtxDomainMarkEx(NvtxDomain(), &ev);
     }
 
-    // 也可以提供 NVTX3 C++ 的简洁封装（可选）：
+    // Optional lightweight wrappers over NVTX3 C++ APIs.
     class Scoped {
     public:
         explicit Scoped(const char* name, uint32_t argb = Color(0x50, 0x50, 0xC0)) {
@@ -93,7 +91,7 @@ namespace prof {
     };
 
 #else
-    // NVTX 关闭时的空实现
+    // No-op shims when NVTX is disabled.
     class Range {
     public: Range(const char*, uint32_t = 0) {}
     };

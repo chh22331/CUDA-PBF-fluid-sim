@@ -21,7 +21,7 @@ extern "C" bool LaunchComputeStats(const float4* pos_pred,
     const uint32_t* cellEnd,
     sim::GridBounds grid,
     sim::KernelCoeffs kc,
-    float particleMass,      // 改为传质量用于 ρ 估算
+    float particleMass,  
     uint32_t N,
     uint32_t numCells,
     uint32_t sampleStride,
