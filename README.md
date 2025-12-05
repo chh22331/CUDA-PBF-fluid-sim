@@ -1,5 +1,7 @@
 # PBF-X / 基于位置的流体模拟
 
+<img width="2559" height="1530" alt="屏幕截图 2025-12-05 225717" src="https://github.com/user-attachments/assets/5c1e37ae-113b-49da-bd9b-15fefc25d808" />
+
 PBF-X is a Windows-focused Position-Based Fluids sandbox that pairs a lightweight Direct3D 12 engine with CUDA-accelerated simulation kernels.  
 PBF-X 是一个面向 Windows 的基于位置的流体沙盒，结合了轻量级的 Direct3D 12 引擎与 CUDA 加速的仿真内核。  
 This is a just-for-fun project; everyone is welcome to explore or chat, but hands-on technical support might not always be available.  
