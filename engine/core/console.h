@@ -99,7 +99,7 @@ struct RuntimeConsole {
 
     // Debugging and logging controls.
     struct Debug {
-        bool enabled = true;                  // pause mode
+        bool enabled = false;                  // pause mode
         bool pauseOnStart = true;              // pause simulation at startup
         int  keyStep = 32;                     // key for stepping frames
         int  keyRun = 'R';                     // key to run
@@ -123,8 +123,8 @@ struct RuntimeConsole {
         Simulation();
         void refreshCubeMixDerived();
 
-        uint32_t numParticles = 800000;        // target active particle count
-        uint32_t maxParticles = 10000000;       // hard cap for allocation
+        uint32_t numParticles = 800000;        // just ignored it
+        uint32_t maxParticles = 10000000;      // hard cap for allocation
         uint32_t emitPerStep = 50;             // particles emitted per simulation step
 
         // Poisson-disk minimum spacing relative to smoothing length h.
@@ -180,14 +180,15 @@ struct RuntimeConsole {
         DemoMode demoMode = DemoMode::CubeMix;
 
         // CubeMix-specific parameters for batched group emit/placement.
+        // These control the number of cube groups and particles.
         bool     cube_auto_partition = false;
         uint32_t cube_group_count = 8;
-        uint32_t cube_edge_particles = 10;
+        uint32_t cube_edge_particles = 60;
         static constexpr uint32_t cube_group_count_max = 512;
         uint32_t cube_layers = 2;
-        float    cube_group_spacing_world = 40.0f;
-        float    cube_layer_spacing_world = 50.0f;
-        float    cube_base_height = 50.0f;
+        float    cube_group_spacing_world = 200.0f;
+        float    cube_layer_spacing_world = 200.0f;
+        float    cube_base_height = 200.0f;
         float    cube_lattice_spacing_factor_h = 1.02f;
         float    cube_initial_density = 1.0f;
 

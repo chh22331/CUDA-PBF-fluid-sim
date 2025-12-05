@@ -178,7 +178,7 @@ static FreeFlyCamera MakeCameraFromCc(const console::RuntimeConsole& cc) {
 static float ComputeBaseSpeedFromDomain(const float3& mins, const float3& maxs) {
     float3 ext = f3_sub(maxs, mins);
     float diag = f3_len(ext);
-    return std::max(3.0f, diag * 3.0f);
+    return std::max(1.5f, diag * 1.5f);
 }
 
 // Update camera speed so traversal roughly matches the domain size. When responsiveness
