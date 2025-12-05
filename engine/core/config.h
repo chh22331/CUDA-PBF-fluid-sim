@@ -38,7 +38,9 @@ namespace config {
             "performance.neighbor_cap",
             "viewer.point_size_px",
             "viewer.color_mode",
-            "profile"
+            "profile",
+            "system.frame_cap_enabled",
+            "system.frame_cap_fps"
         };
         return k;
     }

@@ -51,6 +51,10 @@ namespace {
             } else if (k == "viewer.color_mode") {
                 // Not implemented.
             } else if (k == "profile") {
+            } else if (k == "system.frame_cap_enabled") {
+                io.app.frame_cap_enabled = tmp.app.frame_cap_enabled;
+            } else if (k == "system.frame_cap_fps") {
+                io.app.frame_cap_fps = tmp.app.frame_cap_fps;
             }
         }
     }
@@ -174,6 +178,8 @@ namespace config {
             }
             if (s.contains("vsync")) cc.app.vsync = s["vsync"].get<bool>();
             if (s.contains("csv_stats_path")) cc.app.csv_path = s["csv_stats_path"].get<std::string>();
+            if (s.contains("frame_cap_enabled")) cc.app.frame_cap_enabled = s["frame_cap_enabled"].get<bool>();
+            if (s.contains("frame_cap_fps")) cc.app.frame_cap_fps = s["frame_cap_fps"].get<int>();
         }
         if (j.contains("viewer") && j["viewer"].is_object()) {
             const auto& v = j["viewer"];
@@ -250,6 +256,10 @@ namespace config {
             if (findBoolInObject(sys, "vsync", vs)) cc.app.vsync = vs;
             std::string csv;
             if (findStringInObject(sys, "csv_stats_path", csv)) cc.app.csv_path = csv;
+            bool capEn = false;
+            if (findBoolInObject(sys, "frame_cap_enabled", capEn)) cc.app.frame_cap_enabled = capEn;
+            double capFps = 0.0;
+            if (findNumberInObject(sys, "frame_cap_fps", capFps)) cc.app.frame_cap_fps = int(capFps);
         }
         if (findObject(raw, "viewer", 0, objB, objE)) {
             std::string vw = raw.substr(objB, objE - objB);

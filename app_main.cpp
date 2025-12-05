@@ -10,6 +10,9 @@
 #include <string> 
 #include <algorithm>
 #include <cstring>
+#include <thread>
+#include <mmsystem.h>
+#pragma comment(lib, "winmm.lib")
 
 #include "engine/core/config.h"
 #include "engine/core/profiler.h"
@@ -101,6 +104,24 @@ static inline float3 f3_norm(const float3& a) {
 }
 
 // =====================================================================
+// Timer Resolution Guard
+// =====================================================================
+
+struct ScopedTimerResolution {
+    explicit ScopedTimerResolution(UINT ms) {
+        if (timeBeginPeriod(ms) == TIMERR_NOERROR) {
+            requested = ms;
+        }
+    }
+    ~ScopedTimerResolution() {
+        if (requested) {
+            timeEndPeriod(requested);
+        }
+    }
+    UINT requested = 0;
+};
+
+// =====================================================================
 // Free-Fly Camera
 // =====================================================================
 
@@ -157,7 +178,7 @@ static FreeFlyCamera MakeCameraFromCc(const console::RuntimeConsole& cc) {
 static float ComputeBaseSpeedFromDomain(const float3& mins, const float3& maxs) {
     float3 ext = f3_sub(maxs, mins);
     float diag = f3_len(ext);
-    return std::max(0.3f, diag * 0.3f);
+    return std::max(3.0f, diag * 3.0f);
 }
 
 // Update camera speed so traversal roughly matches the domain size. When responsiveness
@@ -166,7 +187,7 @@ static void ApplyCameraSpeedFromDomain(
     FreeFlyCamera& cam,
     const float3& mins,
     const float3& maxs,
-    float responsiveness = 1.0f
+    float responsiveness = 10.0f
 ) {
     float desired = ComputeBaseSpeedFromDomain(mins, maxs);
     responsiveness = std::clamp(responsiveness, 0.0f, 1.0f);
@@ -485,6 +506,20 @@ static void SanitizeRuntime(
             std::fprintf(stderr, "[Sanitize] viewer.point_size_px clamped to 32\n");
         }
     }
+
+    // Frame cap guard rails.
+    if (cc.app.frame_cap_fps < 1) {
+        if (log && cc.app.frame_cap_enabled) {
+            std::fprintf(stderr, "[Sanitize] frame_cap_fps raised to 1\n");
+        }
+        cc.app.frame_cap_fps = 1;
+    }
+    if (cc.app.frame_cap_fps > 1000) {
+        cc.app.frame_cap_fps = 1000;
+        if (log) {
+            std::fprintf(stderr, "[Sanitize] frame_cap_fps clamped to 1000\n");
+        }
+    }
 }
 
 // =====================================================================
@@ -614,6 +649,9 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 #ifdef ENABLE_NVTX
     nvtx3::scoped_range sr_main{ "Program.Main" };
 #endif
+
+    // Request higher timer resolution so frame cap sleeps are accurate.
+    ScopedTimerResolution timerRes(1);
 
     // 1) Load configuration from config.json next to the executable.
     auto& cc = console::Instance();
@@ -924,11 +962,37 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         profiler.addRow("render_ms", renderMs);
 
         auto frameEnd = Clock::now();
-        s_prevFrameEnd = frameEnd;
-
-        const double frameMs = std::chrono::duration<double, std::milli>(
+        double frameMs = std::chrono::duration<double, std::milli>(
             frameEnd - frameStart
         ).count();
+
+        // Optional frame rate cap (applied after GPU work is done).
+        // Skip when vsync is enabled to avoid double-throttling the swapchain.
+        if (cc.app.frame_cap_enabled && !cc.app.vsync && cc.app.frame_cap_fps > 0) {
+            const double targetFrameMs = 1000.0 /
+                double(std::max(1, cc.app.frame_cap_fps));
+            const auto targetEnd = frameStart +
+                std::chrono::duration<double, std::milli>(targetFrameMs);
+
+            auto now = Clock::now();
+            if (now < targetEnd) {
+                // Sleep until just before the target and then spin to avoid
+                // oversleep from coarse timers.
+                auto coarseWake = targetEnd - std::chrono::milliseconds(1);
+                if (coarseWake > now) {
+                    std::this_thread::sleep_until(coarseWake);
+                }
+                while ((now = Clock::now()) < targetEnd) {
+                    std::this_thread::yield();
+                }
+                frameEnd = now;
+                frameMs = std::chrono::duration<double, std::milli>(
+                    frameEnd - frameStart
+                ).count();
+            }
+        }
+        s_prevFrameEnd = frameEnd;
+
         const double fpsInst = (frameMs > 1e-6) ? (1000.0 / frameMs) : 0.0;
 
         static double s_fpsEma = 0.0;

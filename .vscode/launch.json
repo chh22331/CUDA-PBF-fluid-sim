@@ -5,10 +5,11 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "PBF-X (CMake, MSVC 调试)",
+            "name": "PBF-X (CMake/Ninja, MSVC 调试)",
             "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/build/pbf_app.exe",
+            // CMake/Ninja 输出位置：单配置生成器 -> build/bin/pbf_app.exe；多配置生成器 -> build/bin/Release/pbf_app.exe
+            "program": "${workspaceFolder}/build/bin/pbf_app.exe",
             "cwd": "${workspaceFolder}",
             "args": [],
             "stopAtEntry": false,

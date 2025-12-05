@@ -49,6 +49,8 @@ struct RuntimeConsole {
         std::string csv_path = "stats.csv";    // path to write CSV benchmark/stats
         bool hot_reload = false;               // enable hot-reload of shaders/config
         int  hot_reload_every_n = 0;           // frames between hot-reload attempts (0 = disabled)
+        bool frame_cap_enabled = true;        // limit frame rate when true
+        int  frame_cap_fps = 60;              // target max FPS when frame cap is enabled
     } app;
 
     // Renderer tuning and camera defaults.
@@ -97,7 +99,7 @@ struct RuntimeConsole {
 
     // Debugging and logging controls.
     struct Debug {
-        bool enabled = false;                  // pause mode
+        bool enabled = true;                  // pause mode
         bool pauseOnStart = true;              // pause simulation at startup
         int  keyStep = 32;                     // key for stepping frames
         int  keyRun = 'R';                     // key to run
@@ -129,7 +131,7 @@ struct RuntimeConsole {
         float    poisson_min_spacing_factor_h = 0.8f;
 
         // Time stepping and CFL control.
-        float    dt = 0.0167f;
+        float    dt = 0.016667f;
         float    cfl = 0.45f;
 
         // Global physics parameters.
@@ -180,12 +182,12 @@ struct RuntimeConsole {
         // CubeMix-specific parameters for batched group emit/placement.
         bool     cube_auto_partition = false;
         uint32_t cube_group_count = 8;
-        uint32_t cube_edge_particles = 70;
+        uint32_t cube_edge_particles = 10;
         static constexpr uint32_t cube_group_count_max = 512;
         uint32_t cube_layers = 2;
-        float    cube_group_spacing_world = 350.0f;
-        float    cube_layer_spacing_world = 350.0f;
-        float    cube_base_height = 200.0f;
+        float    cube_group_spacing_world = 40.0f;
+        float    cube_layer_spacing_world = 50.0f;
+        float    cube_base_height = 50.0f;
         float    cube_lattice_spacing_factor_h = 1.02f;
         float    cube_initial_density = 1.0f;
 
