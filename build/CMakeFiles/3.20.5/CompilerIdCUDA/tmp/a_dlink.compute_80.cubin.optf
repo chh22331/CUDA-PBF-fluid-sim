@@ -1,1 +1,0 @@
--m64 --arch=sm_80 --register-link-binaries="tmp/a_dlink.reg.c"    "/LIBPATH:C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/bin/../lib/x64" -cpu-arch=X86_64 -report-arch "tmp/CMakeCUDACompilerId.obj"  cudadevrt.lib  -o "tmp/a_dlink.compute_80.cubin"

@@ -1,1 +1,0 @@
--D__CUDA_ARCH_LIST__=750,800,860,890,900 -nologo "D:\projects\PBF-X\build\CMakeFiles\3.20.5\CompilerIdCUDA\tmp\a_dlink.obj" "D:\projects\PBF-X\build\CMakeFiles\3.20.5\CompilerIdCUDA\tmp\CMakeCUDACompilerId.obj" -link -INCREMENTAL:NO   "/LIBPATH:C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/bin/../lib/x64"  cudadevrt.lib  cudart.lib

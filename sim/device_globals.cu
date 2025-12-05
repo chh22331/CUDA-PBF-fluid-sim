@@ -11,13 +11,7 @@ namespace sim {
     __device__ float*  g_lambda    = nullptr;
 
     __device__ uint32_t g_ghostCount = 0;
-
-    // Note: cudaMemcpyToSymbol requires symbol names at compile time.
-    // The helper below is only a conceptual placeholder and intentionally unused.
-    static void CopyPtrToSymbol(float4* const* /*hPtr*/, float4** /*symbol*/) {
-        // No-op: kept to document intent.
-    }
-
+ 
     // Bind basic device globals by copying host-side pointers into device symbols.
     // The cost is minimal (a few pointer-sized copies).
     void BindDeviceGlobals(float4* d_pos_curr,
