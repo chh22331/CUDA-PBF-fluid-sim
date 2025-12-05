@@ -1,0 +1,132 @@
+[
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\MIB055~1\\2022\\COMMUN~1\\VC\\Tools\\Llvm\\x64\\bin\\clang.exe -I../ -isystem \"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -std=gnu++17 -o CMakeFiles\\pbf_core.dir\\engine\\core\\config.cpp.obj -c D:\\projects\\PBF-X\\engine\\core\\config.cpp",
+  "file": "D:/projects/PBF-X/engine/core/config.cpp"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\MIB055~1\\2022\\COMMUN~1\\VC\\Tools\\Llvm\\x64\\bin\\clang.exe -I../ -isystem \"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -std=gnu++17 -o CMakeFiles\\pbf_core.dir\\engine\\core\\console.cpp.obj -c D:\\projects\\PBF-X\\engine\\core\\console.cpp",
+  "file": "D:/projects/PBF-X/engine/core/console.cpp"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\MIB055~1\\2022\\COMMUN~1\\VC\\Tools\\Llvm\\x64\\bin\\clang.exe -DNOMINMAX -DUNICODE -D_UNICODE -I../ -isystem \"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -std=gnu++17 -o CMakeFiles\\pbf_app.dir\\app_main.cpp.obj -c D:\\projects\\PBF-X\\app_main.cpp",
+  "file": "D:/projects/PBF-X/app_main.cpp"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\MIB055~1\\2022\\COMMUN~1\\VC\\Tools\\Llvm\\x64\\bin\\clang.exe -DNOMINMAX -DUNICODE -D_UNICODE -I../ -isystem \"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -std=gnu++17 -o CMakeFiles\\pbf_app.dir\\engine\\gfx\\d3d12_device.cpp.obj -c D:\\projects\\PBF-X\\engine\\gfx\\d3d12_device.cpp",
+  "file": "D:/projects/PBF-X/engine/gfx/d3d12_device.cpp"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\MIB055~1\\2022\\COMMUN~1\\VC\\Tools\\Llvm\\x64\\bin\\clang.exe -DNOMINMAX -DUNICODE -D_UNICODE -I../ -isystem \"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -std=gnu++17 -o CMakeFiles\\pbf_app.dir\\engine\\gfx\\renderer.cpp.obj -c D:\\projects\\PBF-X\\engine\\gfx\\renderer.cpp",
+  "file": "D:/projects/PBF-X/engine/gfx/renderer.cpp"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\NVIDIA~2\\CUDA\\v13.0\\bin\\nvcc.exe -forward-unknown-to-host-compiler -I../ -isystem=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -D_WINDOWS -Xcompiler=\" /EHsc\" -Xcompiler=\"-Zi -Ob0 -Od /RTC1\" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17 -x cu -dc D:\\projects\\PBF-X\\kernel.cu -o CMakeFiles\\pbf_cuda.dir\\kernel.cu.obj -Xcompiler=-FdTARGET_COMPILE_PDB,-FS",
+  "file": "D:/projects/PBF-X/kernel.cu"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\MIB055~1\\2022\\COMMUN~1\\VC\\Tools\\Llvm\\x64\\bin\\clang.exe -I../ -isystem \"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -std=gnu++17 -o CMakeFiles\\pbf_cuda.dir\\sim\\graph_builder.cpp.obj -c D:\\projects\\PBF-X\\sim\\graph_builder.cpp",
+  "file": "D:/projects/PBF-X/sim/graph_builder.cpp"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\MIB055~1\\2022\\COMMUN~1\\VC\\Tools\\Llvm\\x64\\bin\\clang.exe -I../ -isystem \"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -std=gnu++17 -o CMakeFiles\\pbf_cuda.dir\\sim\\kernel_dispatcher.cpp.obj -c D:\\projects\\PBF-X\\sim\\kernel_dispatcher.cpp",
+  "file": "D:/projects/PBF-X/sim/kernel_dispatcher.cpp"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\MIB055~1\\2022\\COMMUN~1\\VC\\Tools\\Llvm\\x64\\bin\\clang.exe -I../ -isystem \"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -std=gnu++17 -o CMakeFiles\\pbf_cuda.dir\\sim\\phases.cpp.obj -c D:\\projects\\PBF-X\\sim\\phases.cpp",
+  "file": "D:/projects/PBF-X/sim/phases.cpp"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\MIB055~1\\2022\\COMMUN~1\\VC\\Tools\\Llvm\\x64\\bin\\clang.exe -I../ -isystem \"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -std=gnu++17 -o CMakeFiles\\pbf_cuda.dir\\sim\\poisson_disk.cpp.obj -c D:\\projects\\PBF-X\\sim\\poisson_disk.cpp",
+  "file": "D:/projects/PBF-X/sim/poisson_disk.cpp"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\MIB055~1\\2022\\COMMUN~1\\VC\\Tools\\Llvm\\x64\\bin\\clang.exe -I../ -isystem \"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -std=gnu++17 -o CMakeFiles\\pbf_cuda.dir\\sim\\post_ops.cpp.obj -c D:\\projects\\PBF-X\\sim\\post_ops.cpp",
+  "file": "D:/projects/PBF-X/sim/post_ops.cpp"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\MIB055~1\\2022\\COMMUN~1\\VC\\Tools\\Llvm\\x64\\bin\\clang.exe -I../ -isystem \"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -g -Xclang -gcodeview -O0 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -std=gnu++17 -o CMakeFiles\\pbf_cuda.dir\\sim\\simulator.cpp.obj -c D:\\projects\\PBF-X\\sim\\simulator.cpp",
+  "file": "D:/projects/PBF-X/sim/simulator.cpp"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\NVIDIA~2\\CUDA\\v13.0\\bin\\nvcc.exe -forward-unknown-to-host-compiler -I../ -isystem=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -D_WINDOWS -Xcompiler=\" /EHsc\" -Xcompiler=\"-Zi -Ob0 -Od /RTC1\" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17 -x cu -dc D:\\projects\\PBF-X\\sim\\boundary.cu -o CMakeFiles\\pbf_cuda.dir\\sim\\boundary.cu.obj -Xcompiler=-FdTARGET_COMPILE_PDB,-FS",
+  "file": "D:/projects/PBF-X/sim/boundary.cu"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\NVIDIA~2\\CUDA\\v13.0\\bin\\nvcc.exe -forward-unknown-to-host-compiler -I../ -isystem=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -D_WINDOWS -Xcompiler=\" /EHsc\" -Xcompiler=\"-Zi -Ob0 -Od /RTC1\" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17 -x cu -dc D:\\projects\\PBF-X\\sim\\cell_compact.cu -o CMakeFiles\\pbf_cuda.dir\\sim\\cell_compact.cu.obj -Xcompiler=-FdTARGET_COMPILE_PDB,-FS",
+  "file": "D:/projects/PBF-X/sim/cell_compact.cu"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\NVIDIA~2\\CUDA\\v13.0\\bin\\nvcc.exe -forward-unknown-to-host-compiler -I../ -isystem=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -D_WINDOWS -Xcompiler=\" /EHsc\" -Xcompiler=\"-Zi -Ob0 -Od /RTC1\" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17 -x cu -dc D:\\projects\\PBF-X\\sim\\cell_ranges.cu -o CMakeFiles\\pbf_cuda.dir\\sim\\cell_ranges.cu.obj -Xcompiler=-FdTARGET_COMPILE_PDB,-FS",
+  "file": "D:/projects/PBF-X/sim/cell_ranges.cu"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\NVIDIA~2\\CUDA\\v13.0\\bin\\nvcc.exe -forward-unknown-to-host-compiler -I../ -isystem=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -D_WINDOWS -Xcompiler=\" /EHsc\" -Xcompiler=\"-Zi -Ob0 -Od /RTC1\" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17 -x cu -dc D:\\projects\\PBF-X\\sim\\device_globals.cu -o CMakeFiles\\pbf_cuda.dir\\sim\\device_globals.cu.obj -Xcompiler=-FdTARGET_COMPILE_PDB,-FS",
+  "file": "D:/projects/PBF-X/sim/device_globals.cu"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\NVIDIA~2\\CUDA\\v13.0\\bin\\nvcc.exe -forward-unknown-to-host-compiler -I../ -isystem=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -D_WINDOWS -Xcompiler=\" /EHsc\" -Xcompiler=\"-Zi -Ob0 -Od /RTC1\" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17 -x cu -dc D:\\projects\\PBF-X\\sim\\device_pos_state.cu -o CMakeFiles\\pbf_cuda.dir\\sim\\device_pos_state.cu.obj -Xcompiler=-FdTARGET_COMPILE_PDB,-FS",
+  "file": "D:/projects/PBF-X/sim/device_pos_state.cu"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\NVIDIA~2\\CUDA\\v13.0\\bin\\nvcc.exe -forward-unknown-to-host-compiler -I../ -isystem=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -D_WINDOWS -Xcompiler=\" /EHsc\" -Xcompiler=\"-Zi -Ob0 -Od /RTC1\" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17 -x cu -dc D:\\projects\\PBF-X\\sim\\hash_keys.cu -o CMakeFiles\\pbf_cuda.dir\\sim\\hash_keys.cu.obj -Xcompiler=-FdTARGET_COMPILE_PDB,-FS",
+  "file": "D:/projects/PBF-X/sim/hash_keys.cu"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\NVIDIA~2\\CUDA\\v13.0\\bin\\nvcc.exe -forward-unknown-to-host-compiler -I../ -isystem=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -D_WINDOWS -Xcompiler=\" /EHsc\" -Xcompiler=\"-Zi -Ob0 -Od /RTC1\" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17 -x cu -dc D:\\projects\\PBF-X\\sim\\integrate.cu -o CMakeFiles\\pbf_cuda.dir\\sim\\integrate.cu.obj -Xcompiler=-FdTARGET_COMPILE_PDB,-FS",
+  "file": "D:/projects/PBF-X/sim/integrate.cu"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\NVIDIA~2\\CUDA\\v13.0\\bin\\nvcc.exe -forward-unknown-to-host-compiler -I../ -isystem=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -D_WINDOWS -Xcompiler=\" /EHsc\" -Xcompiler=\"-Zi -Ob0 -Od /RTC1\" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17 -x cu -dc D:\\projects\\PBF-X\\sim\\pbf_delta_apply.cu -o CMakeFiles\\pbf_cuda.dir\\sim\\pbf_delta_apply.cu.obj -Xcompiler=-FdTARGET_COMPILE_PDB,-FS",
+  "file": "D:/projects/PBF-X/sim/pbf_delta_apply.cu"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\NVIDIA~2\\CUDA\\v13.0\\bin\\nvcc.exe -forward-unknown-to-host-compiler -I../ -isystem=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -D_WINDOWS -Xcompiler=\" /EHsc\" -Xcompiler=\"-Zi -Ob0 -Od /RTC1\" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17 -x cu -dc D:\\projects\\PBF-X\\sim\\pbf_lambda.cu -o CMakeFiles\\pbf_cuda.dir\\sim\\pbf_lambda.cu.obj -Xcompiler=-FdTARGET_COMPILE_PDB,-FS",
+  "file": "D:/projects/PBF-X/sim/pbf_lambda.cu"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\NVIDIA~2\\CUDA\\v13.0\\bin\\nvcc.exe -forward-unknown-to-host-compiler -I../ -isystem=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -D_WINDOWS -Xcompiler=\" /EHsc\" -Xcompiler=\"-Zi -Ob0 -Od /RTC1\" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17 -x cu -dc D:\\projects\\PBF-X\\sim\\sort_pairs.cu -o CMakeFiles\\pbf_cuda.dir\\sim\\sort_pairs.cu.obj -Xcompiler=-FdTARGET_COMPILE_PDB,-FS",
+  "file": "D:/projects/PBF-X/sim/sort_pairs.cu"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\NVIDIA~2\\CUDA\\v13.0\\bin\\nvcc.exe -forward-unknown-to-host-compiler -I../ -isystem=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -D_WINDOWS -Xcompiler=\" /EHsc\" -Xcompiler=\"-Zi -Ob0 -Od /RTC1\" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17 -x cu -dc D:\\projects\\PBF-X\\sim\\stats.cu -o CMakeFiles\\pbf_cuda.dir\\sim\\stats.cu.obj -Xcompiler=-FdTARGET_COMPILE_PDB,-FS",
+  "file": "D:/projects/PBF-X/sim/stats.cu"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\NVIDIA~2\\CUDA\\v13.0\\bin\\nvcc.exe -forward-unknown-to-host-compiler -I../ -isystem=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -D_WINDOWS -Xcompiler=\" /EHsc\" -Xcompiler=\"-Zi -Ob0 -Od /RTC1\" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17 -x cu -dc D:\\projects\\PBF-X\\sim\\stats_bruteforce.cu -o CMakeFiles\\pbf_cuda.dir\\sim\\stats_bruteforce.cu.obj -Xcompiler=-FdTARGET_COMPILE_PDB,-FS",
+  "file": "D:/projects/PBF-X/sim/stats_bruteforce.cu"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\NVIDIA~2\\CUDA\\v13.0\\bin\\nvcc.exe -forward-unknown-to-host-compiler -I../ -isystem=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -D_WINDOWS -Xcompiler=\" /EHsc\" -Xcompiler=\"-Zi -Ob0 -Od /RTC1\" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17 -x cu -dc D:\\projects\\PBF-X\\sim\\velocity_globals.cu -o CMakeFiles\\pbf_cuda.dir\\sim\\velocity_globals.cu.obj -Xcompiler=-FdTARGET_COMPILE_PDB,-FS",
+  "file": "D:/projects/PBF-X/sim/velocity_globals.cu"
+},
+{
+  "directory": "D:/projects/PBF-X/build",
+  "command": "C:\\PROGRA~1\\NVIDIA~2\\CUDA\\v13.0\\bin\\nvcc.exe -forward-unknown-to-host-compiler -I../ -isystem=\"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include\" -D_WINDOWS -Xcompiler=\" /EHsc\" -Xcompiler=\"-Zi -Ob0 -Od /RTC1\" --generate-code=arch=compute_75,code=[compute_75,sm_75] --generate-code=arch=compute_80,code=[compute_80,sm_80] --generate-code=arch=compute_86,code=[compute_86,sm_86] --generate-code=arch=compute_89,code=[compute_89,sm_89] --generate-code=arch=compute_90,code=[compute_90,sm_90] -Xcompiler=-MDd -std=c++17 -x cu -dc D:\\projects\\PBF-X\\sim\\xsph.cu -o CMakeFiles\\pbf_cuda.dir\\sim\\xsph.cu.obj -Xcompiler=-FdTARGET_COMPILE_PDB,-FS",
+  "file": "D:/projects/PBF-X/sim/xsph.cu"
+}
+]

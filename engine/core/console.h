@@ -180,11 +180,11 @@ struct RuntimeConsole {
         // CubeMix-specific parameters for batched group emit/placement.
         bool     cube_auto_partition = false;
         uint32_t cube_group_count = 8;
-        uint32_t cube_edge_particles = 100;
+        uint32_t cube_edge_particles = 70;
         static constexpr uint32_t cube_group_count_max = 512;
         uint32_t cube_layers = 2;
-        float    cube_group_spacing_world = 400.0f;
-        float    cube_layer_spacing_world = 400.0f;
+        float    cube_group_spacing_world = 350.0f;
+        float    cube_layer_spacing_world = 350.0f;
         float    cube_base_height = 200.0f;
         float    cube_lattice_spacing_factor_h = 1.02f;
         float    cube_initial_density = 1.0f;
