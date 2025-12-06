@@ -82,10 +82,8 @@ This is a just-for-fun project, and there are many parts that are still imperfec
   头文件保持精简（`sim/`、`engine/core/`），并显式区分 CPU/GPU 数据路径（参考 `device_buffers.cuh`）。
 
 ## Validation / 验证
-- There is no automated test suite yet; validate by running `pbf_app` and exercising key scenarios (camera flight, UI toggles, simulation resets).  
-  当前尚无自动化测试；请运行 `pbf_app`，覆盖关键场景（相机飞行、UI 开关、仿真重置）。
-- Compare HUD stats (particle count, FPS, solver iterations) before/after your change to ensure regressions are caught early.  
-  修改前后对比 HUD 统计（粒子数量、FPS、求解迭代）以尽早发现回归。
+- There is no automated test suite yet; validate by running `pbf_app` and exercising key scenarios.  
+  当前尚无自动化测试；请运行 `pbf_app`，覆盖关键场景。
 
 ## Performance Snapshot / 性能快照
 - On an RTX 4060 Laptop GPU, Release builds running two solver iterations with a smoothing ratio `h_over_r = 2.5` (smoothing radius ≈ 2.5× particle radius) sustain roughly 1,000,000 particles at ~60 FPS.  
